@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+frontend/node_modules/
+frontend/dist/
+backend/.venv/
+backend/__pycache__/
+backend/**/*.py[cod]
+backend/.pytest_cache/
+backend/.ruff_cache/
+backend/alembic/versions/__pycache__/
+*.log
+*.db
+.DS_Store
