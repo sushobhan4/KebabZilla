@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     delivery_otp_api_url: str | None = None
     delivery_otp_api_token: str | None = None
     delivery_otp_sender: str = "KebabZilla"
+    offer_sms_api_url: str | None = None
+    offer_sms_api_token: str | None = None
+    offer_email_api_url: str | None = None
+    offer_email_api_token: str | None = None
+    offer_sender: str = "KebabZilla"
 
     @field_validator("cors_origins", mode="before")
     @classmethod

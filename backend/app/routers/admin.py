@@ -2,12 +2,14 @@ from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+import httpx
+from uuid import uuid4
+from sqlalchemy import func, or_, select
 
 from app.dependencies import CurrentAccount, DbSession, require_roles
 from app.config import settings
-from app.models import Account, MenuItem, Order, OrderItem, OrderStatus, Payment, PaymentMethod, PaymentStatus, RestaurantSettings, Role
-from app.schemas import AccountsPageOut, AccountOut, AdminAccountCreate, AdminOrdersPageOut, OrderStatusUpdate, RestaurantSettingsInput
+from app.models import Account, AdminEvent, MenuDiscount, MenuItem, OfferLog, Order, OrderItem, OrderStatus, Payment, PaymentMethod, PaymentStatus, RestaurantSettings, Role
+from app.schemas import AccountsPageOut, AccountOut, AdminAccountCreate, AdminOrdersPageOut, MenuDiscountInput, OfferInput, OrderStatusUpdate, RestaurantSettingsInput
 from app.security import hash_password
 from app.services import issue_razorpay_refund, order_payload, restaurant_settings, transition_order
 
@@ -53,6 +55,7 @@ def create_account(data: AdminAccountCreate, db: DbSession):
         role=data.role,
     )
     db.add(account)
+    db.add(AdminEvent(event_type="account_created", message=f"{account.name} created with role {account.role.value}", details={"role": account.role.value, "email": account.email}))
     db.commit()
     db.refresh(account)
     return account
@@ -66,6 +69,7 @@ def change_role(account_id: int, role: Role, actor: CurrentAccount, db: DbSessio
     if actor.id == account.id:
         raise HTTPException(status_code=400, detail="You cannot change your own role")
     account.role = role
+    db.add(AdminEvent(event_type="account_role_changed", message=f"{account.name}'s role changed to {role.value}", actor_id=actor.id, details={"account_id": account.id, "role": role.value}))
     db.commit()
     db.refresh(account)
     return account
@@ -79,6 +83,7 @@ def set_account_active(account_id: int, is_active: bool, actor: CurrentAccount, 
     if actor.id == account.id and not is_active:
         raise HTTPException(status_code=400, detail="You cannot disable your own account")
     account.is_active = is_active
+    db.add(AdminEvent(event_type="account_active_changed", message=f"{account.name} {'enabled' if is_active else 'disabled'}", actor_id=actor.id, details={"account_id": account.id, "is_active": is_active}))
     db.commit()
     db.refresh(account)
     return account
@@ -96,12 +101,22 @@ def account_order_history(account_id: int, db: DbSession):
 def admin_orders(
     db: DbSession,
     status_filter: OrderStatus | None = None,
+    period: str = "all",
+    q: str = "",
     limit: int = Query(default=50, ge=1, le=250),
     offset: int = Query(default=0, ge=0),
 ):
     filters = []
     if status_filter:
         filters.append(Order.status == status_filter)
+    if period not in {"all", "day", "week", "month", "year"}:
+        raise HTTPException(status_code=422, detail="Choose a valid order time period")
+    if period != "all":
+        start, end, _ = date_range(period, None)
+        filters.extend([Order.created_at >= start, Order.created_at < end])
+    if q.strip():
+        pattern = f"%{q.strip()}%"
+        filters.append(or_(Order.public_id.ilike(pattern), Order.customer_name.ilike(pattern), Order.customer_phone.ilike(pattern)))
     total = db.scalar(select(func.count(Order.id)).where(*filters)) or 0
     rows = db.scalars(select(Order).where(*filters).order_by(Order.created_at.desc()).offset(offset).limit(limit)).all()
     status_counts = {item.value: 0 for item in OrderStatus}
@@ -119,7 +134,7 @@ def admin_orders(
 
 
 @router.patch("/orders/{order_id}/status")
-def admin_order_status(order_id: int, data: OrderStatusUpdate, db: DbSession):
+def admin_order_status(order_id: int, data: OrderStatusUpdate, actor: CurrentAccount, db: DbSession):
     order = db.get(Order, order_id)
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -130,6 +145,7 @@ def admin_order_status(order_id: int, data: OrderStatusUpdate, db: DbSession):
     if data.status in {OrderStatus.REJECTED, OrderStatus.CANCELLED} and order.payment_status in {PaymentStatus.PAID, PaymentStatus.REFUND_PENDING}:
         raise HTTPException(status_code=409, detail="Issue a refund before rejecting or cancelling a paid order")
     transition_order(order, data.status)
+    db.add(AdminEvent(event_type="order_status", message=f"Order {order.public_id} changed to {data.status.value} by {actor.name}", actor_id=actor.id, details={"order_id": order.id, "status": data.status.value}))
     db.commit()
     return order_payload(order)
 
@@ -161,9 +177,142 @@ def update_settings(data: RestaurantSettingsInput, db: DbSession):
     settings = restaurant_settings(db)
     for field, value in data.model_dump().items():
         setattr(settings, field, value)
+    db.add(AdminEvent(event_type="settings_changed", message="Restaurant settings updated", details={"weekly_schedule": data.weekly_schedule, "accepting_orders": data.accepting_orders}))
     db.commit()
     db.refresh(settings)
     return settings
+
+
+@router.get("/events")
+def admin_events(db: DbSession, limit: int = Query(default=100, ge=1, le=250)):
+    rows = db.scalars(select(AdminEvent).order_by(AdminEvent.created_at.desc()).limit(limit)).all()
+    return [{"id": row.id, "event_type": row.event_type, "message": row.message, "details": row.details, "actor_name": row.actor.name if row.actor else "System", "created_at": row.created_at} for row in rows]
+
+
+@router.post("/offers", status_code=status.HTTP_201_CREATED)
+async def create_offer(data: OfferInput, actor: CurrentAccount, db: DbSession):
+    customer_ids = select(Account.id).where(Account.role == Role.USER, Account.is_active.is_(True))
+    customers = db.scalars(customer_ids.order_by(Account.created_at.desc())).all()
+    order_counts = dict(db.execute(select(Order.customer_id, func.count(Order.id)).where(Order.customer_id.is_not(None)).group_by(Order.customer_id)).all())
+    if data.audience == "NEW":
+        customers = [person for person in customers if not order_counts.get(person.id, 0)]
+    elif data.audience == "RETURNING":
+        customers = [person for person in customers if order_counts.get(person.id, 0)]
+    configured = {"SMS": bool(settings.offer_sms_api_url and settings.offer_sms_api_token), "EMAIL": bool(settings.offer_email_api_url and settings.offer_email_api_token)}
+    eligible = {channel: [person for person in customers if (person.phone if channel == "SMS" else person.email)] for channel in data.channels}
+    recipients = list({person.id: person for people in eligible.values() for person in people}.values())
+    sent = 0
+    failures = []
+    for channel in data.channels:
+        if not configured[channel]:
+            failures.append(f"{channel} provider is not configured")
+            continue
+        channel_recipients = eligible[channel]
+        recipient_values = [person.phone if channel == "SMS" else person.email for person in channel_recipients]
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                response = await client.post(settings.offer_sms_api_url if channel == "SMS" else settings.offer_email_api_url, headers={"Authorization": f"Bearer {settings.offer_sms_api_token if channel == 'SMS' else settings.offer_email_api_token}"}, json={"to": recipient_values, "sender": settings.offer_sender, "message": data.message})
+            if response.is_error:
+                failures.append(f"{channel} provider returned {response.status_code}")
+            else:
+                sent += len(channel_recipients)
+        except httpx.HTTPError:
+            failures.append(f"{channel} provider could not be reached")
+    state = "SENT" if sent and not failures else "PARTIAL" if sent else "NOT_CONFIGURED" if not any(configured[c] for c in data.channels) else "FAILED"
+    log = OfferLog(actor_id=actor.id, audience=data.audience, channels=data.channels, message=data.message, recipient_count=sum(len(eligible[channel]) for channel in data.channels), sent_count=sent, status=state)
+    db.add(log)
+    db.add(AdminEvent(event_type="offer_sent", message=f"Offer message campaign {state.lower()} by {actor.name}", actor_id=actor.id, details={"audience": data.audience, "channels": data.channels, "recipients": len(recipients), "sent": sent, "status": state}))
+    db.commit()
+    db.refresh(log)
+    return {"id": log.id, "audience": log.audience, "channels": log.channels, "recipient_count": log.recipient_count, "sent_count": log.sent_count, "status": log.status, "provider_notes": failures, "created_at": log.created_at}
+
+
+@router.get("/offers")
+def offer_history(db: DbSession):
+    logs = db.scalars(select(OfferLog).order_by(OfferLog.created_at.desc()).limit(100)).all()
+    return [{"id": log.id, "audience": log.audience, "channels": log.channels, "message": log.message, "recipient_count": log.recipient_count, "sent_count": log.sent_count, "status": log.status, "created_at": log.created_at} for log in logs]
+
+
+@router.get("/discounts")
+def list_discounts(db: DbSession):
+    rows = db.scalars(select(MenuDiscount).order_by(MenuDiscount.starts_at.desc())).all()
+    campaigns: dict[str, dict] = {}
+    for row in rows:
+        starts_at = row.starts_at if row.starts_at.tzinfo else row.starts_at.replace(tzinfo=timezone.utc)
+        ends_at = row.ends_at if row.ends_at.tzinfo else row.ends_at.replace(tzinfo=timezone.utc)
+        campaign = campaigns.setdefault(row.campaign_id, {"id": row.campaign_id, "campaign_name": row.campaign_name, "menu_item_ids": [], "menu_item_names": [], "discount_percent": row.discount_percent, "starts_at": starts_at.isoformat(), "ends_at": ends_at.isoformat(), "created_at": row.created_at})
+        campaign["menu_item_ids"].append(row.menu_item_id)
+        campaign["menu_item_names"].append(row.menu_item.name)
+    return list(campaigns.values())
+
+
+@router.post("/discounts", status_code=status.HTTP_201_CREATED)
+def create_discount(data: MenuDiscountInput, actor: CurrentAccount, db: DbSession):
+    item_ids = list(dict.fromkeys(data.menu_item_ids))
+    items = db.scalars(select(MenuItem).where(MenuItem.id.in_(item_ids))).all()
+    items_by_id = {item.id: item for item in items}
+    if set(item_ids) != set(items_by_id):
+        raise HTTPException(status_code=404, detail="One or more menu items were not found")
+    starts_at = data.starts_at.astimezone(timezone.utc)
+    ends_at = data.ends_at.astimezone(timezone.utc)
+    existing = db.scalars(select(MenuDiscount).where(MenuDiscount.menu_item_id.in_(item_ids))).all()
+    for row in existing:
+        old_start = row.starts_at if row.starts_at.tzinfo else row.starts_at.replace(tzinfo=timezone.utc)
+        old_end = row.ends_at if row.ends_at.tzinfo else row.ends_at.replace(tzinfo=timezone.utc)
+        if starts_at < old_end and ends_at > old_start:
+            raise HTTPException(status_code=409, detail=f"{items_by_id[row.menu_item_id].name} already has a discount during that time")
+    campaign_id = str(uuid4())
+    discounts = [MenuDiscount(campaign_id=campaign_id, campaign_name=data.campaign_name, menu_item_id=item_id, discount_percent=data.discount_percent, starts_at=starts_at, ends_at=ends_at, created_by_id=actor.id) for item_id in item_ids]
+    db.add_all(discounts)
+    item_names = [items_by_id[item_id].name for item_id in item_ids]
+    db.add(AdminEvent(event_type="menu_discount_created", message=f"{data.discount_percent}% discount scheduled for {', '.join(item_names)}", actor_id=actor.id, details={"menu_item_ids": item_ids, "discount_percent": data.discount_percent, "starts_at": starts_at.isoformat(), "ends_at": ends_at.isoformat()}))
+    db.commit()
+    return {"id": campaign_id, "campaign_name": data.campaign_name, "menu_item_ids": item_ids, "menu_item_names": item_names, "discount_percent": data.discount_percent, "starts_at": starts_at.isoformat(), "ends_at": ends_at.isoformat(), "created_at": discounts[0].created_at}
+
+
+@router.put("/discounts/{campaign_id}")
+def update_discount(campaign_id: str, data: MenuDiscountInput, actor: CurrentAccount, db: DbSession):
+    current = db.scalars(select(MenuDiscount).where(MenuDiscount.campaign_id == campaign_id)).all()
+    if not current:
+        raise HTTPException(status_code=404, detail="Discount campaign not found")
+    item_ids = list(dict.fromkeys(data.menu_item_ids))
+    items = db.scalars(select(MenuItem).where(MenuItem.id.in_(item_ids))).all()
+    items_by_id = {item.id: item for item in items}
+    if set(item_ids) != set(items_by_id):
+        raise HTTPException(status_code=404, detail="One or more menu items were not found")
+    starts_at = data.starts_at.astimezone(timezone.utc)
+    ends_at = data.ends_at.astimezone(timezone.utc)
+    existing = db.scalars(
+        select(MenuDiscount).where(
+            MenuDiscount.campaign_id != campaign_id,
+            MenuDiscount.menu_item_id.in_(item_ids),
+        )
+    ).all()
+    for row in existing:
+        old_start = row.starts_at if row.starts_at.tzinfo else row.starts_at.replace(tzinfo=timezone.utc)
+        old_end = row.ends_at if row.ends_at.tzinfo else row.ends_at.replace(tzinfo=timezone.utc)
+        if starts_at < old_end and ends_at > old_start:
+            raise HTTPException(status_code=409, detail=f"{items_by_id[row.menu_item_id].name} already has a discount during that time")
+    for row in current:
+        db.delete(row)
+    item_names = [items_by_id[item_id].name for item_id in item_ids]
+    discounts = [MenuDiscount(campaign_id=campaign_id, campaign_name=data.campaign_name, menu_item_id=item_id, discount_percent=data.discount_percent, starts_at=starts_at, ends_at=ends_at, created_by_id=actor.id) for item_id in item_ids]
+    db.add_all(discounts)
+    db.add(AdminEvent(event_type="menu_discount_updated", message=f"{data.discount_percent}% discount campaign updated for {', '.join(item_names)}", actor_id=actor.id, details={"campaign_id": campaign_id, "menu_item_ids": item_ids, "discount_percent": data.discount_percent, "starts_at": starts_at.isoformat(), "ends_at": ends_at.isoformat()}))
+    db.commit()
+    return {"id": campaign_id, "campaign_name": data.campaign_name, "menu_item_ids": item_ids, "menu_item_names": item_names, "discount_percent": data.discount_percent, "starts_at": starts_at.isoformat(), "ends_at": ends_at.isoformat(), "created_at": discounts[0].created_at}
+
+
+@router.delete("/discounts/{campaign_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_discount(campaign_id: str, actor: CurrentAccount, db: DbSession):
+    discounts = db.scalars(select(MenuDiscount).where(MenuDiscount.campaign_id == campaign_id)).all()
+    if not discounts:
+        raise HTTPException(status_code=404, detail="Discount not found")
+    item_names = [discount.menu_item.name for discount in discounts]
+    db.add(AdminEvent(event_type="menu_discount_deleted", message=f"Scheduled discount for {', '.join(item_names)} deleted", actor_id=actor.id, details={"menu_item_ids": [discount.menu_item_id for discount in discounts], "discount_percent": discounts[0].discount_percent}))
+    for discount in discounts:
+        db.delete(discount)
+    db.commit()
 
 
 def date_range(period: str, day: datetime | None) -> tuple[datetime, datetime, str]:
@@ -240,3 +389,5 @@ def sales_report(db: DbSession, period: str = "week", at: datetime | None = None
         "series": list(buckets.values()),
         "top_items": [{"name": row.item_name, "quantity": int(row.quantity or 0)} for row in item_rows],
     }
+
+

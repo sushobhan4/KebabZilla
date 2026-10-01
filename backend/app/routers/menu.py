@@ -1,11 +1,13 @@
 import re
 
 import httpx
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, select
 
-from app.dependencies import DbSession, require_roles
-from app.models import MenuCategory, MenuItem, Role
+from app.dependencies import CurrentAccount, DbSession, require_roles
+from app.models import AdminEvent, MenuCategory, MenuDiscount, MenuItem, MenuPause, Order, OrderItem, OrderStatus, Role
 from app.schemas import MenuCategoryDeleteOut, MenuCategoryInput, MenuCategoryOut, MenuItemInput, MenuItemOut
 
 router = APIRouter(prefix="/menu", tags=["menu"])
@@ -78,8 +80,34 @@ def delete_category(category_id: int, db: DbSession):
 
 @router.get("", response_model=list[MenuItemOut])
 def list_menu(db: DbSession):
-    query = select(MenuItem).where(MenuItem.is_available.is_(True)).order_by(MenuItem.category, MenuItem.name)
-    return db.scalars(query).all()
+    now = datetime.now(timezone.utc)
+    paused = select(MenuPause.menu_item_id).where(MenuPause.paused_until > datetime.now(timezone.utc))
+    query = select(MenuItem).where(MenuItem.is_available.is_(True), MenuItem.id.not_in(paused)).order_by(MenuItem.category, MenuItem.name)
+    items = db.scalars(query).all()
+    counts = dict(db.execute(
+        select(OrderItem.menu_item_id, func.sum(OrderItem.quantity))
+        .join(Order, Order.id == OrderItem.order_id)
+        .where(Order.status.not_in([OrderStatus.CANCELLED, OrderStatus.REJECTED]))
+        .group_by(OrderItem.menu_item_id)
+    ).all())
+    discounts = db.scalars(select(MenuDiscount).where(MenuDiscount.menu_item_id.in_([item.id for item in items]))).all() if items else []
+    active: dict[int, MenuDiscount] = {}
+    for discount in discounts:
+        starts_at = discount.starts_at if discount.starts_at.tzinfo else discount.starts_at.replace(tzinfo=timezone.utc)
+        ends_at = discount.ends_at if discount.ends_at.tzinfo else discount.ends_at.replace(tzinfo=timezone.utc)
+        if starts_at <= now < ends_at:
+            active[discount.menu_item_id] = discount
+    results = []
+    for item in items:
+        result = MenuItemOut.model_validate(item).model_dump()
+        if item.id in active:
+            discount = active[item.id]
+            result["discount_percent"] = discount.discount_percent
+            result["discounted_price_paise"] = None
+            result["discount_campaign_name"] = discount.campaign_name
+        result["popularity_count"] = int(counts.get(item.id, 0) or 0)
+        results.append(result)
+    return results
 
 
 @router.get("/manage", response_model=list[MenuItemOut], dependencies=[Depends(require_roles(Role.ADMIN))])

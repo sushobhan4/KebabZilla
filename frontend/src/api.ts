@@ -1,4 +1,4 @@
-export const API_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1').replace(/\/$/, '')
+export const API_BASE = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '')
 
 let accessToken: string | null = sessionStorage.getItem('kz_access_token')
 
@@ -56,12 +56,20 @@ export type MenuItem = {
   description: string
   category: string
   price_paise: number
+  discount_percent: number
+  discounted_price_paise: number | null
   tax_percent: number
   image_url: string | null
   image_urls: string[]
   is_vegetarian: boolean
   is_available: boolean
   is_featured: boolean
+  discount_campaign_name: string | null
+  popularity_count: number
+}
+export type SavedCartItem = {
+  menu_item_id: number
+  quantity: number
 }
 export type Order = {
   id: number
@@ -81,6 +89,9 @@ export type Order = {
   address: string
   notes: string
   assigned_delivery_id: number | null
+  scheduled_for?: string | null
+  delivery_name?: string | null
+  delivery_phone?: string | null
   created_at: string
   items: { id: number; menu_item_id: number | null; name: string; quantity: number; unit_price_paise: number; line_total_paise: number; tax_percent: number; tax_paise: number; image_url?: string | null; image_urls?: string[] }[]
   checkout?: { gateway_order_id: string; amount: number; currency: string; key_id: string; name: string; description: string; prefill: { name: string; email: string; contact: string } }
@@ -91,7 +102,7 @@ export type Restaurant = {
   tagline: string
   phone: string
   address: string
-  opening_hours: string
+  weekly_schedule: Record<string, { open: boolean; opens: string; closes: string }>
   tax_percent: number
   delivery_fee_paise: number
   minimum_order_paise: number
@@ -115,3 +126,4 @@ export function friendlyDate(value: string) {
 export function formatStatus(value: string) {
   return value.replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
+

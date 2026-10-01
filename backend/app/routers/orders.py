@@ -3,7 +3,7 @@ from sqlalchemy import select
 
 from app.dependencies import CurrentAccount, DbSession
 from app.integrations import razorpay
-from app.models import Account, Order, OrderStatus, Payment, PaymentMethod, PaymentStatus, Role
+from app.models import Account, CartItem, Order, OrderStatus, Payment, PaymentMethod, PaymentStatus, Role
 from app.schemas import OrderCreate
 from app.services import assemble_order, issue_razorpay_refund, order_payload, transition_order
 
@@ -26,9 +26,11 @@ async def create_order(data: OrderCreate, account: CurrentAccount, db: DbSession
         payment_method=data.payment_method,
         address=data.address,
         notes=data.notes,
+        scheduled_for=data.scheduled_for,
     )
     payment = Payment(order_id=order.id, method=data.payment_method, status=PaymentStatus.PENDING, amount_paise=order.total_paise)
     db.add(payment)
+    db.query(CartItem).filter(CartItem.customer_id == account.id).delete(synchronize_session=False)
     db.commit()
     db.refresh(order)
     payload = order_payload(order)

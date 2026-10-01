@@ -51,28 +51,27 @@ def me(account: CurrentAccount):
 
 @router.patch("/profile", response_model=AccountOut)
 def update_profile(data: AccountProfileUpdate, account: CurrentAccount, db: DbSession):
-    if account.role != Role.USER:
-        raise HTTPException(status_code=403, detail="Profile editing is available for customer accounts")
     email = str(data.email).lower().strip()
     duplicate = db.scalar(select(Account.id).where(Account.email == email, Account.id != account.id))
     if duplicate:
         raise HTTPException(status_code=409, detail="An account with this email already exists")
-    addresses = [item.model_dump() for item in data.addresses]
-    ids = [item["id"] for item in addresses]
-    if len(ids) != len(set(ids)):
-        raise HTTPException(status_code=422, detail="Each saved address needs a unique id")
-    for address_id, label in (("home", "Home"), ("work", "Work")):
-        if address_id not in ids:
-            addresses.append({"id": address_id, "label": label, "house_number": "", "road": "", "area": "", "city": "", "pincode": "", "landmark": "", "latitude": None, "longitude": None, "is_default": False})
-    defaults = [item for item in addresses if item.get("is_default")]
-    if len(defaults) > 1:
-        raise HTTPException(status_code=422, detail="Choose only one default delivery address")
-    if not defaults and addresses:
-        addresses[0]["is_default"] = True
     account.name = data.name.strip()
     account.email = email
     account.phone = data.phone.strip() if data.phone else None
-    account.addresses = addresses
+    if account.role == Role.USER and data.addresses is not None:
+        addresses = [item.model_dump() for item in data.addresses]
+        ids = [item["id"] for item in addresses]
+        if len(ids) != len(set(ids)):
+            raise HTTPException(status_code=422, detail="Each saved address needs a unique id")
+        for address_id, label in (("home", "Home"), ("work", "Work")):
+            if address_id not in ids:
+                addresses.append({"id": address_id, "label": label, "house_number": "", "road": "", "area": "", "city": "", "pincode": "", "landmark": "", "latitude": None, "longitude": None, "is_default": False})
+        defaults = [item for item in addresses if item.get("is_default")]
+        if len(defaults) > 1:
+            raise HTTPException(status_code=422, detail="Choose only one default delivery address")
+        if not defaults and addresses:
+            addresses[0]["is_default"] = True
+        account.addresses = addresses
     db.commit()
     db.refresh(account)
     return account

@@ -88,12 +88,21 @@ class AccountProfileUpdate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     email: EmailStr
     phone: str | None = Field(default=None, max_length=32)
-    addresses: list[SavedAddressInput] = Field(max_length=12)
+    addresses: list[SavedAddressInput] | None = Field(default=None, max_length=12)
 
 
 class PasswordUpdate(BaseModel):
     current_password: str
     new_password: str = Field(min_length=10, max_length=128)
+
+
+class CartItemUpdate(BaseModel):
+    quantity: int = Field(ge=0, le=99)
+
+
+class CartItemOut(ORMModel):
+    menu_item_id: int
+    quantity: int
 
 
 class AccountsPageOut(BaseModel):
@@ -117,6 +126,8 @@ class MenuItemInput(BaseModel):
     description: str = Field(default="", max_length=2000)
     category: str = Field(default="", max_length=80)
     price_paise: int = Field(gt=0, le=10_000_000)
+    discount_percent: int = Field(default=0, ge=0, le=100)
+    discounted_price_paise: int | None = Field(default=None, gt=0, le=10_000_000)
     tax_percent: int = Field(default=18, ge=0, le=30)
     image_url: str | None = Field(default=None, max_length=500)
     image_urls: list[str] = Field(default_factory=list, max_length=20)
@@ -131,12 +142,16 @@ class MenuItemOut(ORMModel):
     description: str
     category: str
     price_paise: int
+    discount_percent: int
+    discounted_price_paise: int | None
     tax_percent: int
     image_url: str | None
     image_urls: list[str]
     is_vegetarian: bool
     is_available: bool
     is_featured: bool
+    discount_campaign_name: str | None = None
+    popularity_count: int = 0
 
 
 class MenuCategoryInput(BaseModel):
@@ -162,6 +177,7 @@ class OrderCreate(BaseModel):
     payment_method: PaymentMethod
     address: str = Field(default="", max_length=500)
     notes: str = Field(default="", max_length=500)
+    scheduled_for: datetime | None = None
 
     @field_validator("items")
     @classmethod
@@ -212,7 +228,7 @@ class RestaurantSettingsInput(BaseModel):
     tagline: str = Field(max_length=200)
     phone: str = Field(max_length=32)
     address: str = Field(max_length=300)
-    opening_hours: str = Field(max_length=120)
+    weekly_schedule: dict[str, dict[str, str | bool]] = Field(default_factory=dict)
     tax_percent: int = Field(ge=0, le=30)
     delivery_fee_paise: int = Field(ge=0, le=1_000_000)
     minimum_order_paise: int = Field(ge=0, le=10_000_000)
@@ -226,7 +242,7 @@ class RestaurantSettingsOut(ORMModel):
     tagline: str
     phone: str
     address: str
-    opening_hours: str
+    weekly_schedule: dict
     tax_percent: int
     delivery_fee_paise: int
     minimum_order_paise: int
@@ -250,3 +266,38 @@ class VerifyOtpInput(BaseModel):
 class DraftInput(BaseModel):
     customer_name: str = Field(default="Walk-in", max_length=120)
     payload: dict = Field(default_factory=dict)
+
+
+class MenuPauseInput(BaseModel):
+    mode: str = Field(pattern=r"^(today|manual)$")
+
+
+class OfferInput(BaseModel):
+    audience: str = Field(pattern=r"^(ALL|NEW|RETURNING)$")
+    channels: list[str] = Field(min_length=1)
+    message: str = Field(min_length=2, max_length=1000)
+
+    @field_validator("channels")
+    @classmethod
+    def valid_channels(cls, value: list[str]) -> list[str]:
+        if not value or any(channel not in {"SMS", "EMAIL"} for channel in value):
+            raise ValueError("Choose SMS, email, or both")
+        return list(dict.fromkeys(value))
+
+
+class MenuDiscountInput(BaseModel):
+    menu_item_ids: list[int] = Field(min_length=1)
+    campaign_name: str | None = Field(default=None, max_length=80)
+    discount_percent: int = Field(ge=1, le=99)
+    starts_at: datetime
+    ends_at: datetime
+
+    @model_validator(mode="after")
+    def valid_range(self):
+        if self.starts_at.tzinfo is None or self.ends_at.tzinfo is None:
+            raise ValueError("Discount start and end times must include a timezone")
+        if self.ends_at <= self.starts_at:
+            raise ValueError("Discount end time must be after its start time")
+        if self.campaign_name is not None:
+            self.campaign_name = self.campaign_name.strip() or None
+        return self

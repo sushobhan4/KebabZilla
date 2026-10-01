@@ -10,6 +10,12 @@ const defaults = (): SavedAddress[] => [
   { id: 'home', label: 'Home', house_number: '', road: '', area: '', city: '', pincode: '', landmark: '', latitude: null, longitude: null, is_default: true },
   { id: 'work', label: 'Work', house_number: '', road: '', area: '', city: '', pincode: '', landmark: '', latitude: null, longitude: null, is_default: false },
 ]
+function homeForProfile(role: string) {
+  if (role === 'ADMIN') return '/admin'
+  if (role === 'EMPLOYEE') return '/ops'
+  if (role === 'DELIVERY') return '/delivery'
+  return '/'
+}
 const amtalaMapCenter: google.maps.LatLngLiteral = { lat: 22.365278, lng: 88.269444 }
 let googleLibrariesPromise: Promise<[google.maps.MapsLibrary, google.maps.GeocodingLibrary]> | null = null
 
@@ -113,6 +119,7 @@ function AddressMap({ address, onSave, onClose }: { address: SavedAddress; onSav
 
 export default function Profile() {
   const { account, loading, updateAccount } = useAuth()
+  const isCustomer = account?.role === 'USER'
   const [form, setForm] = useState({ name: account?.name || '', email: account?.email || '', phone: account?.phone || '' })
   const [addresses, setAddresses] = useState<SavedAddress[]>(account?.addresses?.length ? account.addresses : defaults())
   const [activeAddress, setActiveAddress] = useState('home')
@@ -139,20 +146,20 @@ export default function Profile() {
   async function saveProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setError(''); setNotice('')
     const savedAddressId = activeAddress
-    const incomplete = addresses.find((item) => (item.latitude != null || item.longitude != null) && (item.latitude == null || item.longitude == null || !item.house_number?.trim() || !item.road?.trim() || !item.area?.trim() || !item.city?.trim() || !(item.pincode || item.postal_code)?.trim()))
+    const incomplete = isCustomer ? addresses.find((item) => (item.latitude != null || item.longitude != null) && (item.latitude == null || item.longitude == null || !item.house_number?.trim() || !item.road?.trim() || !item.area?.trim() || !item.city?.trim() || !(item.pincode || item.postal_code)?.trim())) : undefined
     if (incomplete) {
       setActiveAddress(incomplete.id)
       setError(`Complete the house or flat, road, area, city, and PIN code for ${incomplete.label}. Landmark is optional.`)
       return
     }
     setBusy(true)
-    const normalized = addresses.map(({ postal_code, ...item }) => ({ ...item, pincode: item.pincode || postal_code || '' }))
+    const normalized = isCustomer ? addresses.map(({ postal_code, ...item }) => ({ ...item, pincode: item.pincode || postal_code || '' })) : undefined
     try {
-      const updated = await api<Account>('/auth/profile', { method: 'PATCH', body: JSON.stringify({ ...form, phone: form.phone || null, addresses: normalized }) })
-      updateAccount(updated); setForm({ name: updated.name, email: updated.email, phone: updated.phone || '' }); setAddresses(updated.addresses)
-      savedProfile.current = JSON.stringify({ form: { name: updated.name, email: updated.email, phone: updated.phone || '' }, addresses: updated.addresses })
+      const updated = await api<Account>('/auth/profile', { method: 'PATCH', body: JSON.stringify({ ...form, phone: form.phone || null, ...(normalized ? { addresses: normalized } : {}) }) })
+      updateAccount(updated); setForm({ name: updated.name, email: updated.email, phone: updated.phone || '' }); if (isCustomer) setAddresses(updated.addresses)
+      savedProfile.current = JSON.stringify({ form: { name: updated.name, email: updated.email, phone: updated.phone || '' }, addresses: isCustomer ? updated.addresses : addresses })
       if (updated.addresses.some((item) => item.id === savedAddressId)) setActiveAddress(savedAddressId)
-      setNotice('Profile and saved addresses updated.')
+      setNotice(isCustomer ? 'Profile and saved addresses updated.' : 'Profile updated.')
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not save your profile.') }
     finally { setBusy(false) }
   }
@@ -181,7 +188,7 @@ export default function Profile() {
 
   if (loading) return <main className="customer-page profile-page"><Loading label="Loading your profile…" /></main>
   return <main className="customer-page profile-page">
-    <PageTitle eyebrow="YOUR KEBABZILLA ACCOUNT" title="Edit profile" description="Update your personal details, password, and saved addresses." action={<Link className="button button-secondary" to="/"><ArrowLeft size={15} /> Back to menu</Link>} />
+    <PageTitle eyebrow={`${account?.role || 'YOUR'} KEBABZILLA ACCOUNT`} title="Edit profile" description="Update your personal details and password." action={<Link className="button button-secondary" to={account && account.role !== 'USER' ? homeForProfile(account.role) : '/'}><ArrowLeft size={15} /> Back</Link>} />
     {error && <Notice onDismiss={() => setError('')}>{error}</Notice>}
     {notice && <Notice tone="success" onDismiss={() => setNotice('')}>{notice}</Notice>}
     <form className="profile-card" onSubmit={(event) => void saveProfile(event)}>
@@ -191,7 +198,7 @@ export default function Profile() {
         <label className="field-label"><span>Email address <sup className="field-required">*</sup></span><input required type="email" maxLength={255} value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} /></label>
         <label className="field-label"><span>Mobile number <sup className="field-required">*</sup></span><input required type="tel" maxLength={32} value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} /></label>
       </div>
-      <div className="profile-card-heading profile-address-heading"><span><h2>Saved addresses</h2><small>Select a tab to edit that address. Home and Work are included by default.</small></span><Button type="button" variant="secondary" onClick={addAddress}><Plus size={15} /> Add address</Button></div>
+      {isCustomer && <><div className="profile-card-heading profile-address-heading"><span><h2>Saved addresses</h2><small>Select a tab to edit that address. Home and Work are included by default.</small></span><Button type="button" variant="secondary" onClick={addAddress}><Plus size={15} /> Add address</Button></div>
       <div className="address-tabs" role="tablist" aria-label="Saved addresses">{addresses.map((item) => <button type="button" role="tab" aria-selected={selectedAddress?.id === item.id} className={`address-tab ${selectedAddress?.id === item.id ? 'active' : ''}`} key={item.id} onClick={() => setActiveAddress(item.id)}>{item.label}{item.is_default && <Star size={12} fill="currentColor" />}</button>)}</div>
       {selectedAddress && <article className="saved-address-card" key={selectedAddress.id}>
         <div className="saved-address-title"><label className="field-label"><span>Address name <sup className="field-required">*</sup></span><input required maxLength={40} value={selectedAddress.label} onChange={(event) => editAddress(selectedAddress.id, { label: event.target.value })} /></label><div className="address-card-actions">{!selectedAddress.is_default && <button className="text-button address-default-button" type="button" onClick={() => setDefaultAddress(selectedAddress.id)}><Star size={14} /> Set as default</button>}{selectedAddress.id !== 'home' && selectedAddress.id !== 'work' && <button className="icon-button danger-icon" type="button" aria-label="Delete address" title="Delete address" onClick={() => { let remaining = addresses.filter((item) => item.id !== selectedAddress.id); if (!remaining.some((item) => item.is_default) && remaining.length) remaining = remaining.map((item, index) => ({ ...item, is_default: index === 0 })); setAddresses(remaining); setActiveAddress(remaining[0]?.id || 'home') }}><Trash2 size={16} /></button>}</div></div>
@@ -212,7 +219,8 @@ export default function Profile() {
         </div>
         </> : <div className="address-pin-first"><span><MapPin size={18} /></span><div><strong>Set the exact location first</strong><small>House or flat, road, area, city, PIN code, and landmark fields appear after you save a map pin.</small></div><Button type="button" onClick={() => setMapAddress(selectedAddress.id)}><MapPin size={15} /> Set location on map</Button></div>}
       </article>}
-      {profileChanged && <div className="profile-save-row"><Button type="submit" disabled={busy}><Save size={15} /> {busy ? 'Saving…' : 'Save profile & address'}</Button></div>}
+      </>}
+      {profileChanged && <div className="profile-save-row"><Button type="submit" disabled={busy}><Save size={15} /> {busy ? 'Saving…' : isCustomer ? 'Save profile & address' : 'Save profile'}</Button></div>}
     </form>
     <form className="profile-card password-card" onSubmit={(event) => void changePassword(event)}>
       <div className="profile-card-heading"><h2>Change password</h2><span>At least 10 characters for the new password.</span></div>
@@ -223,6 +231,6 @@ export default function Profile() {
       </div>
       <div className="profile-save-row"><Button type="submit" variant="secondary" disabled={busy}><Check size={15} /> Update password</Button></div>
     </form>
-    {mapAddress && addresses.find((item) => item.id === mapAddress) && <AddressMap address={addresses.find((item) => item.id === mapAddress)!} onClose={() => setMapAddress(null)} onSave={(latitude, longitude, parts) => { editAddress(mapAddress, { ...parts, latitude, longitude }); setEditingAddress(mapAddress) }} />}
+    {isCustomer && mapAddress && addresses.find((item) => item.id === mapAddress) && <AddressMap address={addresses.find((item) => item.id === mapAddress)!} onClose={() => setMapAddress(null)} onSave={(latitude, longitude, parts) => { editAddress(mapAddress, { ...parts, latitude, longitude }); setEditingAddress(mapAddress) }} />}
   </main>
 }

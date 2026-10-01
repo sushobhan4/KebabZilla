@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { ArrowLeft, ArrowRight, Check, CircleAlert, ImageOff, LoaderCircle, Minus, Plus, Search, X } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { API_BASE, formatStatus } from './api'
@@ -12,6 +12,33 @@ export function Brand({ compact = false }: { compact?: boolean }) {
 
 export function PageTitle({ eyebrow, title, description, action }: { eyebrow?: string; title: string; description?: string; action?: ReactNode }) {
   return <div className="page-title-row"><div>{eyebrow && <div className="eyebrow">{eyebrow}</div>}<h1>{title}</h1>{description && <p>{description}</p>}</div>{action && <div className="page-action">{action}</div>}</div>
+}
+
+export function RoundedSelect({ value, options, onChange, className = '', disabled = false, ariaLabel }: {
+  value: string
+  options: { value: string; label: string }[]
+  onChange: (value: string) => void
+  className?: string
+  disabled?: boolean
+  ariaLabel?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement>(null)
+  const selected = options.find((option) => option.value === value)
+  useEffect(() => {
+    if (!open) return
+    const close = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false)
+    }
+    document.addEventListener('pointerdown', close)
+    return () => document.removeEventListener('pointerdown', close)
+  }, [open])
+  return <div className={`rounded-select ${className}`} ref={root}>
+    <button type="button" className="rounded-select-trigger" aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open} disabled={disabled} onClick={() => setOpen((current) => !current)}>
+      <span>{selected?.label || 'Choose…'}</span><span className={`rounded-select-chevron ${open ? 'open' : ''}`}>⌄</span>
+    </button>
+    {open && <div className="rounded-select-menu" role="listbox" aria-label={ariaLabel}>{options.map((option) => <button key={option.value} type="button" role="option" aria-selected={option.value === value} className={option.value === value ? 'selected' : ''} onClick={() => { onChange(option.value); setOpen(false) }}>{option.label}</button>)}</div>}
+  </div>
 }
 
 export function Badge({ children, tone = 'neutral' }: { children: ReactNode; tone?: string }) {

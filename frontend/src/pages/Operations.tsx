@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
-import { ArrowRight, BadgeIndianRupee, Check, CircleCheck, ClipboardList, CookingPot, Flame, Plus, ReceiptText, Save, Trash2, Truck, UserRound } from 'lucide-react'
+import { ArrowRight, BadgeIndianRupee, Check, CircleCheck, ClipboardList, CookingPot, Flame, Plus, ReceiptText, Save, Trash2, Truck, UserRound, Search } from 'lucide-react'
 import { Link, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { api, formatINR, friendlyDate, type MenuItem, type Order } from '../api'
-import { useAuth } from '../state'
 import { Badge, Button, EmptyState, Loading, MenuImageCarousel, Notice, PageTitle, QuantityPicker, StatusBadge } from '../components'
 
 function Queue() {
@@ -45,7 +44,7 @@ function Queue() {
       if (printWindow) {
         const lines = order.items.map((item) => `<tr><td>${item.quantity} × ${escapeReceipt(item.name)}</td><td>${formatINR(item.line_total_paise)}</td></tr>`).join('')
         const source = order.customer_id !== null ? 'ONLINE ORDER' : order.order_type === 'DINE_IN' ? 'WALK-IN · DINE-IN' : 'WALK-IN · PICKUP'
-        printWindow.document.write(`<!doctype html><html><head><title>Receipt ${escapeReceipt(order.public_id)}</title><style>body{font:14px Arial,sans-serif;color:#111;margin:24px}h1{font-size:20px;margin:0 0 4px}small{color:#555}.tag{margin:12px 0;padding:7px;background:#eee;font-weight:bold}table{width:100%;border-collapse:collapse;margin:18px 0}td{padding:7px 0;border-bottom:1px solid #ddd}td:last-child{text-align:right}.totals p{display:flex;justify-content:space-between;margin:6px 0}.grand{font-size:18px;font-weight:bold;border-top:1px solid #111;padding-top:10px}</style></head><body><h1>KebabZilla</h1><small>Order ${escapeReceipt(order.public_id)} · ${escapeReceipt(friendlyDate(order.created_at))}</small><div class="tag">${source}</div><p>Customer: ${escapeReceipt(order.customer_name)}</p><p>${escapeReceipt(order.address || 'Restaurant counter')}</p><table>${lines}</table><div class="totals"><p><span>Subtotal</span><span>${formatINR(order.subtotal_paise)}</span></p><p><span>Tax</span><span>${formatINR(order.tax_paise)}</span></p>${order.delivery_fee_paise ? `<p><span>Delivery</span><span>${formatINR(order.delivery_fee_paise)}</span></p>` : ''}<p class="grand"><span>Total</span><span>${formatINR(order.total_paise)}</span></p></div></body></html>`)
+        printWindow.document.write(`<!doctype html><html><head><title>Receipt ${escapeReceipt(order.public_id)}</title><style>body{font:15px Arial,sans-serif;color:#111;margin:24px}h1{font-size:20px;margin:0 0 4px}small{color:#555}.tag{margin:12px 0;padding:7px;background:#eee;font-weight:bold}table{width:100%;border-collapse:collapse;margin:18px 0}td{padding:7px 0;border-bottom:1px solid #ddd}td:last-child{text-align:right}.totals p{display:flex;justify-content:space-between;margin:6px 0}.grand{font-size:18px;font-weight:bold;border-top:1px solid #111;padding-top:10px}</style></head><body><h1>KebabZilla</h1><small>Order ${escapeReceipt(order.public_id)} · ${escapeReceipt(friendlyDate(order.created_at))}</small><div class="tag">${source}</div><p>Customer: ${escapeReceipt(order.customer_name)}</p><p>${escapeReceipt(order.address || 'Restaurant counter')}</p><table>${lines}</table><div class="totals"><p><span>Subtotal</span><span>${formatINR(order.subtotal_paise)}</span></p><p><span>Tax</span><span>${formatINR(order.tax_paise)}</span></p>${order.delivery_fee_paise ? `<p><span>Delivery</span><span>${formatINR(order.delivery_fee_paise)}</span></p>` : ''}<p class="grand"><span>Total</span><span>${formatINR(order.total_paise)}</span></p></div></body></html>`)
         printWindow.document.close()
         printWindow.focus()
         window.setTimeout(() => printWindow.print(), 300)
@@ -72,12 +71,36 @@ function Queue() {
   </>
 }
 
+function MenuAvailability() {
+  const [menu, setMenu] = useState<MenuItem[]>([])
+  const [paused, setPaused] = useState<Record<number, { employee_name: string; paused_until: string }>>({})
+  const [search, setSearch] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState<number | null>(null)
+  const refresh = useCallback(async () => {
+    const [items, pauses] = await Promise.all([api<MenuItem[]>('/staff/menu'), api<{ menu_item_id: number; employee_name: string; paused_until: string }[]>('/staff/menu-pauses')])
+    setMenu(items)
+    setPaused(Object.fromEntries(pauses.map((pause) => [pause.menu_item_id, pause])))
+  }, [])
+  useEffect(() => { void refresh().catch((err) => setError(err instanceof Error ? err.message : 'Could not load menu availability.')) }, [refresh])
+  async function setItem(item: MenuItem, mode?: 'today') {
+    setBusy(item.id); setError('')
+    try {
+      await api(mode ? `/staff/menu/${item.id}/pause` : `/staff/menu/${item.id}/pause`, { method: mode ? 'POST' : 'DELETE', ...(mode ? { body: JSON.stringify({ mode }) } : {}) })
+      await refresh()
+    } catch (err) { setError(err instanceof Error ? err.message : 'Could not update this menu item.') }
+    finally { setBusy(null) }
+  }
+  const visibleMenu = menu.filter((item) => `${item.name} ${item.category} ${item.description}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()))
+  return <><PageTitle eyebrow="WHAT'S ON THE MENU" title="Menu availability" description="Turn an item off until the next working day, then turn it back on any time." />{error && <Notice>{error}</Notice>}<section className="admin-panel employee-menu-panel"><label className="menu-search employee-menu-search"><Search size={17} /><input type="search" aria-label="Search menu availability" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search menu items" /></label><div className="employee-menu-list">{visibleMenu.map((item) => { const pausedItem = paused[item.id]; return <article className="employee-menu-row" key={item.id}><div><strong>{item.name}</strong><small>{item.category || 'Menu item'} · {pausedItem ? `Off until the next working day · paused by ${pausedItem.employee_name}` : 'Available to order'}</small></div><label className="availability-switch"><input type="checkbox" checked={!pausedItem} disabled={busy === item.id} onChange={() => void setItem(item, pausedItem ? undefined : 'today')} /><span aria-hidden="true" /><b>{pausedItem ? 'Off' : 'On'}</b></label></article>})}</div>{!visibleMenu.length && <EmptyState icon={<Search size={20} />} title="No menu item found" description="Try a different menu item name or category." />}</section></>
+}
+
 function Billing() {
   const [menu, setMenu] = useState<MenuItem[]>([])
+  const [menuSearch, setMenuSearch] = useState('')
   const [cart, setCart] = useState<{ item: MenuItem; quantity: number }[]>([])
-  const [name, setName] = useState('Walk-in')
+  const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
-  const [notes, setNotes] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [invoice, setInvoice] = useState<Order | null>(null)
@@ -95,7 +118,7 @@ function Billing() {
     const draft = state.draft
     const lines = draft.payload?.items || draft.items || []
     setCart(lines.map((line) => ({ item: menu.find((item) => item.id === line.id)!, quantity: line.quantity })).filter((line) => line.item))
-    setName(draft.customer_name || 'Walk-in')
+    setName(draft.customer_name || '')
     setPhone(draft.phone || '')
     navigate(location.pathname, { replace: true, state: null })
   }, [location.pathname, menu, navigate, state])
@@ -111,35 +134,35 @@ function Billing() {
   async function saveDraft() {
     setError('')
     try {
-      await api('/staff/drafts', { method: 'POST', body: JSON.stringify({ customer_name: name, payload: { phone, notes, items: cart.map((line) => ({ id: line.item.id, quantity: line.quantity })) } }) })
+      await api('/staff/drafts', { method: 'POST', body: JSON.stringify({ customer_name: name, payload: { phone, items: cart.map((line) => ({ id: line.item.id, quantity: line.quantity })) } }) })
       setCart([])
-      setName('Walk-in')
+      setName('')
       setPhone('')
-      setNotes('')
       setError('Draft saved. You can pick it up any time from Saved drafts.')
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not save draft.') }
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (!name.trim()) { setError('Enter the customer’s name to create this bill.'); return }
     if (!cart.length) { setError('Add at least one menu item to create a bill.'); return }
     setBusy(true)
     setError('')
     try {
       const result = await api<Order>(`/staff/walk-in?customer_name=${encodeURIComponent(name)}${phone ? `&phone=${encodeURIComponent(phone)}` : ''}`, {
-        method: 'POST', body: JSON.stringify({ items: cart.map((line) => ({ menu_item_id: line.item.id, quantity: line.quantity })), payment_method: 'CASH', address: 'Restaurant counter', notes }),
+        method: 'POST', body: JSON.stringify({ items: cart.map((line) => ({ menu_item_id: line.item.id, quantity: line.quantity })), payment_method: 'CASH', address: 'Restaurant counter', notes: '' }),
       })
       setInvoice(result)
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not create this bill.') }
     finally { setBusy(false) }
   }
 
-  if (invoice) return <div className="invoice-wrap"><article className="invoice-card"><div className="invoice-success"><span><Check size={20} /></span><div><div className="eyebrow">BILL PAID · WALK-IN</div><h1>All squared away.</h1></div></div><div className="invoice-brand"><span><Flame size={15} /></span> KebabZilla <small> · PAYMENT RECEIPT</small></div><div className="invoice-id"><span>INVOICE</span><strong>{invoice.public_id}</strong><small>{friendlyDate(invoice.created_at)}</small></div><div className="invoice-lines">{invoice.items.map((line) => <div key={line.id}><span>{line.quantity} × {line.name}<small>{line.tax_percent}% tax</small></span><strong>{formatINR(line.line_total_paise)}</strong></div>)}<div><span>Tax</span><strong>{formatINR(invoice.tax_paise)}</strong></div><div className="invoice-total"><span>Total paid</span><strong>{formatINR(invoice.total_paise)}</strong></div></div><div className="invoice-customer"><span><UserRound size={14} /> {invoice.customer_name}</span><Badge tone="success">CASH</Badge></div><div className="invoice-actions"><Button onClick={() => window.print()}><ReceiptText size={16} /> Print receipt</Button><Button variant="secondary" onClick={() => { setInvoice(null); setCart([]); setName('Walk-in'); setPhone(''); setNotes('') }}>New bill</Button></div></article></div>
+  if (invoice) return <div className="invoice-wrap"><article className="invoice-card"><div className="invoice-success"><span><Check size={20} /></span><div><div className="eyebrow">BILL PAID · WALK-IN</div><h1>All squared away.</h1></div></div><div className="invoice-brand"><span><Flame size={15} /></span> KebabZilla <small> · PAYMENT RECEIPT</small></div><div className="invoice-id"><span>INVOICE</span><strong>{invoice.public_id}</strong><small>{friendlyDate(invoice.created_at)}</small></div><div className="invoice-lines">{invoice.items.map((line) => <div key={line.id}><span>{line.quantity} × {line.name}<small>{line.tax_percent}% tax</small></span><strong>{formatINR(line.line_total_paise)}</strong></div>)}<div><span>Tax</span><strong>{formatINR(invoice.tax_paise)}</strong></div><div className="invoice-total"><span>Total paid</span><strong>{formatINR(invoice.total_paise)}</strong></div></div><div className="invoice-customer"><span><UserRound size={14} /> {invoice.customer_name}</span><Badge tone="success">CASH</Badge></div><div className="invoice-actions"><Button onClick={() => window.print()}><ReceiptText size={16} /> Print receipt</Button><Button variant="secondary" onClick={() => { setInvoice(null); setCart([]); setName(''); setPhone('') }}>New bill</Button></div></article></div>
 
   return <><PageTitle eyebrow="AT THE COUNTER" title="Walk-in billing" description="Close out a dine-in bill when your guest is ready to leave." action={<Link className="button button-secondary" to="/ops/drafts"><ClipboardList size={15} /> Saved drafts</Link>} />
     {error && <Notice tone={error.startsWith('Draft saved') ? 'success' : 'error'} onDismiss={() => setError('')} >{error}</Notice>}
-    <form onSubmit={submit} className="billing-layout"><section className="billing-menu"><div className="section-header"><div><h2>Menu</h2><span>Tap an item to add it</span></div><span className="menu-count">{menu.length} items</span></div><div className="billing-item-grid">{menu.map((item) => { const quantity = cart.find((line) => line.item.id === item.id)?.quantity || 0; return <div role="button" tabIndex={0} aria-pressed={quantity > 0} className={`billing-item ${quantity ? 'in-cart' : ''}`} key={item.id} onClick={() => setQuantity(item, quantity + 1)} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); setQuantity(item, quantity + 1) } }}>{item.image_urls?.length || item.image_url ? <span className="billing-item-icon billing-item-photo"><MenuImageCarousel images={item.image_urls?.length ? item.image_urls : item.image_url ? [item.image_url] : []} alt={item.name} className="menu-gallery-billing" /></span> : <span className="billing-item-icon">{item.is_vegetarian ? '🥬' : '🍢'}</span>}<span><strong>{item.name}</strong><small>{item.category} · {formatINR(item.price_paise)}</small></span>{quantity > 0 ? <Badge tone="soft">×{quantity}</Badge> : <Plus size={16} />}</div>})}</div></section>
-      <aside className="billing-ticket"><div className="ticket-heading"><span><ReceiptText size={17} /></span><div><h2>New bill</h2><small>Cash · Dine-in</small></div></div><label className="field-label">Customer name<input required maxLength={120} value={name} onChange={(event) => setName(event.target.value)} /></label><label className="field-label">Phone <span className="field-optional">optional</span><input type="tel" maxLength={32} value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Customer phone" /></label><label className="field-label">Kitchen note <span className="field-optional">optional</span><input maxLength={500} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="No onions, extra chutney…" /></label><div className="ticket-items">{cart.map(({ item, quantity }) => <div className="ticket-line" key={item.id}><span>{item.name}<small>{formatINR(item.price_paise)} each</small></span><QuantityPicker small quantity={quantity} onChange={(next) => setQuantity(item, next)} /><b>{formatINR(item.price_paise * quantity)}</b></div>)}</div><div className="ticket-total"><span>Bill total <small>· tax {formatINR(tax)} included</small></span><strong>{formatINR(total)}</strong></div><Button type="submit" disabled={busy || !cart.length} className="full-width">{busy ? 'Working…' : <>Complete bill · {formatINR(total)} <BadgeIndianRupee size={16} /></>}</Button><Button type="button" variant="secondary" className="full-width" disabled={!cart.length} onClick={() => void saveDraft()}><Save size={15} /> Save as draft</Button></aside>
+    <form onSubmit={submit} className="billing-layout"><section className="billing-menu"><div className="section-header"><div><h2>Menu</h2><span>Tap an item to add it</span></div><span className="menu-count">{menu.length} items</span></div><label className="menu-search billing-menu-search"><Search size={17} /><input type="search" aria-label="Search walk-in menu" value={menuSearch} onChange={(event) => setMenuSearch(event.target.value)} placeholder="Search menu items" /></label><div className="billing-item-grid">{menu.filter((item) => `${item.name} ${item.category} ${item.description}`.toLocaleLowerCase().includes(menuSearch.trim().toLocaleLowerCase())).map((item) => { const quantity = cart.find((line) => line.item.id === item.id)?.quantity || 0; return <div role="button" tabIndex={0} aria-pressed={quantity > 0} className={`billing-item ${quantity ? 'in-cart' : ''}`} key={item.id} onClick={() => setQuantity(item, quantity + 1)} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); setQuantity(item, quantity + 1) } }}>{item.image_urls?.length || item.image_url ? <span className="billing-item-icon billing-item-photo"><MenuImageCarousel images={item.image_urls?.length ? item.image_urls : item.image_url ? [item.image_url] : []} alt={item.name} className="menu-gallery-billing" /></span> : <span className="billing-item-icon">{item.is_vegetarian ? '🥬' : '🍢'}</span>}<span><strong>{item.name}</strong><small>{item.category} · {formatINR(item.price_paise)}</small></span>{quantity > 0 ? <Badge tone="soft">×{quantity}</Badge> : <Plus size={16} />}</div>})}</div></section>
+      <aside className="billing-ticket"><div className="ticket-heading"><span><ReceiptText size={17} /></span><div><h2>New bill</h2><small>Cash · Dine-in</small></div></div><label className="field-label">Customer name<input required maxLength={120} value={name} onChange={(event) => setName(event.target.value)} /></label><label className="field-label">Phone <span className="field-optional">optional</span><input type="tel" maxLength={32} value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Customer phone" /></label><div className="ticket-items">{cart.map(({ item, quantity }) => <div className="ticket-line" key={item.id}><span>{item.name}<small>{formatINR(item.price_paise)} each</small></span><QuantityPicker small quantity={quantity} onChange={(next) => setQuantity(item, next)} /><b>{formatINR(item.price_paise * quantity)}</b></div>)}</div><div className="ticket-total"><span>Bill total <small>· tax {formatINR(tax)} included</small></span><strong>{formatINR(total)}</strong></div><Button type="submit" disabled={busy || !cart.length || !name.trim()} className="full-width">{busy ? 'Working…' : <>Complete bill · {formatINR(total)} <BadgeIndianRupee size={16} /></>}</Button><Button type="button" variant="secondary" className="full-width" disabled={!cart.length} onClick={() => void saveDraft()}><Save size={15} /> Save as draft</Button></aside>
     </form>
   </>
 }
@@ -161,9 +184,12 @@ function Drafts() {
 }
 
 export default function Operations() {
-  const { account } = useAuth()
-  if (account?.role === 'ADMIN') return <PageTitle eyebrow="ADMIN OPERATIONS" title="Staff console" description="Team queue and counter billing are available from the admin tools." action={<Link className="button button-primary" to="/admin/orders">Manage all orders <ArrowRight size={16} /></Link>} />
-  return <Routes><Route index element={<Queue />} /><Route path="billing" element={<Billing />} /><Route path="drafts" element={<Drafts />} /><Route path="*" element={<NavigateBack />} /></Routes>
+  return <Routes><Route index element={<Queue />} /><Route path="billing" element={<Billing />} /><Route path="drafts" element={<Drafts />} /><Route path="menu" element={<MenuAvailability />} /><Route path="*" element={<NavigateBack />} /></Routes>
 }
 
 function NavigateBack() { return <EmptyState title="That kitchen station is closed" description="Choose an operations station from the left menu." action={<Link to="/ops" className="button button-secondary">Back to order queue</Link>} /> }
+
+
+
+
+

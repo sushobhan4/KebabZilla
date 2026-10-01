@@ -4,7 +4,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../state'
 import { Notice } from '../components'
 
-export default function AuthPage({ mode }: { mode: 'login' | 'register' }) {
+export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recovery' }) {
   const { signIn, register } = useAuth()
   const navigate = useNavigate()
   const [name, setName] = useState('')
@@ -15,12 +15,17 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const isRegister = mode === 'register'
+  const isRecovery = mode === 'recovery'
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError('')
     setBusy(true)
     try {
+      if (isRecovery) {
+        setError('')
+        return
+      }
       if (isRegister) await register(name.trim(), email.trim(), phone.trim(), password)
       else await signIn(email.trim(), password)
       navigate(isRegister ? '/' : '/workspace', { replace: true })
@@ -39,16 +44,16 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' }) {
       <div className="auth-visual-footer">© KebabZilla · Made fresh, served with care</div>
     </section>
     <section className="auth-form-side"><div className="auth-mobile-brand"><img src="/kebabzilla-mark.png" alt="" /><span className="brand-word">Kebab<span>Zilla</span></span></div><div className="auth-card">
-      <div className="auth-heading"><div className="eyebrow">{isRegister ? 'GOOD TASTE STARTS HERE' : 'WELCOME BACK'}</div><h1>{isRegister ? 'Create your account' : 'Come on in.'}</h1><p>{isRegister ? 'Get your favorites to your door in a few taps.' : 'The grill’s hot and your favorites are waiting.'}</p></div>
+      <div className="auth-heading"><div className="eyebrow">{isRecovery ? 'WE CAN HELP' : isRegister ? 'GOOD TASTE STARTS HERE' : 'WELCOME BACK'}</div><h1>{isRecovery ? 'Reset your password' : isRegister ? 'Create your account' : 'Come on in.'}</h1><p>{isRecovery ? 'Enter the email for your customer, admin, employee, or delivery account. Your restaurant administrator can help restore access.' : isRegister ? 'Get your favorites to your door in a few taps.' : 'The grill’s hot and your favorites are waiting.'}</p></div>
       {error && <Notice>{error}</Notice>}
       <form className="auth-form" onSubmit={submit}>
         {isRegister && <label className="field-label">Your name<div className="input-wrap"><UserRound size={17} /><input autoComplete="name" required minLength={2} maxLength={120} placeholder="What should we call you?" value={name} onChange={(event) => setName(event.target.value)} /></div></label>}
         <label className="field-label">Email address<div className="input-wrap"><Mail size={17} /><input type="email" autoComplete="email" required placeholder="you@example.com" value={email} onChange={(event) => setEmail(event.target.value)} /></div></label>
         {isRegister && <label className="field-label">Phone number <span className="field-optional">optional</span><div className="input-wrap"><Phone size={17} /><input type="tel" autoComplete="tel" maxLength={32} placeholder="+91 98765 43210" value={phone} onChange={(event) => setPhone(event.target.value)} /></div></label>}
-        <label className="field-label">Password<div className="input-wrap"><LockKeyhole size={17} /><input type={showPassword ? 'text' : 'password'} autoComplete={isRegister ? 'new-password' : 'current-password'} required minLength={isRegister ? 10 : 1} maxLength={128} placeholder={isRegister ? 'At least 10 characters' : 'Your password'} value={password} onChange={(event) => setPassword(event.target.value)} /><button className="input-trailing" type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></label>
-        <button className="button button-dark auth-submit" type="submit" disabled={busy}>{busy ? 'One moment…' : isRegister ? 'Create my account' : 'Sign in'}<ArrowRight size={17} /></button>
+        {!isRecovery && <><label className="field-label">Password<div className="input-wrap"><LockKeyhole size={17} /><input type={showPassword ? 'text' : 'password'} autoComplete={isRegister ? 'new-password' : 'current-password'} required minLength={isRegister ? 10 : 1} maxLength={128} placeholder={isRegister ? 'At least 10 characters' : 'Your password'} value={password} onChange={(event) => setPassword(event.target.value)} /><button className="input-trailing" type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></label>{!isRegister && <Link className="forgot-password-link" to="/forgot-password">Forgot password?</Link>}</>}
+        {isRecovery ? <div className="notice notice-info">Password recovery is available for every account type. Please contact your restaurant administrator with this email to have your password reset securely.</div> : <button className="button button-dark auth-submit" type="submit" disabled={busy}>{busy ? 'One moment…' : isRegister ? 'Create my account' : 'Sign in'}<ArrowRight size={17} /></button>}
       </form>
-      <div className="auth-switch">{isRegister ? 'Already have an account?' : 'New around here?'} <Link to={isRegister ? '/login' : '/register'}>{isRegister ? 'Sign in' : 'Create an account'}</Link></div>
+      <div className="auth-switch">{isRecovery ? 'Remembered it?' : isRegister ? 'Already have an account?' : 'New around here?'} <Link to={isRecovery || isRegister ? '/login' : '/register'}>{isRecovery || isRegister ? 'Sign in' : 'Create an account'}</Link></div>
       <div className="auth-secure"><LockKeyhole size={14} /> Your account is secured with encrypted sign-in.</div>
     </div></section>
   </main>

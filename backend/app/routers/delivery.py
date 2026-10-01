@@ -11,6 +11,7 @@ from app.models import (
     DeliveryBatch,
     DeliveryBatchOrder,
     Order,
+    AdminEvent,
     OrderStatus,
     Payment,
     PaymentMethod,
@@ -20,7 +21,7 @@ from app.models import (
 from app.schemas import BatchCreate, VerifyOtpInput
 from app.services import create_delivery_otp, order_payload, transition_order, verify_delivery_otp
 
-router = APIRouter(prefix="/delivery", tags=["delivery"], dependencies=[Depends(require_roles(Role.DELIVERY))])
+router = APIRouter(prefix="/delivery", tags=["delivery"], dependencies=[Depends(require_roles(Role.ADMIN, Role.DELIVERY))])
 
 
 def route_bucket(address: str) -> str:
@@ -64,6 +65,7 @@ async def claim_order(order_id: int, account: CurrentAccount, db: DbSession):
         db.rollback()
         raise HTTPException(status_code=404, detail="Delivery not found")
     transition_order(order, OrderStatus.OUT_FOR_DELIVERY)
+    db.add(AdminEvent(event_type="delivery_claimed", message=f"{account.name} picked order {order.public_id}", actor_id=account.id, details={"order_id": order.id, "delivery_id": account.id, "delivery_name": account.name}))
     otp = create_delivery_otp(order)
     await customer_notifier.send_delivery_otp(
         phone=order.customer_phone or (order.customer.phone if order.customer else None),
@@ -117,6 +119,7 @@ def deliver(order_id: int, data: VerifyOtpInput, account: CurrentAccount, db: Db
     if not verify_delivery_otp(order, data.otp):
         raise HTTPException(status_code=400, detail="The delivery code is incorrect or expired")
     transition_order(order, OrderStatus.DELIVERED)
+    db.add(AdminEvent(event_type="order_delivered", message=f"Order {order.public_id} delivered by {account.name}", actor_id=account.id, details={"order_id": order.id, "delivery_id": account.id, "delivery_name": account.name}))
     order.delivered_at = datetime.now(timezone.utc)
     if order.payment_method == PaymentMethod.CASH:
         order.payment_status = PaymentStatus.PAID

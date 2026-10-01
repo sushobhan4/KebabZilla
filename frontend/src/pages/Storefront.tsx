@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ArrowDown, ArrowRight, Check, Clock3, Flame, Leaf, MapPin, Phone, Plus, ShieldCheck, ShoppingBag, Sparkles, Truck, Utensils, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowDown, ArrowRight, Check, ChevronDown, Clock3, Flame, Leaf, ListFilter, MapPin, Phone, Plus, ShieldCheck, ShoppingBag, Sparkles, Truck, Utensils, X, Search } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { api, formatINR, formatSavedAddress, type MenuItem, type Order, type Restaurant } from '../api'
+import { api, formatINR, formatSavedAddress, type MenuItem, type Order, type Restaurant, type SavedCartItem } from '../api'
 import { useAuth } from '../state'
 import { Button, EmptyState, Loading, MenuImageCarousel, Notice, QuantityPicker } from '../components'
 import { launchCheckout, verifyRazorpayPayment } from '../payments'
@@ -16,22 +16,38 @@ export default function Storefront() {
   const [menu, setMenu] = useState<MenuItem[]>([])
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null)
   const [category, setCategory] = useState('All')
+  const [menuSearch, setMenuSearch] = useState('')
+  const [menuSort, setMenuSort] = useState<'popular_desc' | 'popular_asc' | 'price_asc' | 'price_desc'>('popular_desc')
+  const [sortOpen, setSortOpen] = useState(false)
   const [cart, setCart] = useState<CartLine[]>([])
   const [cartOpen, setCartOpen] = useState(false)
+  const [cartExpanded, setCartExpanded] = useState(false)
   const [address, setAddress] = useState('')
   const [selectedAddress, setSelectedAddress] = useState('')
   const [addressInitializedFor, setAddressInitializedFor] = useState<number | null>(null)
   const [notes, setNotes] = useState('')
+  const [scheduledFor, setScheduledFor] = useState('')
   const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'RAZORPAY'>('RAZORPAY')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState<Order | null>(null)
+  const cartSync = useRef<Promise<void>>(Promise.resolve())
+  const cartRetractTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const totalItems = useMemo(() => cart.reduce((total, line) => total + line.quantity, 0), [cart])
+  const orderingClosed = restaurant !== null && !restaurant.accepting_orders
 
   useEffect(() => {
     if (!totalItems) setCartOpen(false)
   }, [totalItems])
+
+  useEffect(() => () => { if (cartRetractTimer.current) clearTimeout(cartRetractTimer.current) }, [])
+
+  function revealCartSummary() {
+    setCartExpanded(true)
+    if (cartRetractTimer.current) clearTimeout(cartRetractTimer.current)
+    cartRetractTimer.current = setTimeout(() => setCartExpanded(false), 5000)
+  }
 
   useEffect(() => {
     Promise.all([api<MenuItem[]>('/menu'), api<Restaurant>('/restaurant')]).then(([items, config]) => {
@@ -39,6 +55,19 @@ export default function Storefront() {
       setRestaurant(config)
     }).catch((err) => setError(err instanceof Error ? err.message : 'We could not load the menu.')).finally(() => setLoading(false))
   }, [])
+
+  const cartLinesFromSaved = useCallback((saved: SavedCartItem[]) => saved.flatMap((savedItem) => {
+    const item = menu.find((menuItem) => menuItem.id === savedItem.menu_item_id)
+    return item && item.is_available ? [{ item, quantity: savedItem.quantity }] : []
+  }), [menu])
+
+  useEffect(() => {
+    if (account?.role !== 'USER') {
+      setCart([])
+      return
+    }
+    api<SavedCartItem[]>('/cart').then((saved) => setCart(cartLinesFromSaved(saved))).catch((err) => setError(err instanceof Error ? err.message : 'Could not restore your saved cart.'))
+  }, [account?.id, account?.role, cartLinesFromSaved])
 
   useEffect(() => {
     if (!account || addressInitializedFor === account.id) return
@@ -51,15 +80,29 @@ export default function Storefront() {
   }, [account, addressInitializedFor])
 
   const categories = useMemo(() => ['All', ...new Set(menu.map((item) => item.category).filter(Boolean))], [menu])
-  const visibleMenu = useMemo(() => category === 'All' ? menu : menu.filter((item) => item.category === category), [category, menu])
-  const subtotal = useMemo(() => cart.reduce((total, line) => total + line.item.price_paise * line.quantity, 0), [cart])
-  const tax = cart.reduce((sum, line) => sum + Math.round(line.item.price_paise * line.quantity * line.item.tax_percent / 100), 0)
+  const priceFor = (item: MenuItem) => item.discounted_price_paise ?? (item.discount_percent ? Math.round(item.price_paise * (100 - item.discount_percent) / 100) : item.price_paise)
+  const visibleMenu = useMemo(() => {
+    const query = menuSearch.trim().toLocaleLowerCase()
+    return menu.filter((item) => (category === 'All' || item.category === category) && (!query || `${item.name} ${item.description} ${item.category}`.toLocaleLowerCase().includes(query)))
+      .sort((a, b) => menuSort === 'popular_desc' ? b.popularity_count - a.popularity_count : menuSort === 'popular_asc' ? a.popularity_count - b.popularity_count : menuSort === 'price_asc' ? priceFor(a) - priceFor(b) : priceFor(b) - priceFor(a))
+  }, [category, menu, menuSearch, menuSort])
+  const subtotal = useMemo(() => cart.reduce((total, line) => total + (line.item.discounted_price_paise ?? (line.item.discount_percent ? Math.round(line.item.price_paise * (100 - line.item.discount_percent) / 100) : line.item.price_paise)) * line.quantity, 0), [cart])
+  const tax = cart.reduce((sum, line) => sum + Math.round((line.item.discounted_price_paise ?? (line.item.discount_percent ? Math.round(line.item.price_paise * (100 - line.item.discount_percent) / 100) : line.item.price_paise)) * line.quantity * line.item.tax_percent / 100), 0)
   const payable = subtotal + tax + (restaurant?.delivery_fee_paise || 0)
-  const setQuantity = useCallback((item: MenuItem, quantity: number) => setCart((old) => {
-    const found = old.find((line) => line.item.id === item.id)
-    if (!quantity) return old.filter((line) => line.item.id !== item.id)
-    return found ? old.map((line) => line.item.id === item.id ? { ...line, quantity } : line) : [...old, { item, quantity }]
-  }), [])
+  const setQuantity = useCallback((item: MenuItem, quantity: number) => {
+    if (orderingClosed) return
+    revealCartSummary()
+    setCart((old) => {
+      const found = old.find((line) => line.item.id === item.id)
+      if (!quantity) return old.filter((line) => line.item.id !== item.id)
+      return found ? old.map((line) => line.item.id === item.id ? { ...line, quantity } : line) : [...old, { item, quantity }]
+    })
+    if (account?.role !== 'USER') return
+    cartSync.current = cartSync.current.catch(() => undefined).then(async () => {
+      const saved = await api<SavedCartItem[]>(`/cart/items/${item.id}`, { method: 'PUT', body: JSON.stringify({ quantity }) })
+      setCart(cartLinesFromSaved(saved))
+    }).catch((err) => setError(err instanceof Error ? err.message : 'Could not save your cart.'))
+  }, [account?.role, cartLinesFromSaved, orderingClosed])
   const quantityFor = (itemId: number) => cart.find((line) => line.item.id === itemId)?.quantity || 0
 
   async function placeOrder() {
@@ -84,6 +127,7 @@ export default function Storefront() {
           items: cart.map((line) => ({ menu_item_id: line.item.id, quantity: line.quantity })),
           payment_method: paymentMethod,
           address: address.trim(), notes: notes.trim(),
+          scheduled_for: scheduledFor ? new Date(scheduledFor).toISOString() : null,
         }),
       })
       if (paymentMethod === 'RAZORPAY' && order.checkout) {
@@ -127,24 +171,30 @@ export default function Storefront() {
 
     <section className="value-strip"><div><span className="value-icon"><Flame size={19} /></span><span><strong>Charcoal, always</strong><small>Real fire. No shortcuts.</small></span></div><div><span className="value-icon"><Leaf size={19} /></span><span><strong>Fresh, never frozen</strong><small>Made when you order.</small></span></div><div><span className="value-icon"><Truck size={19} /></span><span><strong>Quick to your door</strong><small>Hot food. Happy you.</small></span></div><div><span className="value-icon"><Utensils size={19} /></span><span><strong>Made with care</strong><small>Recipes worth sharing.</small></span></div></section>
 
-    <section className="menu-section" id="menu"><div className="menu-intro"><div><div className="eyebrow">A LITTLE FIRE GOES A LONG WAY</div><h2>Pick your <em>pleasure.</em></h2><p>Big flavors, good portions, made right here.</p></div><div className="menu-count"><span className="menu-count-dot" /> {menu.length} good things on the grill</div></div>
+    <section className="menu-section" id="menu"><div className="menu-intro"><div><h2>Menu</h2><p>Choose what you’d like to order.</p></div><div className="menu-count"><span className="menu-count-dot" /> {menu.length} items</div></div>
       {error && <Notice onDismiss={() => setError('')}>{error}</Notice>}
-      {!restaurant?.accepting_orders && <Notice tone="info">We’re taking a short breather. Ordering will be back soon.</Notice>}
+      {orderingClosed && <Notice tone="info">We’re taking a short breather. Ordering will be back soon.</Notice>}
       <div className="menu-tabs">{categories.map((name) => <button className={`menu-tab ${category === name ? 'active' : ''}`} key={name} onClick={() => setCategory(name)}>{name}</button>)}</div>
-      {visibleMenu.length ? <div className="food-grid">{visibleMenu.map((item, index) => <article className={`food-card ${item.is_featured ? 'food-featured' : ''}`} key={item.id}>
-        <div className={`food-image ${colors[(index + item.id) % colors.length]}`}>{item.image_urls?.length || item.image_url ? <MenuImageCarousel images={item.image_urls?.length ? item.image_urls : item.image_url ? [item.image_url] : []} alt={item.name} className="menu-gallery-food" /> : <><span className="food-image-orbit" /><span className="food-emoji">{art[(index + item.id) % art.length]}</span><span className="food-image-sprinkle">✦ &nbsp;✳</span></>}{item.is_featured && <span className="food-best">ZILLA PICK <Sparkles size={11} /></span>}<span className={`diet-dot ${item.is_vegetarian ? 'veg' : 'nonveg'}`} title={item.is_vegetarian ? 'Vegetarian' : 'Non-vegetarian'}>{item.is_vegetarian ? <Leaf size={11} /> : <span />}</span></div>
-        <div className="food-card-content"><div className="food-card-category">{item.category}</div><h3>{item.name}</h3><p>{item.description}</p><div className="food-card-bottom"><strong>{formatINR(item.price_paise)}</strong>{quantityFor(item.id) ? <QuantityPicker small quantity={quantityFor(item.id)} onChange={(quantity) => setQuantity(item, quantity)} /> : <button className="add-food" onClick={() => setQuantity(item, 1)} aria-label={`Add ${item.name}`}><Plus size={15} /> ADD</button>}</div></div>
+      <div className="menu-discovery-controls"><label className="menu-search"><Search size={17} /><input type="search" aria-label="Search menu" value={menuSearch} onChange={(event) => setMenuSearch(event.target.value)} placeholder="Search dishes or categories" /></label><div className="menu-sort-label"><button type="button" className="menu-sort-trigger" aria-label="Sort menu" aria-expanded={sortOpen} onClick={() => setSortOpen((open) => !open)}><ListFilter size={16} /><span>{({ popular_desc: 'Popularity · high to low', popular_asc: 'Popularity · low to high', price_asc: 'Price · low to high', price_desc: 'Price · high to low' } as const)[menuSort]}</span><ChevronDown size={15} /></button>{sortOpen && <div className="menu-sort-options" role="menu">{([['popular_desc', 'Popularity · high to low'], ['popular_asc', 'Popularity · low to high'], ['price_asc', 'Price · low to high'], ['price_desc', 'Price · high to low']] as const).map(([value, label]) => <button type="button" role="menuitemradio" aria-checked={menuSort === value} className={menuSort === value ? 'active' : ''} key={value} onClick={() => { setMenuSort(value); setSortOpen(false) }}>{label}</button>)}</div>}</div></div>
+      {visibleMenu.length ? <div className={`food-grid ${orderingClosed ? 'food-grid-closed' : ''}`}>{visibleMenu.map((item, index) => <article className={`food-card ${item.is_featured ? 'food-featured' : ''} ${orderingClosed ? 'food-card-unavailable' : ''}`} key={item.id}>
+        <div className={`food-image ${colors[(index + item.id) % colors.length]}`}>{item.image_urls?.length || item.image_url ? <MenuImageCarousel images={item.image_urls?.length ? item.image_urls : item.image_url ? [item.image_url] : []} alt={item.name} className="menu-gallery-food" /> : <><span className="food-image-orbit" /><span className="food-emoji">{art[(index + item.id) % art.length]}</span><span className="food-image-sprinkle">✦ &nbsp;✳</span></>}{item.discount_campaign_name && <span className="food-best discount-campaign-label" title={item.discount_campaign_name}>{item.discount_campaign_name}</span>}{item.is_featured && <span className={`food-best food-zilla-pick ${item.discount_campaign_name ? 'food-zilla-pick-after-discount' : ''}`}>ZILLA PICK <Sparkles size={11} /></span>}<span className={`diet-dot ${item.is_vegetarian ? 'veg' : 'nonveg'}`} title={item.is_vegetarian ? 'Vegetarian' : 'Non-vegetarian'}>{item.is_vegetarian ? <Leaf size={11} /> : <span />}</span></div>
+        <div className="food-card-content"><div className="food-card-category">{item.category}</div><h3>{item.name}</h3><p>{item.description}</p><div className="food-card-bottom"><strong>{formatINR(item.discounted_price_paise ?? (item.discount_percent ? Math.round(item.price_paise * (100 - item.discount_percent) / 100) : item.price_paise))}{(item.discount_percent || item.discounted_price_paise) && <del>{formatINR(item.price_paise)}</del>}</strong>{orderingClosed ? <span className="closed-menu-label">Currently unavailable</span> : quantityFor(item.id) ? <QuantityPicker small quantity={quantityFor(item.id)} onChange={(quantity) => setQuantity(item, quantity)} /> : <button className="add-food" onClick={() => setQuantity(item, 1)} aria-label={`Add ${item.name}`}><Plus size={15} /> ADD</button>}</div></div>
       </article>)}</div> : <EmptyState icon={<Utensils size={20} />} title="The menu’s getting warmed up" description="Ask your restaurant admin to publish a few delicious items." />}
     </section>
 
     <section className="story-banner"><div className="story-mark"><Flame size={25} /></div><div><div className="eyebrow light-eyebrow">THE ZILLA WAY</div><h2>Good food is meant<br />to bring people <em>closer.</em></h2><p>From our charcoal grill to your table, every bite starts with the good stuff.</p></div><div className="story-seal"><span>100%</span><small>GOOD<br />TASTE</small><span>✦</span></div><div className="story-pattern">✳ &nbsp;· &nbsp;✦ &nbsp;· &nbsp;✳</div></section>
-    <section className="store-bottom"><div><div className="eyebrow">COME BY, SAY HI</div><h2>Or let us bring it <em>to your table.</em></h2><div className="store-bottom-details">{restaurant?.address && <span><MapPin size={15} /> {restaurant.address}</span>}{restaurant?.opening_hours && <span><Clock3 size={15} /> {restaurant.opening_hours}</span>}{restaurant?.phone && <span><Phone size={15} /> <a href={`tel:${restaurant.phone}`}>{restaurant.phone}</a></span>}{!restaurant?.address && <span>Restaurant location has not been added yet.</span>}</div></div>{restaurant?.address ? <a className="store-bottom-map" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(restaurant.address)}`} target="_blank" rel="noreferrer"><span className="map-mini"><MapPin size={26} /></span><span><strong>Find KebabZilla</strong><small>Open directions in Maps</small></span><ArrowRight size={17} /></a> : <div className="store-bottom-map"><span className="map-mini"><MapPin size={26} /></span><span><strong>Location details</strong><small>Coming soon</small></span></div>}</section>
+    <section className="store-bottom"><div><div className="eyebrow">COME BY, SAY HI</div><h2>Or let us bring it <em>to your table.</em></h2><div className="store-bottom-details">{restaurant?.address && <span><MapPin size={15} /> {restaurant.address}</span>}{restaurant?.phone && <span><Phone size={15} /> <a href={`tel:${restaurant.phone}`}>{restaurant.phone}</a></span>}{!restaurant?.address && <span>Restaurant location has not been added yet.</span>}</div></div>{restaurant?.address ? <a className="store-bottom-map" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(restaurant.address)}`} target="_blank" rel="noreferrer"><span className="map-mini"><MapPin size={26} /></span><span><strong>Find KebabZilla</strong><small>Open directions in Maps</small></span><ArrowRight size={17} /></a> : <div className="store-bottom-map"><span className="map-mini"><MapPin size={26} /></span><span><strong>Location details</strong><small>Coming soon</small></span></div>}</section>
 
-    {cartOpen && <aside className="cart-panel" aria-label="Your basket"><div className="cart-header"><div><span className="cart-icon"><ShoppingBag size={17} /></span><span><strong>Your order</strong><small>{totalItems} delicious thing{totalItems === 1 ? '' : 's'}</small></span></div><button className="cart-close" aria-label="Close cart" onClick={() => setCartOpen(false)}><X size={17} /></button></div>{cart.length ? <><div className="cart-items">{cart.map(({ item, quantity }) => <div className="cart-line" key={item.id}><span className="cart-line-name">{item.name}<small>{formatINR(item.price_paise)} each</small></span><QuantityPicker small quantity={quantity} onChange={(next) => setQuantity(item, next)} /><strong>{formatINR(item.price_paise * quantity)}</strong></div>)}</div>
+    {cartOpen && <div className="cart-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setCartOpen(false) }}><aside className="cart-panel" aria-label="Your basket" onMouseDown={(event) => event.stopPropagation()}><div className="cart-panel-scroll"><div className="cart-header"><div><span className="cart-icon"><ShoppingBag size={17} /></span><span><strong>Your order</strong><small>{totalItems} delicious thing{totalItems === 1 ? '' : 's'}</small></span></div><button className="cart-close" aria-label="Close cart" onClick={() => setCartOpen(false)}><X size={17} /></button></div>{cart.length ? <><div className="cart-items">{cart.map(({ item, quantity }) => <div className="cart-line" key={item.id}><span className="cart-line-name">{item.name}<small>{formatINR(priceFor(item))} each</small></span><QuantityPicker small quantity={quantity} onChange={(next) => setQuantity(item, next)} /><strong>{formatINR(priceFor(item) * quantity)}</strong></div>)}</div>
       <div className="cart-totals"><div><span>Subtotal</span><strong>{formatINR(subtotal)}</strong></div><div><span>Delivery</span><strong>{restaurant?.delivery_fee_paise ? formatINR(restaurant.delivery_fee_paise) : 'Free'}</strong></div><div><span>Tax · menu rates</span><strong>{formatINR(tax)}</strong></div><div className="cart-grand"><span>Total</span><strong>{formatINR(payable)}</strong></div></div>
-      {account ? <div className="checkout-fields">{account.addresses?.some((saved) => formatSavedAddress(saved)) && <label className="field-label">Delivery address<select value={selectedAddress} onChange={(event) => { const saved = account.addresses.find((item) => item.id === event.target.value); setSelectedAddress(event.target.value); if (saved) setAddress(formatSavedAddress(saved)) }}><option value="">Enter a different address</option>{account.addresses.filter((saved) => formatSavedAddress(saved)).map((saved) => <option key={saved.id} value={saved.id}>{saved.label}{saved.is_default ? ' · Default' : ''}</option>)}</select></label>}<label className="field-label">Address<textarea maxLength={500} rows={2} placeholder="Apartment, street, area, city and PIN" value={address} onChange={(event) => { setAddress(event.target.value); setSelectedAddress('') }} /></label><label className="field-label">Anything we should know? <span className="field-optional">optional</span><input maxLength={500} placeholder="No onions, extra chutney…" value={notes} onChange={(event) => setNotes(event.target.value)} /></label><div className="payment-choices"><button className={paymentMethod === 'RAZORPAY' ? 'selected' : ''} onClick={() => setPaymentMethod('RAZORPAY')}><span className="radio-dot" /> Pay online</button><button className={paymentMethod === 'CASH' ? 'selected' : ''} onClick={() => setPaymentMethod('CASH')}><span className="radio-dot" /> Cash on delivery</button></div>{error && <Notice>{error}</Notice>}<Button className="checkout-button" disabled={busy || !restaurant?.accepting_orders} onClick={placeOrder}>{busy ? 'Just a second…' : <>Place order · {formatINR(payable)} <ArrowRight size={16} /></>}</Button><div className="checkout-secure"><ShieldCheck size={14} /> {paymentMethod === 'RAZORPAY' ? 'Secure checkout by Razorpay' : 'Pay when your food arrives'}</div></div> : <div className="cart-signin"><p>One tiny step before the first bite.</p><Link className="button button-dark" to="/login">Sign in to check out <ArrowRight size={16} /></Link><span>New here? <Link to="/register">Create an account</Link></span></div>}
+      {account ? <div className="checkout-fields">{account.addresses?.filter((saved) => formatSavedAddress(saved)).length ? <label className="field-label">Delivery address<select required value={selectedAddress} onChange={(event) => { const saved = account.addresses.find((item) => item.id === event.target.value); setSelectedAddress(event.target.value); setAddress(saved ? formatSavedAddress(saved) : "") }}><option value="">Choose a saved address</option>{account.addresses.filter((saved) => formatSavedAddress(saved)).map((saved) => <option key={saved.id} value={saved.id}>{saved.label}{saved.is_default ? " · Default" : ""} — {formatSavedAddress(saved)}</option>)}</select><Link to="/profile" className="text-button">Edit saved addresses</Link></label> : <div className="notice notice-info cart-address-prompt"><span>Add a delivery address before ordering.</span><Link to="/profile" className="button button-secondary">Add delivery address <ArrowRight size={14} /></Link></div>}<label className="field-label">Anything we should know? <span className="field-optional">optional</span><input maxLength={500} placeholder="No onions, extra chutney…" value={notes} onChange={(event) => setNotes(event.target.value)} /></label><label className="field-label">Order timing<select value={scheduledFor ? "later" : "now"} onChange={(event) => setScheduledFor(event.target.value === "later" ? new Date(Date.now() + 3600000).toISOString().slice(0,16) : "")}><option value="now">As soon as possible</option><option value="later">Schedule for later</option></select></label>{scheduledFor && <label className="field-label">Schedule date and time<input type="datetime-local" min={new Date(Date.now() + 60000).toISOString().slice(0,16)} value={scheduledFor} onChange={(event) => setScheduledFor(event.target.value)} /></label>}<div className="payment-choices"><button className={paymentMethod === 'RAZORPAY' ? 'selected' : ''} onClick={() => setPaymentMethod('RAZORPAY')}><span className="radio-dot" /> Pay online</button><button className={paymentMethod === 'CASH' ? 'selected' : ''} onClick={() => setPaymentMethod('CASH')}><span className="radio-dot" /> Cash on delivery</button></div>{error && <Notice>{error}</Notice>}<Button className="checkout-button" disabled={busy || !restaurant?.accepting_orders} onClick={placeOrder}>{busy ? 'Just a second…' : <>Place order · {formatINR(payable)} <ArrowRight size={16} /></>}</Button><div className="checkout-secure"><ShieldCheck size={14} /> {paymentMethod === 'RAZORPAY' ? 'Secure checkout by Razorpay' : 'Pay when your food arrives'}</div></div> : <div className="cart-signin"><p>One tiny step before the first bite.</p><Link className="button button-dark" to="/login">Sign in to check out <ArrowRight size={16} /></Link><span>New here? <Link to="/register">Create an account</Link></span></div>}
       {subtotal < (restaurant?.minimum_order_paise || 0) && <div className="minimum-note">Add {formatINR((restaurant?.minimum_order_paise || 0) - subtotal)} to meet our minimum.</div>}
-      </> : <div className="cart-empty"><p>Your cart is empty.</p><button className="text-button" onClick={() => { setCartOpen(false); document.querySelector('.menu-section')?.scrollIntoView({ behavior: 'smooth' }) }}>Browse the menu</button></div>}</aside>}
-    {cart.length > 0 && <button className="floating-cart visible" onClick={() => setCartOpen(true)} aria-label={`Open cart, ${totalItems} item${totalItems === 1 ? '' : 's'}, total ${formatINR(payable)}`}><span className="cart-summary-icon"><ShoppingBag size={18} /></span><span className="cart-summary-copy"><strong>{totalItems} item{totalItems === 1 ? '' : 's'} added</strong><small>Tap to review your order</small></span><span className="cart-summary-total"><small>ORDER TOTAL</small><strong>{formatINR(payable)}</strong></span><ArrowRight size={17} /></button>}
+      </> : <div className="cart-empty"><p>Your cart is empty.</p><button className="text-button" onClick={() => { setCartOpen(false); document.querySelector('.menu-section')?.scrollIntoView({ behavior: 'smooth' }) }}>Browse the menu</button></div>}</div></aside></div>}
+    {cart.length > 0 && <button className={`floating-cart visible ${cartExpanded ? 'expanded' : 'compact'}`} onClick={() => setCartOpen(true)} aria-label={`Open cart, ${totalItems} item${totalItems === 1 ? '' : 's'}, total ${formatINR(payable)}`}><span className="cart-summary-icon"><ShoppingBag size={18} /></span><span className="cart-summary-copy"><strong>{totalItems} item{totalItems === 1 ? '' : 's'} added</strong><small>Tap to review your order</small></span><span className="cart-summary-total"><small>ORDER TOTAL</small><strong>{formatINR(payable)}</strong></span><ArrowRight size={17} /></button>}
   </main>
 }
+
+
+
+
+
