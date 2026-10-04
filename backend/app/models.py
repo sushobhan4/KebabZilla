@@ -3,7 +3,6 @@ from enum import StrEnum
 
 from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from uuid import uuid4
 
 from app.db import Base
 
@@ -50,11 +49,45 @@ class Account(Base):
     name: Mapped[str] = mapped_column(String(120))
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    addresses: Mapped[list[dict]] = mapped_column(JSON, default=list)
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[Role] = mapped_column(Enum(Role, native_enum=False, length=16), default=Role.USER, index=True)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    addresses: Mapped[list["AccountAddress"]] = relationship(cascade="all, delete-orphan", lazy="selectin")
+
+
+class AccountAddress(Base):
+    __tablename__ = "account_addresses"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True)
+    address_id: Mapped[str] = mapped_column(String(64))
+    label: Mapped[str] = mapped_column(String(40))
+    house_number: Mapped[str] = mapped_column(String(120), default="")
+    area: Mapped[str] = mapped_column(String(160), default="")
+    road: Mapped[str] = mapped_column(String(160), default="")
+    landmark: Mapped[str] = mapped_column(String(200), default="")
+    city: Mapped[str] = mapped_column(String(120), default="")
+    pincode: Mapped[str] = mapped_column(String(20), default="")
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (UniqueConstraint("account_id", "address_id"),)
+
+
+class PasswordResetCode(Base):
+    __tablename__ = "password_reset_codes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True)
+    otp_hash: Mapped[str] = mapped_column(String(255))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+    account: Mapped[Account] = relationship()
 
 
 class MenuItem(Base):
@@ -63,17 +96,15 @@ class MenuItem(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(120), index=True)
     description: Mapped[str] = mapped_column(Text, default="")
-    category: Mapped[str] = mapped_column(String(80), index=True)
+    category_id: Mapped[int | None] = mapped_column(ForeignKey("menu_categories.id", ondelete="SET NULL"), nullable=True, index=True)
     price_paise: Mapped[int] = mapped_column(Integer)
-    discount_percent: Mapped[int] = mapped_column(Integer, default=0)
-    discounted_price_paise: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    tax_percent: Mapped[int] = mapped_column(Integer, default=18)
-    image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    paused_by_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True, index=True)
     image_urls: Mapped[list[str]] = mapped_column(JSON, default=list)
     is_vegetarian: Mapped[bool] = mapped_column(Boolean, default=False)
     is_available: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     is_featured: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    category: Mapped["MenuCategory | None"] = relationship(lazy="joined")
 
 
 class MenuCategory(Base):
@@ -87,16 +118,21 @@ class MenuDiscount(Base):
     __tablename__ = "menu_discounts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    campaign_id: Mapped[str] = mapped_column(String(36), index=True, default=lambda: str(uuid4()))
     campaign_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    menu_item_id: Mapped[int] = mapped_column(ForeignKey("menu_items.id", ondelete="CASCADE"), index=True)
     discount_percent: Mapped[int] = mapped_column(Integer)
     starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     created_by_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    items: Mapped[list["MenuDiscountItem"]] = relationship(cascade="all, delete-orphan", lazy="selectin")
 
-    menu_item: Mapped[MenuItem] = relationship(lazy="joined")
+
+class MenuDiscountItem(Base):
+    __tablename__ = "menu_discount_items"
+    __table_args__ = (UniqueConstraint("discount_id", "menu_item_id"),)
+
+    discount_id: Mapped[int] = mapped_column(ForeignKey("menu_discounts.id", ondelete="CASCADE"), primary_key=True)
+    menu_item_id: Mapped[int] = mapped_column(ForeignKey("menu_items.id", ondelete="CASCADE"), primary_key=True)
 
 
 class RestaurantSettings(Base):
@@ -107,39 +143,32 @@ class RestaurantSettings(Base):
     tagline: Mapped[str] = mapped_column(String(200), default="Fire up your cravings.")
     phone: Mapped[str] = mapped_column(String(32), default="")
     address: Mapped[str] = mapped_column(String(300), default="")
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     weekly_schedule: Mapped[dict] = mapped_column(JSON, default=dict)
     tax_percent: Mapped[int] = mapped_column(Integer, default=18)
-    delivery_fee_paise: Mapped[int] = mapped_column(Integer, default=3500)
     minimum_order_paise: Mapped[int] = mapped_column(Integer, default=19900)
     delivery_radius_km: Mapped[float] = mapped_column(Float, default=10.0, server_default="10")
+    free_delivery_radius_km: Mapped[float] = mapped_column(Float, default=3.0, server_default="3")
+    delivery_fee_per_km_paise: Mapped[int] = mapped_column(Integer, default=1000, server_default="1000")
     accepting_orders: Mapped[bool] = mapped_column(Boolean, default=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class Order(Base):
     __tablename__ = "orders"
-    __table_args__ = (UniqueConstraint("public_id"),)
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    public_id: Mapped[str] = mapped_column(String(20), unique=True, index=True)
+    order_id: Mapped[str] = mapped_column(String(20), primary_key=True)
     customer_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True, index=True)
     created_by_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
     assigned_delivery_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True, index=True)
     status: Mapped[OrderStatus] = mapped_column(Enum(OrderStatus, native_enum=False, length=24), default=OrderStatus.PLACED, index=True)
     order_type: Mapped[str] = mapped_column(String(16), default="DELIVERY")
-    payment_method: Mapped[PaymentMethod] = mapped_column(Enum(PaymentMethod, native_enum=False, length=16))
-    payment_status: Mapped[PaymentStatus] = mapped_column(Enum(PaymentStatus, native_enum=False, length=16), default=PaymentStatus.PENDING)
-    subtotal_paise: Mapped[int] = mapped_column(Integer)
-    tax_paise: Mapped[int] = mapped_column(Integer)
     delivery_fee_paise: Mapped[int] = mapped_column(Integer, default=0)
-    total_paise: Mapped[int] = mapped_column(Integer)
-    address: Mapped[str] = mapped_column(String(500), default="")
     scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     notes: Mapped[str] = mapped_column(String(500), default="")
     customer_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    customer_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     customer_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    delivery_otp_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     delivery_otp_ciphertext: Mapped[str | None] = mapped_column(String(500), nullable=True)
     delivery_otp_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -149,18 +178,17 @@ class Order(Base):
     customer: Mapped[Account | None] = relationship(foreign_keys=[customer_id])
     delivery: Mapped[Account | None] = relationship(foreign_keys=[assigned_delivery_id])
     items: Mapped[list["OrderItem"]] = relationship(cascade="all, delete-orphan", lazy="selectin")
+    payment: Mapped["Payment | None"] = relationship(back_populates="order", uselist=False, cascade="all, delete-orphan")
 
 
 class OrderItem(Base):
     __tablename__ = "order_items"
+    __table_args__ = (UniqueConstraint("order_id", "menu_item_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"), index=True)
+    order_id: Mapped[str] = mapped_column(ForeignKey("orders.order_id", ondelete="CASCADE"), index=True)
     menu_item_id: Mapped[int | None] = mapped_column(ForeignKey("menu_items.id", ondelete="SET NULL"), nullable=True)
     menu_item: Mapped[MenuItem | None] = relationship(lazy="joined")
-    item_name: Mapped[str] = mapped_column(String(120))
-    unit_price_paise: Mapped[int] = mapped_column(Integer)
-    tax_percent: Mapped[int] = mapped_column(Integer, default=18)
     quantity: Mapped[int] = mapped_column(Integer)
 
 
@@ -205,14 +233,13 @@ class DeliveryBatchOrder(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     batch_id: Mapped[int] = mapped_column(ForeignKey("delivery_batches.id", ondelete="CASCADE"), index=True)
-    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"), index=True)
+    order_id: Mapped[str] = mapped_column(ForeignKey("orders.order_id", ondelete="CASCADE"), index=True)
 
 
 class Payment(Base):
     __tablename__ = "payments"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"), unique=True, index=True)
+    order_id: Mapped[str] = mapped_column(ForeignKey("orders.order_id", ondelete="CASCADE"), primary_key=True)
     method: Mapped[PaymentMethod] = mapped_column(Enum(PaymentMethod, native_enum=False, length=16))
     status: Mapped[PaymentStatus] = mapped_column(Enum(PaymentStatus, native_enum=False, length=16), default=PaymentStatus.PENDING)
     amount_paise: Mapped[int] = mapped_column(Integer)
@@ -220,19 +247,7 @@ class Payment(Base):
     gateway_payment_id: Mapped[str | None] = mapped_column(String(120), unique=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
-
-class MenuPause(Base):
-    __tablename__ = "menu_pauses"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    menu_item_id: Mapped[int] = mapped_column(ForeignKey("menu_items.id", ondelete="CASCADE"), index=True)
-    employee_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), index=True)
-    paused_until: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
-
-    menu_item: Mapped[MenuItem] = relationship(lazy="joined")
-    employee: Mapped[Account] = relationship(lazy="joined")
+    order: Mapped[Order] = relationship(back_populates="payment")
 
 
 class AdminEvent(Base):
@@ -255,7 +270,9 @@ class OfferLog(Base):
     actor_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"))
     audience: Mapped[str] = mapped_column(String(40))
     channels: Mapped[list[str]] = mapped_column(JSON, default=list)
+    subject: Mapped[str] = mapped_column(String(160), default="A little something from KebabZilla")
     message: Mapped[str] = mapped_column(Text)
+    delivery_counts: Mapped[dict] = mapped_column(JSON, default=dict)
     recipient_count: Mapped[int] = mapped_column(Integer, default=0)
     sent_count: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(30), default="PENDING")

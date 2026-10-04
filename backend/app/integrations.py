@@ -3,6 +3,8 @@
 import hashlib
 import hmac
 import json
+import smtplib
+from email.message import EmailMessage
 
 import httpx
 from fastapi import HTTPException
@@ -116,5 +118,75 @@ class CustomerNotifier:
             raise HTTPException(status_code=502, detail="The delivery code could not be sent. Please retry dispatch.")
 
 
+class StaffAccountNotifier:
+    """Sends first-login credentials through the configured Workspace mailbox."""
+
+    def send_temporary_password(self, *, name: str, email: str, role: str, temporary_password: str) -> str:
+        if not settings.smtp_password:
+            return "NOT_CONFIGURED"
+        message = EmailMessage()
+        message["Subject"] = "Your KebabZilla account is ready"
+        message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
+        message["To"] = email
+        message.set_content(
+            f"Hi {name},\n\n"
+            f"Your KebabZilla {role.lower()} account has been created.\n\n"
+            f"Email: {email}\n"
+            f"Temporary password: {temporary_password}\n\n"
+            "Sign in and change this temporary password immediately. You will not be able to access the workspace until it is changed.\n\n"
+            "If you were not expecting this email, please contact KebabZilla support."
+        )
+        try:
+            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as client:
+                client.starttls()
+                client.login(settings.smtp_username, settings.smtp_password)
+                client.send_message(message)
+        except (OSError, smtplib.SMTPException):
+            return "EMAIL_FAILED"
+        return "EMAIL_SENT"
+
+    def send_offer(self, *, recipient: str, subject: str, message_text: str) -> bool:
+        """Send one customer offer through the same Workspace SMTP mailbox."""
+        if not settings.smtp_password:
+            return False
+        message = EmailMessage()
+        message["Subject"] = subject
+        message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
+        message["To"] = recipient
+        message.set_content(f"Hi,\n\n{message_text}\n\nKebabZilla")
+        try:
+            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as client:
+                client.starttls()
+                client.login(settings.smtp_username, settings.smtp_password)
+                client.send_message(message)
+        except (OSError, smtplib.SMTPException):
+            return False
+        return True
+
+    def send_password_reset_otp(self, *, name: str, email: str, otp: str) -> bool:
+        if not settings.smtp_password:
+            return False
+        message = EmailMessage()
+        message["Subject"] = "Your KebabZilla password reset code"
+        message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
+        message["To"] = email
+        message.set_content(
+            f"Hi {name},\n\n"
+            f"Your KebabZilla password reset code is: {otp}\n\n"
+            "This code expires in 10 minutes and can be used only once. "
+            "If you did not request a password reset, you can safely ignore this email.\n\n"
+            "KebabZilla"
+        )
+        try:
+            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as client:
+                client.starttls()
+                client.login(settings.smtp_username, settings.smtp_password)
+                client.send_message(message)
+        except (OSError, smtplib.SMTPException):
+            return False
+        return True
+
+
 razorpay = RazorpayGateway()
 customer_notifier = CustomerNotifier()
+staff_account_notifier = StaffAccountNotifier()

@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     offer_email_api_url: str | None = None
     offer_email_api_token: str | None = None
     offer_sender: str = "KebabZilla"
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_username: str = "support@kebabzilla.in"
+    smtp_password: str | None = None
+    smtp_from_email: str = "support@kebabzilla.in"
+    smtp_from_name: str = "KebabZilla"
 
     @field_validator("cors_origins", mode="before")
     @classmethod

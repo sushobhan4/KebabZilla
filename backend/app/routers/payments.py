@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from app.dependencies import CurrentAccount, DbSession
 from app.integrations import razorpay
-from app.models import Order, OrderStatus, Payment, PaymentStatus
+from app.models import Order, OrderStatus, Payment, PaymentMethod, PaymentStatus
 from app.services import issue_razorpay_refund
 
 router = APIRouter(prefix="/payments", tags=["payments"])
@@ -30,8 +30,8 @@ async def verify_checkout(data: VerifyPayment, account: CurrentAccount, db: DbSe
         if order.status == OrderStatus.CANCELLED and payment.method == PaymentMethod.RAZORPAY:
             await issue_razorpay_refund(order, payment)
             db.commit()
-            return {"status": payment.status, "order_id": order.public_id}
-        return {"status": "PAID", "order_id": order.public_id}
+            return {"status": payment.status, "order_id": order.order_id}
+        return {"status": "PAID", "order_id": order.order_id}
     if not razorpay.verify_checkout_signature(
         gateway_order_id=data.gateway_order_id,
         payment_id=data.gateway_payment_id,
@@ -49,11 +49,10 @@ async def verify_checkout(data: VerifyPayment, account: CurrentAccount, db: DbSe
         raise HTTPException(status_code=409, detail="Payment is awaiting capture. Refresh your order status in a moment.")
     payment.gateway_payment_id = data.gateway_payment_id
     payment.status = PaymentStatus.PAID
-    order.payment_status = PaymentStatus.PAID
     if order.status == OrderStatus.CANCELLED:
         await issue_razorpay_refund(order, payment)
     db.commit()
-    return {"status": payment.status, "order_id": order.public_id}
+    return {"status": payment.status, "order_id": order.order_id}
 
 
 @router.post("/razorpay/webhook")
@@ -75,11 +74,9 @@ async def razorpay_webhook(request: Request, db: DbSession, x_razorpay_signature
                 if order:
                     if order.status == OrderStatus.CANCELLED and payment.status not in {PaymentStatus.REFUNDED, PaymentStatus.REFUND_PENDING}:
                         payment.status = PaymentStatus.PAID
-                        order.payment_status = PaymentStatus.PAID
                         await issue_razorpay_refund(order, payment)
                     else:
                         payment.status = PaymentStatus.PAID if payment.status not in {PaymentStatus.REFUNDED, PaymentStatus.REFUND_PENDING} else payment.status
-                        order.payment_status = payment.status
                 db.commit()
         elif event.get("event") in {"refund.processed", "refund.failed"}:
             refund = event["payload"]["refund"]["entity"]
@@ -87,8 +84,6 @@ async def razorpay_webhook(request: Request, db: DbSession, x_razorpay_signature
             if payment and payment.status == PaymentStatus.REFUND_PENDING:
                 payment.status = PaymentStatus.REFUNDED if event["event"] == "refund.processed" else PaymentStatus.PAID
                 order = db.get(Order, payment.order_id)
-                if order:
-                    order.payment_status = payment.status
                 db.commit()
     except (KeyError, TypeError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=400, detail="Webhook payload is invalid") from exc

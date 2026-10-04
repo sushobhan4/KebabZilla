@@ -12,6 +12,7 @@ import Delivery from './pages/Delivery'
 import Admin from './pages/Admin'
 import AuthPage from './pages/AuthPage'
 import Profile from './pages/Profile'
+import ForcedPasswordChange from './pages/ForcedPasswordChange'
 
 type NavItem = { to: string; label: string; icon: ReactNode; end?: boolean; tone?: 'employee' | 'delivery' }
 
@@ -138,6 +139,7 @@ function RoleGuard({ roles, children }: { roles: Role[]; children: ReactNode }) 
 export default function App() {
   const { account } = useAuth()
   const [notice, setNotice] = useState<string | null>(null)
+  if (account?.must_change_password) return <div className="app-shell"><AppHeader /><div className="app-main"><Routes><Route path="/change-password" element={<ForcedPasswordChange />} /><Route path="*" element={<Navigate to="/change-password" replace />} /></Routes></div></div>
   return <div className="app-shell">
     <AppHeader />
     {notice && <div className="global-notice"><Notice tone="success" onDismiss={() => setNotice(null)}>{notice}</Notice></div>}

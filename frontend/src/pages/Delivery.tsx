@@ -26,34 +26,24 @@ import {
   StatusBadge,
 } from "../components";
 
-function routeBucket(address: string) {
-  const pin = address.match(/\b\d{6}\b/g);
-  if (pin?.length) return `pin:${pin[pin.length - 1]}`;
-  return `place:${address
-    .split(",")
-    .map((part) => part.trim().toLowerCase())
-    .filter(Boolean)
-    .slice(-2)
-    .join(",")}`;
-}
-
 function Queue() {
+  const [deliveryTab, setDeliveryTab] = useState<"NOW" | "PAST">("NOW");
   const [orders, setOrders] = useState<Order[]>([]);
-  const [available, setAvailable] = useState<Order[]>([]);
-  const [selected, setSelected] = useState<number[]>([]);
+  const [selected, setSelected] = useState<string[]>([]);
   const [routeLabel, setRouteLabel] = useState("Nearby route");
   const [search, setSearch] = useState("");
   const [batches, setBatches] = useState<
     {
       id: number;
       route_label: string;
-      order_ids: number[];
+      order_ids: string[];
       created_at: string;
     }[]
   >([]);
-  const [codes, setCodes] = useState<Record<number, string>>({});
+  const [suggestedBatches, setSuggestedBatches] = useState<{ active_riders: number; restaurant_latitude: number | null; restaurant_longitude: number | null; clusters: { id: string; route_label: string; orders: Order[] }[] }>({ active_riders: 0, restaurant_latitude: null, restaurant_longitude: null, clusters: [] });
+  const [codes, setCodes] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<number | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
   const [batchBusy, setBatchBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -62,14 +52,14 @@ function Queue() {
       Promise.all([
         api<Order[]>("/delivery/queue"),
         api<typeof batches>("/delivery/batches"),
-        api<Order[]>("/delivery/available"),
+        api<typeof suggestedBatches>("/delivery/recommended-batches"),
       ])
-        .then(([queue, routeBatches, waiting]) => {
+        .then(([queue, routeBatches, recommendations]) => {
           setOrders(queue);
           setBatches(routeBatches);
-          setAvailable(waiting);
+          setSuggestedBatches(recommendations);
           setSelected((previous) =>
-            previous.filter((id) => queue.some((order) => order.id === id)),
+            previous.filter((id) => queue.some((order) => order.order_id === id)),
           );
         })
         .catch((err) =>
@@ -88,17 +78,13 @@ function Queue() {
     return () => window.clearInterval(timer);
   }, [refresh]);
 
-  const selectedOrders = orders.filter((order) => selected.includes(order.id));
-  const sameRoute =
-    new Set(selectedOrders.map((order) => routeBucket(order.address))).size <=
-    1;
+  const sameRoute = true;
   const matchesSearch = (order: Order) =>
-    `${order.customer_name} ${order.address} ${order.customer_phone || ""}`
+    `${order.order_id} ${order.customer_name} ${order.customer_phone || ""}`
       .toLocaleLowerCase()
       .includes(search.trim().toLocaleLowerCase());
   const visibleOrders = orders.filter(matchesSearch);
-  const visibleAvailable = available.filter(matchesSearch);
-  function toggle(id: number) {
+  function toggle(id: string) {
     setSelected((previous) =>
       previous.includes(id)
         ? previous.filter((value) => value !== id)
@@ -106,18 +92,16 @@ function Queue() {
     );
   }
 
-  async function takeDelivery(order: Order) {
-    setBusy(order.id);
+  async function takeBatch(orderIds: string[]) {
+    setBatchBusy(true);
     setError("");
     try {
-      await api(`/delivery/orders/${order.id}/claim`, { method: "POST" });
+      await api("/delivery/recommended-batches/claim", { method: "POST", body: JSON.stringify({ order_ids: orderIds }) });
       await refresh();
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Could not take this delivery.",
-      );
+      setError(err instanceof Error ? err.message : "Could not take this delivery batch.");
     } finally {
-      setBusy(null);
+      setBatchBusy(false);
     }
   }
 
@@ -144,19 +128,19 @@ function Queue() {
 
   async function verify(event: FormEvent<HTMLFormElement>, order: Order) {
     event.preventDefault();
-    const code = codes[order.id] || "";
+    const code = codes[order.order_id] || "";
     if (!/^\d{6}$/.test(code)) {
       setError("Enter the customer’s six-digit delivery code.");
       return;
     }
-    setBusy(order.id);
+    setBusy(order.order_id);
     setError("");
     try {
-      await api(`/delivery/orders/${order.id}/verify-otp`, {
+      await api(`/delivery/orders/${order.order_id}/verify-otp`, {
         method: "POST",
         body: JSON.stringify({ otp: code }),
       });
-      setCodes((previous) => ({ ...previous, [order.id]: "" }));
+      setCodes((previous) => ({ ...previous, [order.order_id]: "" }));
       await refresh();
     } catch (err) {
       setError(
@@ -170,8 +154,6 @@ function Queue() {
   }
 
   if (loading) return <Loading label="Finding your deliveries…" />;
-  const routeHref = (address: string) =>
-    `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}&travelmode=driving&dir_action=navigate`;
   return (
     <>
       <PageTitle
@@ -184,7 +166,9 @@ function Queue() {
           </span>
         }
       />
+      <div className="filter-tabs delivery-view-tabs"><button type="button" className={deliveryTab === "NOW" ? "active" : ""} onClick={() => setDeliveryTab("NOW")}>Deliveries now</button><button type="button" className={deliveryTab === "PAST" ? "active" : ""} onClick={() => setDeliveryTab("PAST")}>Past deliveries</button></div>
       {error && <Notice onDismiss={() => setError("")}>{error}</Notice>}
+      {deliveryTab === "PAST" ? <PastDeliveries /> : <>
       <label className="menu-search delivery-search">
         <Search size={17} />
         <input
@@ -195,39 +179,29 @@ function Queue() {
           placeholder="Search customer, address, or phone number"
         />
       </label>
-      {!!visibleAvailable.length && (
+      {!!suggestedBatches.clusters.length && (
         <section className="delivery-available">
           <div className="section-header">
             <div>
               <h2>Ready for pickup</h2>
               <span>
-                Choose a delivery to take. The customer receives their delivery
-                code.
+                {suggestedBatches.active_riders || 1} active rider{suggestedBatches.active_riders === 1 ? "" : "s"} · claim a route before another rider does.
               </span>
             </div>
           </div>
           <div className="delivery-available-list">
-            {visibleAvailable.map((order) => (
-              <article className="delivery-available-card" key={order.id}>
+            {suggestedBatches.clusters.map((cluster) => (
+              <article className="delivery-available-card" key={cluster.id}>
                 <div>
-                  <strong>{order.public_id}</strong>
-                  <span>
-                    {order.customer_name} · {order.address}
-                  </span>
+                  <strong>{cluster.route_label} · {cluster.orders.length} stop{cluster.orders.length === 1 ? "" : "s"}</strong>
+                  <span>{cluster.orders.map((order) => order.order_id).join("  |  ")}</span>
                 </div>
-                <strong>{formatINR(order.total_paise)}</strong>
                 <Button
                   size="button-sm"
-                  disabled={busy === order.id}
-                  onClick={() => void takeDelivery(order)}
+                  disabled={batchBusy}
+                  onClick={() => void takeBatch(cluster.orders.map((order) => order.order_id))}
                 >
-                  {busy === order.id ? (
-                    "Taking…"
-                  ) : (
-                    <>
-                      Take delivery <ArrowRight size={14} />
-                    </>
-                  )}
+                  {batchBusy ? "Taking…" : <>Take route <ArrowRight size={14} /></>}
                 </Button>
               </article>
             ))}
@@ -310,15 +284,15 @@ function Queue() {
           </div>
           <div className="delivery-order-list">
             {visibleOrders.map((order, index) => (
-              <article className="delivery-order-card" key={order.id}>
+              <article className="delivery-order-card" key={order.order_id}>
                 <div className="delivery-order-index">
                   <span>{String(index + 1).padStart(2, "0")}</span>
                   <label className="route-select">
                     <input
                       type="checkbox"
-                      aria-label={`Add ${order.public_id} to route`}
-                      checked={selected.includes(order.id)}
-                      onChange={() => toggle(order.id)}
+                      aria-label={`Add ${order.order_id} to route`}
+                      checked={selected.includes(order.order_id)}
+                      onChange={() => toggle(order.order_id)}
                     />
                     <span />
                   </label>
@@ -329,7 +303,7 @@ function Queue() {
                       <span className="delivery-time">
                         TAKEN · {friendlyDate(order.created_at)}
                       </span>
-                      <h3>{order.public_id}</h3>
+                      <h3>{order.order_id}</h3>
                     </div>
                     <StatusBadge status={order.status} />
                   </div>
@@ -349,7 +323,7 @@ function Queue() {
                       </span>
                       <span>
                         <small>Address</small>
-                        <strong>{order.address}</strong>
+                        <strong>Address provided at checkout</strong>
                       </span>
                     </div>
                     <div className="customer-detail">
@@ -371,7 +345,7 @@ function Queue() {
                   <div className="delivery-order-items">
                     <div className="delivery-menu-lines">
                       {order.items.map((line) => (
-                        <div className="delivery-menu-line" key={line.id}>
+                        <div className="delivery-menu-line" key={`${line.menu_item_id}-${line.name}`}>
                           {(line.image_urls?.length || line.image_url) && (
                             <span className="delivery-menu-line-art">
                               <MenuImageCarousel
@@ -407,9 +381,10 @@ function Queue() {
                   <div className="delivery-order-actions">
                     <a
                       className="button button-secondary"
-                      href={routeHref(order.address)}
+                      href={undefined}
                       target="_blank"
                       rel="noreferrer"
+                      aria-disabled="true"
                     >
                       <Navigation size={15} /> Navigate{" "}
                       <ExternalLink size={13} />
@@ -426,11 +401,11 @@ function Queue() {
                           maxLength={6}
                           placeholder="Customer’s 6-digit code"
                           aria-label="Delivery verification code"
-                          value={codes[order.id] || ""}
+                          value={codes[order.order_id] || ""}
                           onChange={(event) =>
                             setCodes((previous) => ({
                               ...previous,
-                              [order.id]: event.target.value
+                              [order.order_id]: event.target.value
                                 .replace(/\D/g, "")
                                 .slice(0, 6),
                             }))
@@ -440,9 +415,9 @@ function Queue() {
                       <Button
                         type="submit"
                         size="button-sm"
-                        disabled={busy === order.id}
+                        disabled={busy === order.order_id}
                       >
-                        {busy === order.id ? (
+                        {busy === order.order_id ? (
                           "Checking…"
                         ) : (
                           <>
@@ -481,8 +456,17 @@ function Queue() {
           ))}
         </div>
       )}
+      </>}
     </>
   );
+}
+
+function PastDeliveries() {
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => { api<Order[]>("/delivery/history").then(setOrders).finally(() => setLoading(false)); }, []);
+  if (loading) return <Loading label="Loading past deliveries…" />;
+  return !orders.length ? <EmptyState icon={<PackageCheck size={21} />} title="No past deliveries yet" description="Completed deliveries will appear here." /> : <div className="delivery-order-list">{orders.map((order) => <article className="delivery-order-card" key={order.order_id}><div className="delivery-order-main"><div className="delivery-order-top"><div><span className="delivery-time">DELIVERED · {friendlyDate(order.created_at)}</span><h3>{order.order_id}</h3></div><StatusBadge status={order.status} /></div><div className="delivery-customer-info"><div className="customer-detail"><span className="customer-detail-icon"><UserRound size={16} /></span><span><small>Delivered to</small><strong>{order.customer_name}</strong></span></div></div></div></article>)}</div>;
 }
 
 function RoutesPage() {

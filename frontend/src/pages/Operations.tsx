@@ -8,7 +8,7 @@ function Queue() {
   const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [busy, setBusy] = useState<number | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
   const [filter, setFilter] = useState('ACTIVE')
 
   const refresh = useCallback(() => api<Order[]>('/staff/orders').then((ordersList) => {
@@ -24,10 +24,10 @@ function Queue() {
   const displayed = filter === 'ACTIVE' ? active : orders.filter((order) => order.status === filter)
 
   async function update(order: Order, status: string) {
-    setBusy(order.id)
+    setBusy(order.order_id)
     setError('')
     try {
-      await api(`/staff/orders/${order.id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) })
+      await api(`/staff/orders/${order.order_id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) })
       await refresh()
     } catch (err) { setError(err instanceof Error ? err.message : 'The order could not be updated.') }
     finally { setBusy(null) }
@@ -37,14 +37,14 @@ function Queue() {
 
   async function markReadyAndPrint(order: Order) {
     const printWindow = window.open('', '_blank', 'width=420,height=720')
-    setBusy(order.id)
+    setBusy(order.order_id)
     setError('')
     try {
-      await api(`/staff/orders/${order.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'READY' }) })
+      await api(`/staff/orders/${order.order_id}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'READY' }) })
       if (printWindow) {
         const lines = order.items.map((item) => `<tr><td>${item.quantity} × ${escapeReceipt(item.name)}</td><td>${formatINR(item.line_total_paise)}</td></tr>`).join('')
         const source = order.customer_id !== null ? 'ONLINE ORDER' : order.order_type === 'DINE_IN' ? 'WALK-IN · DINE-IN' : 'WALK-IN · PICKUP'
-        printWindow.document.write(`<!doctype html><html><head><title>Receipt ${escapeReceipt(order.public_id)}</title><style>body{font:15px Arial,sans-serif;color:#111;margin:24px}h1{font-size:20px;margin:0 0 4px}small{color:#555}.tag{margin:12px 0;padding:7px;background:#eee;font-weight:bold}table{width:100%;border-collapse:collapse;margin:18px 0}td{padding:7px 0;border-bottom:1px solid #ddd}td:last-child{text-align:right}.totals p{display:flex;justify-content:space-between;margin:6px 0}.grand{font-size:18px;font-weight:bold;border-top:1px solid #111;padding-top:10px}</style></head><body><h1>KebabZilla</h1><small>Order ${escapeReceipt(order.public_id)} · ${escapeReceipt(friendlyDate(order.created_at))}</small><div class="tag">${source}</div><p>Customer: ${escapeReceipt(order.customer_name)}</p><p>${escapeReceipt(order.address || 'Restaurant counter')}</p><table>${lines}</table><div class="totals"><p><span>Subtotal</span><span>${formatINR(order.subtotal_paise)}</span></p><p><span>Tax</span><span>${formatINR(order.tax_paise)}</span></p>${order.delivery_fee_paise ? `<p><span>Delivery</span><span>${formatINR(order.delivery_fee_paise)}</span></p>` : ''}<p class="grand"><span>Total</span><span>${formatINR(order.total_paise)}</span></p></div></body></html>`)
+        printWindow.document.write(`<!doctype html><html><head><title>Receipt ${escapeReceipt(order.order_id)}</title><style>body{font:15px Arial,sans-serif;color:#111;margin:24px}h1{font-size:20px;margin:0 0 4px}small{color:#555}.tag{margin:12px 0;padding:7px;background:#eee;font-weight:bold}table{width:100%;border-collapse:collapse;margin:18px 0}td{padding:7px 0;border-bottom:1px solid #ddd}td:last-child{text-align:right}.totals p{display:flex;justify-content:space-between;margin:6px 0}.grand{font-size:18px;font-weight:bold;border-top:1px solid #111;padding-top:10px}</style></head><body><h1>KebabZilla</h1><small>Order ${escapeReceipt(order.order_id)} · ${escapeReceipt(friendlyDate(order.created_at))}</small><div class="tag">${source}</div><p>Customer: ${escapeReceipt(order.customer_name)}</p><table>${lines}</table><div class="totals"><p><span>Subtotal (tax included)</span><span>${formatINR(order.subtotal_paise)}</span></p>${order.delivery_fee_paise ? `<p><span>Delivery</span><span>${formatINR(order.delivery_fee_paise)}</span></p>` : ''}<p class="grand"><span>Total</span><span>${formatINR(order.total_paise)}</span></p></div></body></html>`)
         printWindow.document.close()
         printWindow.focus()
         window.setTimeout(() => printWindow.print(), 300)
@@ -62,10 +62,10 @@ function Queue() {
     {error && <Notice onDismiss={() => setError('')}>{error}</Notice>}
     <div className="stat-row ops-stats"><div className="stat-card"><span className="stat-icon stat-orange"><ClipboardList size={18} /></span><div><small>New orders</small><strong>{orders.filter((order) => order.status === 'PLACED').length}</strong></div><span className="stat-caption">Need a quick look</span></div><div className="stat-card"><span className="stat-icon stat-amber"><CookingPot size={18} /></span><div><small>On the grill</small><strong>{orders.filter((order) => ['ACCEPTED', 'PREPARING'].includes(order.status)).length}</strong></div><span className="stat-caption">In progress</span></div><div className="stat-card"><span className="stat-icon stat-green"><Truck size={18} /></span><div><small>Ready to go</small><strong>{orders.filter((order) => order.status === 'READY').length}</strong></div><span className="stat-caption">Awaiting dispatch</span></div><div className="stat-card"><span className="stat-icon stat-plum"><CircleCheck size={18} /></span><div><small>Orders today</small><strong>{orders.filter((order) => new Date(order.created_at).toDateString() === new Date().toDateString()).length}</strong></div><span className="stat-caption">All day so far</span></div></div>
     <div className="section-header"><div><h2>On the pass</h2><span>{displayed.length} order{displayed.length === 1 ? '' : 's'} to look after</span></div><div className="filter-tabs"><button className={filter === 'ACTIVE' ? 'active' : ''} onClick={() => setFilter('ACTIVE')}>Active</button><button className={filter === 'PLACED' ? 'active' : ''} onClick={() => setFilter('PLACED')}>New <b>{orders.filter((order) => order.status === 'PLACED').length}</b></button><button className={filter === 'READY' ? 'active' : ''} onClick={() => setFilter('READY')}>Ready</button></div></div>
-    {!displayed.length ? <EmptyState icon={<CookingPot size={21} />} title="A quiet moment at the pass" description="New orders show up here as soon as they’re placed." /> : <div className="ops-order-grid">{displayed.map((order, index) => <article className="ops-order-card" key={order.id}><div className="ops-order-head"><div><span className="ops-order-time">{friendlyDate(order.created_at)}</span><h3><strong className="ops-queue-number">Order #{index + 1}</strong></h3></div><StatusBadge status={order.status} /></div><div className="ops-customer"><span className="mini-person"><UserRound size={15} /></span><span><strong>{order.customer_name}</strong><small>{order.order_type === 'DINE_IN' ? 'Walk-in · dine-in' : order.order_type === 'PICKUP' ? 'Walk-in · collection' : order.customer_phone || order.customer_email}</small></span>{order.customer_id !== null ? <Badge tone="amber">ONLINE ORDER</Badge> : <Badge tone="soft">WALK-IN</Badge>}</div><div className="ops-order-items">{order.items.map((line) => <div className="ops-order-item" key={line.id}>{(line.image_urls?.length || line.image_url) && <span className="ops-order-item-art"><MenuImageCarousel images={line.image_urls?.length ? line.image_urls : line.image_url ? [line.image_url] : []} alt={line.name} className="menu-gallery-order" /></span>}<span><b>{line.quantity}×</b> {line.name}</span><strong>{formatINR(line.line_total_paise)}</strong></div>)}</div><div className="ops-order-address"><Truck size={14} /><span>{order.address || 'Restaurant counter pickup'}</span></div><div className="ops-order-bottom"><span>Total <strong>{formatINR(order.total_paise)}</strong></span><div className="order-actions">
-      {order.status === 'PLACED' && <><Button variant="ghost" className="reject-action" disabled={busy === order.id} onClick={() => void update(order, 'REJECTED')}>Reject</Button><Button size="button-sm" disabled={busy === order.id} onClick={() => void update(order, 'ACCEPTED')}>Accept <Check size={14} /></Button></>}
-      {order.status === 'ACCEPTED' && <Button size="button-sm" disabled={busy === order.id} onClick={() => void update(order, 'PREPARING')}>Start grilling <ArrowRight size={14} /></Button>}
-      {order.status === 'PREPARING' && <Button size="button-sm" disabled={busy === order.id} onClick={() => void markReadyAndPrint(order)}>Mark and print the receipt <ReceiptText size={14} /></Button>}
+    {!displayed.length ? <EmptyState icon={<CookingPot size={21} />} title="A quiet moment at the pass" description="New orders show up here as soon as they’re placed." /> : <div className="ops-order-grid">{displayed.map((order, index) => <article className="ops-order-card" key={order.order_id}><div className="ops-order-head"><div><span className="ops-order-time">{friendlyDate(order.created_at)}</span><h3><strong className="ops-queue-number">Order #{index + 1}</strong></h3></div><StatusBadge status={order.status} /></div><div className="ops-customer"><span className="mini-person"><UserRound size={15} /></span><span><strong>{order.customer_name}</strong><small>{order.order_type === 'DINE_IN' ? 'Walk-in · dine-in' : order.order_type === 'PICKUP' ? 'Walk-in · collection' : order.customer_phone || 'Delivery order'}</small></span>{order.customer_id !== null ? <Badge tone="amber">ONLINE ORDER</Badge> : <Badge tone="soft">WALK-IN</Badge>}</div><div className="ops-order-items">{order.items.map((line) => <div className="ops-order-item" key={`${line.menu_item_id}-${line.name}`}>{(line.image_urls?.length || line.image_url) && <span className="ops-order-item-art"><MenuImageCarousel images={line.image_urls?.length ? line.image_urls : line.image_url ? [line.image_url] : []} alt={line.name} className="menu-gallery-order" /></span>}<span><b>{line.quantity}×</b> {line.name}</span><strong>{formatINR(line.line_total_paise)}</strong></div>)}</div><div className="ops-order-address"><Truck size={14} /><span>{order.order_type === 'DINE_IN' || order.order_type === 'PICKUP' ? 'Restaurant counter pickup' : 'Delivery order'}</span></div><div className="ops-order-bottom"><span>Total <strong>{formatINR(order.total_paise)}</strong></span><div className="order-actions">
+      {order.status === 'PLACED' && <><Button variant="ghost" className="reject-action" disabled={busy === order.order_id} onClick={() => void update(order, 'REJECTED')}>Reject</Button><Button size="button-sm" disabled={busy === order.order_id} onClick={() => void update(order, 'ACCEPTED')}>Accept <Check size={14} /></Button></>}
+      {order.status === 'ACCEPTED' && <Button size="button-sm" disabled={busy === order.order_id} onClick={() => void update(order, 'PREPARING')}>Start grilling <ArrowRight size={14} /></Button>}
+      {order.status === 'PREPARING' && <Button size="button-sm" disabled={busy === order.order_id} onClick={() => void markReadyAndPrint(order)}>Mark and print the receipt <ReceiptText size={14} /></Button>}
       {order.status === 'READY' && <span className="queue-waiting">Waiting for delivery partner</span>}
     </div></div></article>)}</div>}
   </>
@@ -108,7 +108,7 @@ function Billing() {
   const navigate = useNavigate()
   const { state } = location as { state: { draft?: { customer_name?: string; phone?: string; payload?: { items?: { id: number; quantity: number }[] }; items?: { id: number; quantity: number }[] } } | null }
   const subtotal = cart.reduce((sum, line) => sum + line.item.price_paise * line.quantity, 0)
-  const tax = cart.reduce((sum, line) => sum + Math.round(line.item.price_paise * line.quantity * line.item.tax_percent / 100), 0)
+  const tax = 0
   const total = subtotal + tax
   useEffect(() => {
     api<MenuItem[]>('/menu').then(setMenu).catch((err) => setError(err instanceof Error ? err.message : 'Could not load menu.'))
@@ -157,7 +157,7 @@ function Billing() {
     finally { setBusy(false) }
   }
 
-  if (invoice) return <div className="invoice-wrap"><article className="invoice-card"><div className="invoice-success"><span><Check size={20} /></span><div><div className="eyebrow">BILL PAID · WALK-IN</div><h1>All squared away.</h1></div></div><div className="invoice-brand"><span><Flame size={15} /></span> KebabZilla <small> · PAYMENT RECEIPT</small></div><div className="invoice-id"><span>INVOICE</span><strong>{invoice.public_id}</strong><small>{friendlyDate(invoice.created_at)}</small></div><div className="invoice-lines">{invoice.items.map((line) => <div key={line.id}><span>{line.quantity} × {line.name}<small>{line.tax_percent}% tax</small></span><strong>{formatINR(line.line_total_paise)}</strong></div>)}<div><span>Tax</span><strong>{formatINR(invoice.tax_paise)}</strong></div><div className="invoice-total"><span>Total paid</span><strong>{formatINR(invoice.total_paise)}</strong></div></div><div className="invoice-customer"><span><UserRound size={14} /> {invoice.customer_name}</span><Badge tone="success">CASH</Badge></div><div className="invoice-actions"><Button onClick={() => window.print()}><ReceiptText size={16} /> Print receipt</Button><Button variant="secondary" onClick={() => { setInvoice(null); setCart([]); setName(''); setPhone('') }}>New bill</Button></div></article></div>
+  if (invoice) return <div className="invoice-wrap"><article className="invoice-card"><div className="invoice-success"><span><Check size={20} /></span><div><div className="eyebrow">BILL PAID · WALK-IN</div><h1>All squared away.</h1></div></div><div className="invoice-brand"><span><Flame size={15} /></span> KebabZilla <small> · PAYMENT RECEIPT</small></div><div className="invoice-id"><span>INVOICE</span><strong>{invoice.order_id}</strong><small>{friendlyDate(invoice.created_at)}</small></div><div className="invoice-lines">{invoice.items.map((line) => <div key={`${line.menu_item_id}-${line.name}`}><span>{line.quantity} × {line.name}</span><strong>{formatINR(line.line_total_paise)}</strong></div>)}<div className="invoice-total"><span>Total paid</span><strong>{formatINR(invoice.total_paise)}</strong></div></div><div className="invoice-customer"><span><UserRound size={14} /> {invoice.customer_name}</span><Badge tone="success">CASH</Badge></div><div className="invoice-actions"><Button onClick={() => window.print()}><ReceiptText size={16} /> Print receipt</Button><Button variant="secondary" onClick={() => { setInvoice(null); setCart([]); setName(''); setPhone('') }}>New bill</Button></div></article></div>
 
   return <><PageTitle eyebrow="AT THE COUNTER" title="Walk-in billing" description="Close out a dine-in bill when your guest is ready to leave." action={<Link className="button button-secondary" to="/ops/drafts"><ClipboardList size={15} /> Saved drafts</Link>} />
     {error && <Notice tone={error.startsWith('Draft saved') ? 'success' : 'error'} onDismiss={() => setError('')} >{error}</Notice>}
@@ -188,8 +188,4 @@ export default function Operations() {
 }
 
 function NavigateBack() { return <EmptyState title="That kitchen station is closed" description="Choose an operations station from the left menu." action={<Link to="/ops" className="button button-secondary">Back to order queue</Link>} /> }
-
-
-
-
 

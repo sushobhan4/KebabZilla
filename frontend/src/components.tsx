@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { ArrowLeft, ArrowRight, Check, CircleAlert, ImageOff, LoaderCircle, Minus, Plus, Search, X } from 'lucide-react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { ArrowLeft, ArrowRight, Check, ChevronDown, CircleAlert, ImageOff, LoaderCircle, Minus, Plus, Search, X } from 'lucide-react'
+import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { API_BASE, formatStatus } from './api'
 
@@ -24,20 +25,53 @@ export function RoundedSelect({ value, options, onChange, className = '', disabl
 }) {
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)
+  const trigger = useRef<HTMLButtonElement>(null)
+  const menu = useRef<HTMLDivElement>(null)
+  const [menuPosition, setMenuPosition] = useState<CSSProperties>({ position: 'fixed', top: 0, left: -10000, minWidth: 0, visibility: 'hidden' })
   const selected = options.find((option) => option.value === value)
+  useLayoutEffect(() => {
+    if (!open) return
+    const positionMenu = () => {
+      const triggerRect = trigger.current?.getBoundingClientRect()
+      const menuElement = menu.current
+      if (!triggerRect || !menuElement) return
+
+      const viewportPadding = 8
+      const availableBelow = window.innerHeight - triggerRect.bottom - viewportPadding * 2
+      const availableAbove = triggerRect.top - viewportPadding * 2
+      const menuHeight = Math.min(menuElement.scrollHeight, 280)
+      const placeAbove = availableBelow < menuHeight && availableAbove > availableBelow
+      const maxHeight = Math.max(80, Math.min(280, placeAbove ? availableAbove : availableBelow))
+      const width = Math.min(Math.max(triggerRect.width, menuElement.scrollWidth), window.innerWidth - viewportPadding * 2)
+      const left = Math.max(viewportPadding, Math.min(triggerRect.left, window.innerWidth - width - viewportPadding))
+      const top = placeAbove
+        ? Math.max(viewportPadding, triggerRect.top - 7 - Math.min(menuHeight, maxHeight))
+        : Math.min(window.innerHeight - viewportPadding, triggerRect.bottom + 7)
+
+      setMenuPosition({ position: 'fixed', top, left, right: 'auto', width: 'max-content', minWidth: triggerRect.width, maxWidth: window.innerWidth - viewportPadding * 2, maxHeight, zIndex: 1000, visibility: 'visible' })
+    }
+    positionMenu()
+    window.addEventListener('resize', positionMenu)
+    window.addEventListener('scroll', positionMenu, true)
+    return () => {
+      window.removeEventListener('resize', positionMenu)
+      window.removeEventListener('scroll', positionMenu, true)
+    }
+  }, [open, options.length])
   useEffect(() => {
     if (!open) return
     const close = (event: PointerEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false)
+      const target = event.target as Node
+      if (!root.current?.contains(target) && !menu.current?.contains(target)) setOpen(false)
     }
     document.addEventListener('pointerdown', close)
     return () => document.removeEventListener('pointerdown', close)
   }, [open])
   return <div className={`rounded-select ${className}`} ref={root}>
-    <button type="button" className="rounded-select-trigger" aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open} disabled={disabled} onClick={() => setOpen((current) => !current)}>
-      <span>{selected?.label || 'Choose…'}</span><span className={`rounded-select-chevron ${open ? 'open' : ''}`}>⌄</span>
+    <button ref={trigger} type="button" className="rounded-select-trigger" aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open} disabled={disabled} onClick={() => setOpen((current) => !current)}>
+      <span>{selected?.label || 'Choose…'}</span><ChevronDown aria-hidden="true" className={`rounded-select-chevron ${open ? 'open' : ''}`} size={14} strokeWidth={1.8} />
     </button>
-    {open && <div className="rounded-select-menu" role="listbox" aria-label={ariaLabel}>{options.map((option) => <button key={option.value} type="button" role="option" aria-selected={option.value === value} className={option.value === value ? 'selected' : ''} onClick={() => { onChange(option.value); setOpen(false) }}>{option.label}</button>)}</div>}
+    {open && createPortal(<div ref={menu} className="rounded-select-menu" style={menuPosition} role="listbox" aria-label={ariaLabel}>{options.map((option) => <button key={option.value} type="button" role="option" aria-selected={option.value === value} className={option.value === value ? 'selected' : ''} onClick={() => { onChange(option.value); setOpen(false) }}>{option.label}</button>)}</div>, document.body)}
   </div>
 }
 

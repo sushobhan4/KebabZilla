@@ -2,14 +2,15 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useRef,
   useState,
   type FormEvent,
 } from "react";
+import { importLibrary, setOptions } from "@googlemaps/js-api-loader";
 import {
   Activity,
   ArrowRight,
   ArrowUpRight,
-  Ban,
   BarChart3,
   Check,
   ChevronDown,
@@ -40,6 +41,7 @@ import {
   type Account,
   type MenuItem,
   type Order,
+  type ProvisionedAccount,
   type Restaurant,
   type Role,
 } from "../api";
@@ -73,10 +75,10 @@ type PageData<T> = {
   offset: number;
   status_counts?: Record<string, number>;
   role_counts?: Record<string, number>;
-  active_total?: number;
   paid_revenue_paise?: number;
 };
 const roles: Role[] = ["ADMIN", "EMPLOYEE", "DELIVERY", "USER"];
+const provisionableRoles: Role[] = ["ADMIN", "EMPLOYEE", "DELIVERY"];
 const orderNext: Record<string, string[]> = {
   PLACED: ["ACCEPTED", "REJECTED"],
   ACCEPTED: ["PREPARING"],
@@ -85,6 +87,13 @@ const orderNext: Record<string, string[]> = {
   OUT_FOR_DELIVERY: [],
 };
 const adminPageSize = 25;
+const amtalaMapCenter: google.maps.LatLngLiteral = { lat: 22.365278, lng: 88.269444 };
+let restaurantMapsPromise: Promise<google.maps.MapsLibrary> | null = null;
+
+function loadRestaurantMaps(key: string) {
+  if (!restaurantMapsPromise) { setOptions({ key, language: "en", region: "IN" }); restaurantMapsPromise = importLibrary("maps") as Promise<google.maps.MapsLibrary>; }
+  return restaurantMapsPromise;
+}
 
 function PageControls({
   limit,
@@ -256,7 +265,7 @@ function Overview() {
             </Link>
           </div>
           <div className="admin-stat-number">
-            {accountSummary?.active_total || 0}
+            {accountSummary?.total || 0}
           </div>
           <div className="admin-stat-foot">
             <span>Active accounts</span>
@@ -389,9 +398,9 @@ function Overview() {
               </thead>
               <tbody>
                 {orders.slice(0, 5).map((order) => (
-                  <tr key={order.id}>
+                  <tr key={order.order_id}>
                     <td>
-                      <strong className="mono-id">{order.public_id}</strong>
+                      <strong className="mono-id">{order.order_id}</strong>
                     </td>
                     <td>
                       <span className="table-person">
@@ -477,7 +486,7 @@ function AdminOrders() {
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [busyId, setBusyId] = useState<number | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const [filter, setFilter] = useState("ALL");
   const [period, setPeriod] = useState("all");
   const [q, setQ] = useState("");
@@ -505,10 +514,10 @@ function AdminOrders() {
     setLoading(true);
   }
   async function update(order: Order, status: string) {
-    setBusyId(order.id);
+    setBusyId(order.order_id);
     setError("");
     try {
-      await api(`/admin/orders/${order.id}/status`, {
+      await api(`/admin/orders/${order.order_id}/status`, {
         method: "PATCH",
         body: JSON.stringify({ status }),
       });
@@ -520,12 +529,12 @@ function AdminOrders() {
     }
   }
   async function refund(order: Order) {
-    const message = `Issue a full Razorpay refund of ${formatINR(order.total_paise)} for order ${order.public_id}?`;
+    const message = `Issue a full Razorpay refund of ${formatINR(order.total_paise)} for order ${order.order_id}?`;
     if (!window.confirm(message)) return;
-    setBusyId(order.id);
+    setBusyId(order.order_id);
     setError("");
     try {
-      await api(`/admin/orders/${order.id}/refund`, { method: "POST" });
+      await api(`/admin/orders/${order.order_id}/refund`, { method: "POST" });
       await refresh();
     } catch (err) {
       setError(
@@ -627,10 +636,10 @@ function AdminOrders() {
         {filtered.length ? (
           <div className="admin-order-list">
             {filtered.map((order) => (
-              <article className="admin-order-row" key={order.id}>
+              <article className="admin-order-row" key={order.order_id}>
                 <div className="admin-order-summary">
                   <div className="admin-order-id">
-                    <strong>{order.public_id}</strong>
+                    <strong>{order.order_id}</strong>
                     <small>{friendlyDate(order.created_at)}</small>
                   </div>
                   <div className="admin-order-customer">
@@ -639,7 +648,7 @@ function AdminOrders() {
                     </span>
                     <span>
                       <strong>{order.customer_name}</strong>
-                      <small>{order.customer_email}</small>
+                      <small>{order.customer_phone || "Phone not provided"}</small>
                     </span>
                   </div>
                   <div className="admin-order-products">
@@ -670,12 +679,12 @@ function AdminOrders() {
                 <div className="admin-order-detail">
                   <span>
                     <Truck size={14} />{" "}
-                    {order.address || "Restaurant counter pickup"}
+                    {order.order_type === "DELIVERY" ? "Delivery order" : "Restaurant counter pickup"}
                   </span>
                   {order.notes && <span>“{order.notes}”</span>}
                   <div className="admin-order-line-list">
                     {order.items.map((item) => (
-                      <div className="admin-order-line" key={item.id}>
+                      <div className="admin-order-line" key={`${item.menu_item_id}-${item.name}`}>
                         {(item.image_urls?.length || item.image_url) && (
                           <span className="admin-order-line-art">
                             <MenuImageCarousel
@@ -704,7 +713,7 @@ function AdminOrders() {
                         key={status}
                         variant={status === "REJECTED" ? "danger" : "ghost"}
                         size="button-sm"
-                        disabled={busyId === order.id}
+                        disabled={busyId === order.order_id}
                         onClick={() => void update(order, status)}
                       >
                         {formatStatus(status)}{" "}
@@ -716,7 +725,7 @@ function AdminOrders() {
                         <Button
                           variant="danger"
                           size="button-sm"
-                          disabled={busyId === order.id}
+                          disabled={busyId === order.order_id}
                           onClick={() => void refund(order)}
                         >
                           Refund payment <ArrowRight size={13} />
@@ -765,24 +774,22 @@ function Team() {
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const [roleCounts, setRoleCounts] = useState<Record<string, number>>({});
-  const [activeTotal, setActiveTotal] = useState(0);
   const [form, setForm] = useState({
     name: "",
     email: "",
     phone: "",
-    password: "",
     role: "EMPLOYEE" as Role,
   });
+  const [provisioned, setProvisioned] = useState<ProvisionedAccount | null>(null);
   const refresh = useCallback(
     () =>
       api<PageData<Account>>(
-        `/admin/accounts?limit=${adminPageSize}&offset=${page * adminPageSize}&q=${encodeURIComponent(q)}${role !== "ALL" ? `&role=${role}` : ""}`,
+        `/admin/accounts?limit=${adminPageSize}&offset=${page * adminPageSize}&q=${encodeURIComponent(q)}${role !== "ALL" ? `&role=${role}` : ""}&exclude_users=${role === "ALL" && !q.trim()}`,
       )
         .then((result) => {
           setPeople(result.items);
           setTotal(result.total);
           setRoleCounts(result.role_counts || {});
-          setActiveTotal(result.active_total || 0);
         })
         .catch((err) =>
           setError(
@@ -810,38 +817,21 @@ function Team() {
       setBusyId(null);
     }
   }
-  async function toggleActive(person: Account) {
-    setBusyId(person.id);
-    setError("");
-    try {
-      await api<Account>(
-        `/admin/accounts/${person.id}/active?is_active=${!person.is_active}`,
-        { method: "PATCH" },
-      );
-      await refresh();
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Could not update this account.",
-      );
-    } finally {
-      setBusyId(null);
-    }
-  }
   async function createPerson(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     setBusyId(-1);
     try {
-      const created = await api<Account>("/admin/accounts", {
+      const created = await api<ProvisionedAccount>("/admin/accounts", {
         method: "POST",
         body: JSON.stringify(form),
       });
       setCreating(false);
+      setProvisioned(created);
       setForm({
         name: "",
         email: "",
         phone: "",
-        password: "",
         role: "EMPLOYEE",
       });
       setQ("");
@@ -853,7 +843,6 @@ function Team() {
         ...old,
         [created.role]: (old[created.role] || 0) + 1,
       }));
-      if (created.is_active) setActiveTotal((old) => old + 1);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Could not create account.",
@@ -880,7 +869,7 @@ function Team() {
       <PageTitle
         eyebrow="PEOPLE MAKE THE PLACE"
         title="People & permissions"
-        description="Customer accounts, your restaurant crew and delivery partners."
+        description="Create and manage restaurant admins, employees, and delivery partners. Customer accounts are created through customer sign-up."
         action={
           <Button onClick={() => setCreating(true)}>
             <Plus size={16} /> Create account
@@ -888,10 +877,13 @@ function Team() {
         }
       />
       {error && <Notice onDismiss={() => setError("")}>{error}</Notice>}
+      {provisioned && <Notice tone="info" onDismiss={() => setProvisioned(null)}>
+        {provisioned.notification_status === "EMAIL_SENT" ? <><strong>{provisioned.name}'s account is ready.</strong> Their temporary password was sent to <strong>{provisioned.email}</strong>. SMS is not configured yet. They must change it on first sign-in.</> : <><strong>{provisioned.name}'s account is ready.</strong> Email could not be sent and SMS is not configured. Share this temporary password securely: <strong>{provisioned.temporary_password}</strong>. They must change it on first sign-in.</>}
+      </Notice>}
       <div className="team-metrics">
         <div>
           <strong>{total}</strong>
-          <span>{q || role !== "ALL" ? "Matching accounts" : "Accounts"}</span>
+          <span>{q || role !== "ALL" ? "Matching accounts" : "Team accounts"}</span>
         </div>
         <div>
           <strong>{roleCounts.EMPLOYEE || 0}</strong>
@@ -902,8 +894,8 @@ function Team() {
           <span>Delivery partners</span>
         </div>
         <div>
-          <strong>{activeTotal}</strong>
-          <span>Active accounts</span>
+          <strong>{total}</strong>
+          <span>Team accounts</span>
         </div>
       </div>
       <section className="admin-panel team-panel">
@@ -919,7 +911,6 @@ function Team() {
               }}
               placeholder="Search name, email or phone…"
             />
-            <kbd>⌘ K</kbd>
           </label>
           <div className="role-filter"><Users size={15} /><RoundedSelect ariaLabel="Sort people by role" value={role} onChange={(next) => { setRole(next); setPage(0); setLoading(true); }} options={[{ value: "ALL", label: "All roles" }, ...roles.map((r) => ({ value: r, label: formatStatus(r) }))]} /></div>
         </div>
@@ -932,10 +923,8 @@ function Team() {
                 <tr>
                   <th>PERSON</th>
                   <th>ROLE</th>
-                  <th>STATUS</th>
                   <th>JOINED</th>
                   <th>ORDERS</th>
-                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -967,11 +956,6 @@ function Team() {
                         <RoundedSelect className="role-select" ariaLabel={`Change ${person.name}'s role`} value={person.role} disabled={busyId === person.id || person.id === account?.id} onChange={(next) => void changeRole(person, next as Role)} options={roles.map((r) => ({ value: r, label: formatStatus(r) }))} />
                       </td>
                       <td>
-                        <Badge tone={person.is_active ? "success" : "danger"}>
-                          {person.is_active ? "Active" : "Disabled"}
-                        </Badge>
-                      </td>
-                      <td>
                         {new Intl.DateTimeFormat("en-IN", {
                           dateStyle: "medium",
                         }).format(new Date(person.created_at))}
@@ -984,30 +968,10 @@ function Team() {
                           <ShoppingBag size={14} /> View
                         </button>
                       </td>
-                      <td>
-                        <button
-                          className={`icon-button ${person.is_active ? "danger-icon" : "enable-icon"}`}
-                          title={
-                            person.is_active
-                              ? "Disable account"
-                              : "Enable account"
-                          }
-                          disabled={
-                            busyId === person.id || person.id === account?.id
-                          }
-                          onClick={() => void toggleActive(person)}
-                        >
-                          {person.is_active ? (
-                            <Ban size={16} />
-                          ) : (
-                            <Check size={16} />
-                          )}
-                        </button>
-                      </td>
                     </tr>
                     {historyId === person.id && (
                       <tr className="history-expanded">
-                        <td colSpan={6}>
+                        <td colSpan={4}>
                           <div className="history-title">
                             <strong>Order history · {person.name}</strong>
                             <button
@@ -1020,8 +984,8 @@ function Team() {
                           {history.length ? (
                             <div className="history-orders">
                               {history.map((order) => (
-                                <div key={order.id}>
-                                  <span>{order.public_id}</span>
+                                <div key={order.order_id}>
+                                  <span>{order.order_id}</span>
                                   <span>{friendlyDate(order.created_at)}</span>
                                   <StatusBadge status={order.status} />
                                   <strong>
@@ -1115,9 +1079,10 @@ function Team() {
                 />
               </label>
               <label className="field-label">
-                Phone <span className="field-optional">optional</span>
+                Mobile number
                 <input
                   type="tel"
+                  required
                   value={form.phone}
                   onChange={(event) =>
                     setForm({ ...form, phone: event.target.value })
@@ -1128,26 +1093,11 @@ function Team() {
               <div className="modal-two-col">
                 <label className="field-label">
                   Role
-                  <RoundedSelect value={form.role} onChange={(next) => setForm({ ...form, role: next as Role })} options={roles.map((r) => ({ value: r, label: formatStatus(r) }))} />
-                </label>
-                <label className="field-label">
-                  Temporary password
-                  <input
-                    type="password"
-                    minLength={10}
-                    maxLength={128}
-                    required
-                    value={form.password}
-                    onChange={(event) =>
-                      setForm({ ...form, password: event.target.value })
-                    }
-                    placeholder="At least 10 characters"
-                  />
+                  <RoundedSelect value={form.role} onChange={(next) => setForm({ ...form, role: next as Role })} options={provisionableRoles.map((r) => ({ value: r, label: formatStatus(r) }))} />
                 </label>
               </div>
               <Notice tone="info">
-                Share the temporary password with this person using your usual
-                secure method.
+                A temporary password will be generated automatically from the person's first name, six random digits, and a symbol. It will be sent to their email. SMS delivery will be added once an SMS provider is configured.
               </Notice>
               <div className="modal-actions">
                 <Button variant="secondary" onClick={() => setCreating(false)}>
@@ -1183,9 +1133,6 @@ function MenuManagement() {
     description: "",
     category: "",
     price_paise: 0,
-    discount_percent: 0,
-    discounted_price_paise: null as number | null,
-    tax_percent: 18,
     image_url: "",
     image_urls: [] as string[],
     is_vegetarian: false,
@@ -1224,9 +1171,6 @@ function MenuManagement() {
     setForm({
       ...item,
       price_paise: item.price_paise / 100,
-      discounted_price_paise: item.discounted_price_paise
-        ? item.discounted_price_paise / 100
-        : null,
       image_url: imageUrls[0] || "",
       image_urls: imageUrls,
     });
@@ -1252,12 +1196,7 @@ function MenuManagement() {
         editing ? `/menu/${editing.id}` : "/menu",
         {
           method: editing ? "PATCH" : "POST",
-          body: JSON.stringify({
-            ...data,
-            discounted_price_paise: form.discounted_price_paise
-              ? Math.round(form.discounted_price_paise * 100)
-              : null,
-          }),
+          body: JSON.stringify(data),
         },
       );
       setItems((old) =>
@@ -1509,10 +1448,7 @@ function MenuManagement() {
                 <p>
                   {item.description || "A KebabZilla favorite, made fresh."}
                 </p>
-                <div className="menu-admin-price">
-                  {formatINR(item.price_paise)}{" "}
-                  <small>+ {item.tax_percent}% tax</small>
-                </div>
+                <div className="menu-admin-price">{formatINR(item.price_paise)} <small>tax included</small></div>
               </div>
               <div className="menu-admin-actions">
                 <button
@@ -1630,26 +1566,6 @@ function MenuManagement() {
                   />
                 </label>
               </div>
-              <label className="field-label">
-                Tax rate · %
-                <input
-                  required
-                  type="number"
-                  min="0"
-                  max="30"
-                  step="1"
-                  value={form.tax_percent}
-                  onChange={(event) =>
-                    setForm({
-                      ...form,
-                      tax_percent: Number(event.target.value),
-                    })
-                  }
-                />
-                <small>
-                  Applied to this menu item. New items default to 18%.
-                </small>
-              </label>
               <div className="field-label">
                 Menu images{" "}
                 <span className="field-optional">
@@ -1964,19 +1880,44 @@ function Reports() {
   );
 }
 
+function RestaurantLocationMap({ latitude, longitude, onSave, onClose }: { latitude: number | null; longitude: number | null; onSave: (latitude: number, longitude: number) => void; onClose: () => void }) {
+  const container = useRef<HTMLDivElement>(null);
+  const [point, setPoint] = useState<google.maps.LatLngLiteral>(latitude != null && longitude != null ? { lat: latitude, lng: longitude } : amtalaMapCenter);
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    const key = import.meta.env.VITE_GOOGLE_MAPS_API_KEY?.trim();
+    if (!key) { setError("Google Maps is not configured. Add VITE_GOOGLE_MAPS_API_KEY to the frontend build environment."); return; }
+    let disposed = false;
+    void loadRestaurantMaps(key).then((maps) => {
+      if (disposed || !container.current) return;
+      const initial = latitude != null && longitude != null ? { lat: latitude, lng: longitude } : amtalaMapCenter;
+      const map = new maps.Map(container.current, { center: initial, zoom: latitude != null ? 16 : 12, mapTypeControl: false, streetViewControl: false, clickableIcons: false, gestureHandling: "greedy" });
+      const marker = new google.maps.Marker({ map, position: initial, draggable: true, title: "Restaurant location" });
+      const choose = (location: google.maps.LatLngLiteral) => { marker.setPosition(location); setPoint(location); };
+      map.addListener("click", (event: google.maps.MapMouseEvent) => { if (event.latLng) choose(event.latLng.toJSON()); });
+      marker.addListener("dragend", () => { const location = marker.getPosition()?.toJSON(); if (location) setPoint(location); });
+      setReady(true);
+    }).catch(() => { if (!disposed) setError("Google Maps could not load. Check the API key and Maps JavaScript API restrictions."); });
+    return () => { disposed = true; };
+  }, [latitude, longitude]);
+  return <div className="address-map-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="address-map-dialog" role="dialog" aria-modal="true" aria-labelledby="restaurant-location-title"><div className="address-map-heading"><span><small>RESTAURANT LOCATION</small><h2 id="restaurant-location-title">Pin your restaurant</h2></span><button className="icon-button" type="button" onClick={onClose} aria-label="Close map"><X size={18} /></button></div><div className="address-map-toolbar"><p className="address-map-help">The map opens on Amtala, South 24 Parganas. Click or drag the pin to your restaurant’s exact entrance.</p></div><div className="address-map-wrap"><div className="address-map-canvas address-google-map" ref={container} /></div>{error ? <Notice>{error}</Notice> : <div className="address-map-status">Selected: {point.lat.toFixed(6)}, {point.lng.toFixed(6)}</div>}<div className="address-map-actions"><Button type="button" variant="secondary" onClick={onClose}>Cancel</Button><Button type="button" disabled={!ready} onClick={() => { onSave(point.lat, point.lng); onClose(); }}><Check size={15} /> Use this pin</Button></div></section></div>;
+}
+
 function SettingsPage() {
   const [form, setForm] = useState<Restaurant | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [locationPickerOpen, setLocationPickerOpen] = useState(false);
   useEffect(() => {
     api<Restaurant>("/admin/settings")
       .then((settings) =>
         setForm({
           ...settings,
           weekly_schedule: settings.weekly_schedule || {},
-          delivery_fee_paise: settings.delivery_fee_paise / 100,
+          delivery_fee_per_km_paise: settings.delivery_fee_per_km_paise / 100,
           minimum_order_paise: settings.minimum_order_paise / 100,
         }),
       )
@@ -1999,14 +1940,14 @@ function SettingsPage() {
         body: JSON.stringify({
           ...form,
           weekly_schedule: form.weekly_schedule,
-          delivery_fee_paise: Math.round(form.delivery_fee_paise * 100),
+          delivery_fee_per_km_paise: Math.round(form.delivery_fee_per_km_paise * 100),
           minimum_order_paise: Math.round(form.minimum_order_paise * 100),
         }),
       });
       setForm({
         ...updated,
         weekly_schedule: updated.weekly_schedule || {},
-        delivery_fee_paise: updated.delivery_fee_paise / 100,
+        delivery_fee_per_km_paise: updated.delivery_fee_per_km_paise / 100,
         minimum_order_paise: updated.minimum_order_paise / 100,
       });
       setNotice("Restaurant details saved.");
@@ -2078,6 +2019,11 @@ function SettingsPage() {
                     onChange={(event) => change("address", event.target.value)}
                   />
                 </label>
+                <div className="field-label restaurant-location-control">
+                  <span>Exact restaurant location</span>
+                  <small>{form.latitude != null && form.longitude != null ? `${form.latitude.toFixed(6)}, ${form.longitude.toFixed(6)}` : "Not pinned yet"}</small>
+                  <Button type="button" variant="secondary" onClick={() => setLocationPickerOpen(true)}>Set on map</Button>
+                </div>
               </div>
               <div className="settings-schedule">
                 <h3>Opening days and hours</h3>
@@ -2143,18 +2089,6 @@ function SettingsPage() {
               <h2>Checkout & delivery</h2>
               <div className="settings-fields">
                 <label className="field-label">
-                  Delivery fee · INR
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={form.delivery_fee_paise}
-                    onChange={(event) =>
-                      change("delivery_fee_paise", Number(event.target.value))
-                    }
-                  />
-                </label>
-                <label className="field-label">
                   Minimum order · INR
                   <input
                     type="number"
@@ -2176,6 +2110,31 @@ function SettingsPage() {
                     value={form.delivery_radius_km}
                     onChange={(event) =>
                       change("delivery_radius_km", Number(event.target.value))
+                    }
+                  />
+                </label>
+                <label className="field-label">
+                  Free delivery radius · km
+                  <input
+                    type="number"
+                    min="0"
+                    max="500"
+                    step="0.1"
+                    value={form.free_delivery_radius_km}
+                    onChange={(event) =>
+                      change("free_delivery_radius_km", Number(event.target.value))
+                    }
+                  />
+                </label>
+                <label className="field-label">
+                  Delivery fee per km · INR
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={form.delivery_fee_per_km_paise}
+                    onChange={(event) =>
+                      change("delivery_fee_per_km_paise", Number(event.target.value))
                     }
                   />
                 </label>
@@ -2216,6 +2175,7 @@ function SettingsPage() {
           </aside>
         </div>
       </form>
+      {locationPickerOpen && <RestaurantLocationMap latitude={form.latitude} longitude={form.longitude} onClose={() => setLocationPickerOpen(false)} onSave={(latitude, longitude) => { change("latitude", latitude); change("longitude", longitude); }} />}
     </>
   );
 }
@@ -2271,14 +2231,17 @@ function ActivityCenter() {
 
 function Offers() {
   const [audience, setAudience] = useState("ALL");
-  const [channels, setChannels] = useState<string[]>(["SMS"]);
+  const [channels, setChannels] = useState<string[]>(["EMAIL"]);
+  const [subject, setSubject] = useState("A little something from KebabZilla");
   const [message, setMessage] = useState("");
   const [logs, setLogs] = useState<
     {
       id: number;
       audience: string;
       channels: string[];
+      subject: string;
       message: string;
+      delivery_counts: Record<string, { recipient_count: number; sent_count: number }>;
       recipient_count: number;
       sent_count: number;
       status: string;
@@ -2288,8 +2251,11 @@ function Offers() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [editingPreview, setEditingPreview] = useState(false);
   const [logQuery, setLogQuery] = useState("");
   const [logSort, setLogSort] = useState("newest");
+  const [selectedLog, setSelectedLog] = useState<(typeof logs)[number] | null>(null);
   const refresh = useCallback(
     () => api<typeof logs>("/admin/offers").then(setLogs),
     [],
@@ -2297,8 +2263,7 @@ function Offers() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
-  async function send(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function send() {
     setBusy(true);
     setError("");
     setNotice("");
@@ -2310,12 +2275,14 @@ function Offers() {
         provider_notes: string[];
       }>("/admin/offers", {
         method: "POST",
-        body: JSON.stringify({ audience, channels, message }),
+        body: JSON.stringify({ audience, channels, subject, message }),
       });
       setNotice(
         `${result.status}: ${result.sent_count}/${result.recipient_count} recipients sent. ${result.provider_notes.join("; ")}`,
       );
       setMessage("");
+      setPreviewOpen(false);
+      setEditingPreview(false);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not send offer.");
@@ -2324,20 +2291,20 @@ function Offers() {
     }
   }
   const visibleLogs = logs
-    .filter((log) => `${log.message} ${log.status} ${log.audience} ${log.channels.join(" ")}`.toLowerCase().includes(logQuery.trim().toLowerCase()))
+    .filter((log) => `${log.subject} ${log.message} ${log.status} ${log.audience} ${log.channels.join(" ")}`.toLowerCase().includes(logQuery.trim().toLowerCase()))
     .sort((a, b) => logSort === "oldest" ? a.created_at.localeCompare(b.created_at) : logSort === "status" ? a.status.localeCompare(b.status) : b.created_at.localeCompare(a.created_at));
   return (
     <>
       <PageTitle
         eyebrow="A LITTLE SOMETHING FOR YOUR GUESTS"
         title="Customer offers"
-        description="Send a custom note over SMS, email, or both to all customers, new customers, or returning customers."
+        description="Send a custom email to all customers, new customers, or returning customers. SMS broadcasts will be added once an SMS provider is configured."
       />
       {notice && <Notice tone="success">{notice}</Notice>}
       {error && <Notice>{error}</Notice>}
       <form
         className="admin-panel modal-form"
-        onSubmit={(event) => void send(event)}
+        onSubmit={(event) => { event.preventDefault(); setEditingPreview(false); setPreviewOpen(true); }}
       >
         <label className="field-label">
           Audience
@@ -2346,7 +2313,7 @@ function Offers() {
         <div className="offer-channel-field">
           <span>Send by</span>
           <div className="offer-channel-picker">
-          {["SMS", "EMAIL"].map((channel) => (
+          {["EMAIL"].map((channel) => (
             <button type="button" key={channel} aria-pressed={channels.includes(channel)} className={channels.includes(channel) ? "selected" : ""} onClick={() =>
                   setChannels((old) =>
                     old.includes(channel)
@@ -2356,6 +2323,7 @@ function Offers() {
                 }>{channel}</button>
           ))}
           </div>
+          <small className="field-optional">Sent from support@kebabzilla.in. SMS is not configured yet.</small>
         </div>
         <label className="field-label">
           Offer message
@@ -2368,10 +2336,21 @@ function Offers() {
             onChange={(event) => setMessage(event.target.value)}
           />
         </label>
-        <Button disabled={busy || !channels.length}>
-          {busy ? "Sending…" : "Send offer"}
+        <Button type="submit" disabled={busy || !channels.length}>
+          Preview offer
         </Button>
       </form>
+      {previewOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setPreviewOpen(false); }}>
+        <section className="modal-card offer-preview-modal" role="dialog" aria-modal="true" aria-labelledby="offer-preview-title">
+          <div className="modal-heading"><div><span className="eyebrow">{editingPreview ? "EDIT CUSTOMER EMAIL" : "CUSTOMER EMAIL PREVIEW"}</span><h2 id="offer-preview-title">{editingPreview ? "Refine your offer" : subject}</h2></div><button className="icon-button" type="button" disabled={busy} onClick={() => setPreviewOpen(false)} aria-label="Close preview"><X size={18} /></button></div>
+          {editingPreview ? <div className="modal-form"><label className="field-label">Email subject<input required minLength={2} maxLength={160} value={subject} onChange={(event) => setSubject(event.target.value)} /></label><label className="field-label">Email body<textarea required minLength={2} maxLength={1000} rows={7} value={message} onChange={(event) => setMessage(event.target.value)} /></label></div> : <div className="offer-preview-email">
+            <div className="offer-preview-meta"><span>From</span><strong>KebabZilla &lt;support@kebabzilla.in&gt;</strong><span>To</span><strong>Selected {audience.toLowerCase()} customers</strong><span>Subject</span><strong>{subject}</strong></div>
+            <article className="offer-preview-body"><p>Hi,</p><p>{message}</p><p>KebabZilla</p></article>
+          </div>}
+          <Notice tone="info">{editingPreview ? "Update the subject or body, then review the email before sending." : "Review the content above. Sending is final and will email every selected customer."}</Notice>
+          <div className="modal-actions">{editingPreview ? <Button type="button" variant="secondary" disabled={busy || message.trim().length < 2 || subject.trim().length < 2} onClick={() => setEditingPreview(false)}>Review email</Button> : <Button type="button" variant="secondary" disabled={busy} onClick={() => setEditingPreview(true)}>Edit offer</Button>}<Button type="button" disabled={busy || message.trim().length < 2 || subject.trim().length < 2} onClick={() => void send()}>{busy ? "Sending…" : "Send this offer"} <ArrowRight size={15} /></Button></div>
+        </section>
+      </div>}
       <section className="admin-panel campaign-log-panel">
         <h2>Campaign log</h2>
         <div className="activity-filter-bar">
@@ -2379,22 +2358,19 @@ function Offers() {
           <RoundedSelect ariaLabel="Sort campaign log" value={logSort} onChange={setLogSort} options={[{ value: "newest", label: "Newest first" }, { value: "oldest", label: "Oldest first" }, { value: "status", label: "Status A–Z" }]} />
         </div>
         {visibleLogs.length ? visibleLogs.map((log) => (
-          <div className="status-break-row" key={log.id}>
-            <strong>
-              {log.status} · {log.sent_count}/{log.recipient_count} ·{" "}
-              {log.channels.join(", ")}
-            </strong>
-            <span>
-              {log.audience} · {friendlyDate(log.created_at)}
-            </span>
-          </div>
+          <button type="button" className="campaign-log-row" key={log.id} onClick={() => setSelectedLog(log)}>
+            <span className="campaign-log-copy"><strong>{log.subject}</strong><span>{log.message}</span></span>
+            <span className="campaign-log-delivery">{log.channels.map((channel) => <span key={channel}>{channel} · {log.delivery_counts?.[channel]?.sent_count || 0}/{log.delivery_counts?.[channel]?.recipient_count || 0}</span>)}</span>
+            <time>{friendlyDate(log.created_at)}</time>
+          </button>
         )) : <EmptyState title="No campaigns found" description="Try a different search." />}
       </section>
+      {selectedLog && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedLog(null); }}><section className="modal-card campaign-detail-modal" role="dialog" aria-modal="true" aria-labelledby="campaign-detail-title"><div className="modal-heading"><div><span className="eyebrow">CAMPAIGN DETAILS</span><h2 id="campaign-detail-title">{selectedLog.subject}</h2></div><button className="icon-button" type="button" onClick={() => setSelectedLog(null)} aria-label="Close campaign details"><X size={18} /></button></div><p className="campaign-detail-message">{selectedLog.message}</p><div className={`campaign-channel-details campaign-channel-details-${selectedLog.channels.length}`}>{selectedLog.channels.map((channel) => { const detail = selectedLog.delivery_counts?.[channel] || { recipient_count: 0, sent_count: 0 }; return <section key={channel} className="campaign-channel-card"><span className="eyebrow">{channel}</span><h3>{detail.sent_count} delivered</h3><p>{detail.sent_count} of {detail.recipient_count} selected customers received this message via {channel.toLowerCase()}.</p></section>; })}</div><div className="campaign-detail-footer"><span>{selectedLog.audience} customers</span><time>{friendlyDate(selectedLog.created_at)}</time></div></section></div>}
     </>
   );
 }
 
-type MenuDiscountRow = { id: string; campaign_name: string | null; menu_item_ids: number[]; menu_item_names: string[]; discount_percent: number; starts_at: string; ends_at: string; created_at: string };
+type MenuDiscountRow = { id: number; campaign_name: string | null; menu_item_ids: number[]; menu_item_names: string[]; discount_percent: number; starts_at: string; ends_at: string; created_at: string };
 
 function localDateTimeValue(value: Date) {
   return new Date(value.getTime() - value.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
@@ -2407,7 +2383,7 @@ function Discounts() {
   const [menu, setMenu] = useState<MenuItem[]>([]);
   const [discounts, setDiscounts] = useState<MenuDiscountRow[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
-  const [editingCampaignId, setEditingCampaignId] = useState<string | null>(null);
+  const [editingCampaignId, setEditingCampaignId] = useState<number | null>(null);
   const [selectedMenuItemIds, setSelectedMenuItemIds] = useState<number[]>([]);
   const [itemSearch, setItemSearch] = useState("");
   const [menuPickerOpen, setMenuPickerOpen] = useState(false);
@@ -2444,7 +2420,7 @@ function Discounts() {
     finally { setBusy(false); }
   }
 
-  async function removeDiscount(id: string) {
+  async function removeDiscount(id: number) {
     try { await api(`/admin/discounts/${id}`, { method: "DELETE" }); setDiscounts((rows) => rows.filter((row) => row.id !== id)); }
     catch (err) { setError(err instanceof Error ? err.message : "Could not remove this discount."); }
   }
@@ -2487,8 +2463,7 @@ function Discounts() {
             <span className={`discount-state ${state.toLowerCase()}`}>{state}</span>
             <div className="discount-dates"><span>Starts <strong>{friendlyDate(discount.starts_at)}</strong></span><span>Ends <strong>{friendlyDate(discount.ends_at)}</strong></span></div>
             <div className="discount-row-actions">
-              <button type="button" className="icon-button" aria-label={`Edit discount campaign for ${names}`} title="Edit campaign" onClick={() => openEditModal(discount)}><Edit3 size={16} /></button>
-              <button type="button" className="icon-button danger-icon" aria-label={`Delete discount for ${names}`} title="Delete discount" onClick={() => void removeDiscount(discount.id)}><Trash2 size={16} /></button>
+              {state !== "Ended" && <><button type="button" className="icon-button" aria-label={`Edit discount campaign for ${names}`} title="Edit campaign" onClick={() => openEditModal(discount)}><Edit3 size={16} /></button><button type="button" className="icon-button danger-icon" aria-label={`Delete discount for ${names}`} title="Delete discount" onClick={() => void removeDiscount(discount.id)}><Trash2 size={16} /></button></>}
             </div>
           </article>;
         })}</div>

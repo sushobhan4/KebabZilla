@@ -68,4 +68,6 @@ For a disposable local preview without PostgreSQL, set `DATABASE_URL=sqlite:///.
 
 For production delivery OTPs, configure a transactional SMS adapter using `DELIVERY_OTP_API_URL` and `DELIVERY_OTP_API_TOKEN`. The adapter sends a JSON request with `to`, `sender`, and `message`; map that contract to the SMS provider you choose. Local development returns the generated code to the staff screen for testing.
 
-All money values are integer paise. The API re-prices order lines from the menu at submission time and validates every state change server-side.
+Password recovery sends a six-digit, single-use code by SMTP. Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`, and `SMTP_FROM_NAME` in the API environment before enabling the Forgot password flow. Codes expire after 10 minutes and are stored only as hashes.
+
+All money values are integer paise. Menu prices are tax-inclusive; scheduled discounts are stored in `menu_discounts` and applied only while their campaign is active. Ended discount campaigns are retained for history and cannot be edited or deleted. The API re-prices order lines from the menu at submission time and validates every state change server-side.

@@ -43,8 +43,13 @@ export type Account = {
   phone: string | null
   addresses: SavedAddress[]
   role: Role
-  is_active: boolean
+  must_change_password: boolean
   created_at: string
+}
+
+export type ProvisionedAccount = Account & {
+  temporary_password: string | null
+  notification_status: 'EMAIL_SENT' | 'EMAIL_FAILED' | 'NOT_CONFIGURED'
 }
 export type SavedAddress = {
   id: string; label: string; house_number?: string; area?: string; road?: string
@@ -55,10 +60,10 @@ export type MenuItem = {
   name: string
   description: string
   category: string
+  category_id: number | null
   price_paise: number
   discount_percent: number
   discounted_price_paise: number | null
-  tax_percent: number
   image_url: string | null
   image_urls: string[]
   is_vegetarian: boolean
@@ -72,28 +77,24 @@ export type SavedCartItem = {
   quantity: number
 }
 export type Order = {
-  id: number
-  public_id: string
+  order_id: string
   customer_id: number | null
   customer_name: string
-  customer_email: string
   customer_phone: string | null
   status: string
   order_type: string
   payment_method: string
   payment_status: string
   subtotal_paise: number
-  tax_paise: number
   delivery_fee_paise: number
   total_paise: number
-  address: string
   notes: string
   assigned_delivery_id: number | null
   scheduled_for?: string | null
   delivery_name?: string | null
   delivery_phone?: string | null
   created_at: string
-  items: { id: number; menu_item_id: number | null; name: string; quantity: number; unit_price_paise: number; line_total_paise: number; tax_percent: number; tax_paise: number; image_url?: string | null; image_urls?: string[] }[]
+  items: { menu_item_id: number | null; name: string; quantity: number; price_paise: number; line_total_paise: number; image_url?: string | null; image_urls?: string[] }[]
   checkout?: { gateway_order_id: string; amount: number; currency: string; key_id: string; name: string; description: string; prefill: { name: string; email: string; contact: string } }
   delivery_otp?: string | null
 }
@@ -102,11 +103,14 @@ export type Restaurant = {
   tagline: string
   phone: string
   address: string
+  latitude: number | null
+  longitude: number | null
   weekly_schedule: Record<string, { open: boolean; opens: string; closes: string }>
   tax_percent: number
-  delivery_fee_paise: number
   minimum_order_paise: number
   delivery_radius_km: number
+  free_delivery_radius_km: number
+  delivery_fee_per_km_paise: number
   accepting_orders: boolean
 }
 
@@ -127,3 +131,16 @@ export function formatStatus(value: string) {
   return value.replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
+export async function requestPasswordReset(email: string) {
+  return api<{ message: string }>('/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  })
+}
+
+export async function confirmPasswordReset(email: string, otp: string, newPassword: string) {
+  return api<void>('/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ email, otp, new_password: newPassword }),
+  })
+}

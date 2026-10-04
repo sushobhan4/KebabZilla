@@ -8481,6 +8481,72 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator {
   gap: 10px;
   text-align: center;
 }
+.rounded-select-menu {
+  min-width: max-content;
+}
+
+/* Center dropdown arrows by their SVG box, not by a rotated text glyph. */
+.role-filter {
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+.role-filter > .rounded-select {
+  box-sizing: border-box;
+  width: 118px;
+  min-width: 118px;
+  max-width: 118px;
+}
+.rounded-select.role-select {
+  box-sizing: border-box;
+  width: 118px;
+  min-width: 118px;
+  max-width: 118px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.rounded-select.role-select .rounded-select-trigger {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid #e9e6de;
+  border-radius: 999px;
+  background: #fff;
+}
+.rounded-select-trigger {
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+}
+.rounded-select-trigger > span:first-child {
+  text-align: center;
+}
+.rounded-select-chevron {
+  display: block;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  position: static;
+  transform: none;
+  transform-origin: 50% 50%;
+}
+.rounded-select-chevron.open {
+  transform: rotate(180deg);
+}
+.period-select-trigger {
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+}
+.menu-sort-trigger {
+  justify-content: center;
+}
 
 /* Keep role selectors compact and avoid the wrapper + control double border. */
 .rounded-select.role-select {
@@ -9125,6 +9191,14 @@ input[type="radio"]:focus-visible {
   color: #a83c24;
   box-shadow: 0 0 0 2px #c342261c;
 }
+
+.offer-preview-modal { max-width: 640px; }
+.offer-preview-email { border: 1px solid var(--line, #ded8d0); border-radius: 14px; overflow: hidden; margin: 18px 0; background: #fff; }
+.offer-preview-meta { display: grid; grid-template-columns: 68px 1fr; gap: 8px 12px; padding: 16px 18px; border-bottom: 1px solid var(--line, #ded8d0); font-size: .86rem; }
+.offer-preview-meta span { color: var(--muted, #756d65); }
+.offer-preview-body { padding: 22px 18px; line-height: 1.6; white-space: pre-wrap; }
+.offer-preview-body p { margin: 0 0 18px; }
+.offer-preview-body p:last-child { margin-bottom: 0; }
 .campaign-log-panel {
   margin-top: 18px;
   overflow: hidden;
@@ -9136,6 +9210,21 @@ input[type="radio"]:focus-visible {
   gap: 16px;
   padding: 12px 2px;
 }
+.campaign-log-row { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 22px; align-items: center; padding: 16px 2px; text-align: left; border: 0; border-top: 1px solid #eee9e2; background: transparent; cursor: pointer; color: inherit; }
+.campaign-log-row:hover { background: #fdf8f4; }
+.campaign-log-copy { min-width: 0; display: grid; gap: 4px; }
+.campaign-log-copy strong { font-size: .95rem; }
+.campaign-log-copy span { overflow: hidden; color: #756d65; font-size: .85rem; text-overflow: ellipsis; white-space: nowrap; }
+.campaign-log-delivery { display: flex; flex-wrap: wrap; gap: 6px; }
+.campaign-log-delivery span { padding: 5px 8px; border-radius: 999px; background: #f8e9e2; color: #a83c24; font-size: .72rem; font-weight: 700; }
+.campaign-log-row time, .campaign-detail-footer { color: #756d65; font-size: .82rem; white-space: nowrap; }
+.campaign-detail-message { padding: 14px 0 20px; line-height: 1.6; white-space: pre-wrap; }
+.campaign-channel-details { display: grid; gap: 12px; }
+.campaign-channel-details-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.campaign-channel-card { padding: 18px; border-radius: 14px; background: #fdf8f4; border: 1px solid #eee0d8; }
+.campaign-channel-card h3 { margin: 7px 0; }
+.campaign-channel-card p { margin: 0; color: #756d65; font-size: .88rem; line-height: 1.5; }
+.campaign-detail-footer { display: flex; justify-content: space-between; margin-top: 18px; padding-top: 14px; border-top: 1px solid #eee9e2; }
 .discount-list-panel {
   margin-top: 4px;
   padding: 22px;
@@ -9373,4 +9462,7 @@ input[type="radio"]:focus-visible {
   justify-content: center;
   gap: 10px;
   text-align: center;
+}
+.rounded-select-menu {
+  min-width: max-content;
 }

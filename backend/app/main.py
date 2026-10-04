@@ -34,9 +34,10 @@ def public_restaurant(db: DbSession):
         "phone": config.phone,
         "address": config.address,
         "tax_percent": config.tax_percent,
-        "delivery_fee_paise": config.delivery_fee_paise,
         "minimum_order_paise": config.minimum_order_paise,
         "delivery_radius_km": config.delivery_radius_km,
+        "free_delivery_radius_km": config.free_delivery_radius_km,
+        "delivery_fee_per_km_paise": config.delivery_fee_per_km_paise,
         "accepting_orders": config.accepting_orders,
         "weekly_schedule": config.weekly_schedule or {},
     }
@@ -52,5 +53,5 @@ def admin_delivery_preview(db: DbSession, account: CurrentAccount):
     """Admin-only read of delivery staff for role preview; enforcement is explicit here."""
     if account.role != Role.ADMIN:
         raise HTTPException(status_code=403, detail="You do not have access to this action")
-    people = db.scalars(select(Account).where(Account.role == Role.DELIVERY, Account.is_active.is_(True)).order_by(Account.name)).all()
+    people = db.scalars(select(Account).where(Account.role == Role.DELIVERY).order_by(Account.name)).all()
     return [{"id": person.id, "name": person.name, "phone": person.phone} for person in people]
