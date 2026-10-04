@@ -136,6 +136,11 @@ function RoleGuard({ roles, children }: { roles: Role[]; children: ReactNode }) 
   return <>{children}</>
 }
 
+function NotFound() {
+  const navigate = useNavigate()
+  return <main className="not-found"><div className="eyebrow">404 · THAT PLATE WENT MISSING</div><h1>We got a little lost.</h1><p>Let’s take you somewhere with more flavor.</p><Button onClick={() => navigate('/')}><ArrowLeft size={16} /> Back to the menu</Button></main>
+}
+
 export default function App() {
   const { account } = useAuth()
   const [notice, setNotice] = useState<string | null>(null)
@@ -154,10 +159,9 @@ export default function App() {
       <Route path="/ops/*" element={<RoleGuard roles={['EMPLOYEE', 'ADMIN']}><WorkspaceLayout><Operations /></WorkspaceLayout></RoleGuard>} />
       <Route path="/delivery/*" element={<RoleGuard roles={['DELIVERY', 'ADMIN']}><WorkspaceLayout><Delivery /></WorkspaceLayout></RoleGuard>} />
       <Route path="/admin/*" element={<RoleGuard roles={['ADMIN']}><WorkspaceLayout><Admin /></WorkspaceLayout></RoleGuard>} />
-      <Route path="*" element={<main className="not-found"><div className="eyebrow">404 · THAT PLATE WENT MISSING</div><h1>We got a little lost.</h1><p>Let’s take you somewhere with more flavor.</p><Button onClick={() => window.location.hash = '#/'}><ArrowLeft size={16} /> Back to the menu</Button></main>} />
+      <Route path="*" element={<NotFound />} />
     </Routes></div>
     <footer className="app-footer"><Brand compact /><div className="footer-copy">© {new Date().getFullYear()} KebabZilla.</div></footer>
   </div>
 }
-
 

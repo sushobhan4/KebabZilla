@@ -4,7 +4,7 @@ A role-based restaurant ordering and operations application. The customer web ap
 
 ## Architecture
 
-- `frontend/`: React, TypeScript, Vite, React Router (hash URLs are GitHub Pages friendly).
+- `frontend/`: React, TypeScript, Vite, React Router (browser-history URLs with a GitHub Pages SPA fallback).
 - `backend/`: FastAPI REST API, Pydantic, SQLAlchemy 2, Alembic, PostgreSQL.
 - Authentication: short-lived signed access tokens. The token identifies the account; the API reloads the active account and role from the database on every request. Registration always creates a `USER`; only an `ADMIN` can provision staff or change roles.
 - Payments: cash is available locally. Razorpay order creation, server-side signature verification, and webhook verification are implemented behind a payment service; credentials stay on the API.
@@ -52,7 +52,7 @@ For a disposable local preview without PostgreSQL, set `DATABASE_URL=sqlite:///.
 
 ## Deploy independently
 
-- Build `frontend/` as static assets and publish `frontend/dist/` to GitHub Pages. Set the GitHub repository Actions variable `VITE_API_BASE_URL` to the public API URL (including `/api/v1`) before deployment. Razorpay's public checkout key is returned by the API; never put the key secret, JWT secret, database URL, or Identity Platform service credentials in a `VITE_` variable. Hash-based routes work without server-side SPA rewrites.
+- Build `frontend/` as static assets and publish `frontend/dist/` to GitHub Pages. Set the GitHub repository Actions variable `VITE_API_BASE_URL` to the public API URL (including `/api/v1`) before deployment. The Pages workflow copies the built `index.html` to `404.html`, allowing direct visits and refreshes of browser-history routes such as `/login` and `/menu` to load the SPA. Razorpay's public checkout key is returned by the API; never put the key secret, JWT secret, database URL, or Identity Platform service credentials in a `VITE_` variable.
 - Build `backend/Dockerfile` and deploy to Cloud Run. Configure `DATABASE_URL` from a Cloud SQL connection, a high-entropy `JWT_SECRET`, `CORS_ORIGINS` with the Pages origin, and Razorpay/identity variables via Secret Manager. Run `alembic upgrade head` as a deployment migration step before switching traffic.
 - `backend/cloudrun.yaml` documents the Cloud Run container port and health probe. Production schema changes must be applied through Alembic, never by app startup.
 

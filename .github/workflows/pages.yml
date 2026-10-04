@@ -38,6 +38,8 @@ jobs:
         working-directory: frontend
         env:
           VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+      - name: Configure GitHub Pages SPA fallback
+        run: cp frontend/dist/index.html frontend/dist/404.html
       - uses: actions/upload-pages-artifact@v3
         with:
           path: frontend/dist
