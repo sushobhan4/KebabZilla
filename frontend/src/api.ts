@@ -1,11 +1,9 @@
 export const API_BASE = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '')
 
-let accessToken: string | null = sessionStorage.getItem('kz_access_token')
+let accessToken: string | null = null
 
 export function setAccessToken(token: string | null) {
   accessToken = token
-  if (token) sessionStorage.setItem('kz_access_token', token)
-  else sessionStorage.removeItem('kz_access_token')
 }
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -14,7 +12,11 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
   let response: Response
   try {
-    response = await fetch(`${API_BASE}${path}`, { ...init, headers })
+    response = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers,
+      credentials: 'include',
+    })
   } catch {
     throw new Error('Can’t reach the KebabZilla server. Check that the API is running and try again.')
   }
@@ -69,8 +71,35 @@ export type MenuItem = {
   is_vegetarian: boolean
   is_available: boolean
   is_featured: boolean
+  is_custom?: boolean
+  custom_sections?: CustomMenuSection[]
   discount_campaign_name: string | null
   popularity_count: number
+}
+export type CustomMenuSectionOption = {
+  name: string
+  extra_paise: number
+}
+export type CustomMenuSection = {
+  id?: number
+  name: string
+  position?: number
+  required?: boolean
+  options: CustomMenuSectionOption[]
+}
+export type CustomMenuItem = {
+  id: number
+  name: string
+  description: string
+  category: string
+  category_id: number | null
+  base_price_paise: number
+  image_url: string | null
+  image_urls: string[]
+  is_vegetarian: boolean
+  is_available: boolean
+  is_featured: boolean
+  sections: CustomMenuSection[]
 }
 export type SavedCartItem = {
   menu_item_id: number
@@ -88,13 +117,16 @@ export type Order = {
   subtotal_paise: number
   delivery_fee_paise: number
   total_paise: number
+  address?: string
+  latitude?: number | null
+  longitude?: number | null
   notes: string
   assigned_delivery_id: number | null
   scheduled_for?: string | null
   delivery_name?: string | null
   delivery_phone?: string | null
   created_at: string
-  items: { menu_item_id: number | null; name: string; quantity: number; price_paise: number; line_total_paise: number; image_url?: string | null; image_urls?: string[] }[]
+  items: { menu_item_id: number | null; name: string; quantity: number; price_paise: number; line_total_paise: number; customizations?: CustomMenuSectionOption[]; image_url?: string | null; image_urls?: string[] }[]
   checkout?: { gateway_order_id: string; amount: number; currency: string; key_id: string; name: string; description: string; prefill: { name: string; email: string; contact: string } }
   delivery_otp?: string | null
 }

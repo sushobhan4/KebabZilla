@@ -1,13 +1,15 @@
 import { useState, type FormEvent } from 'react'
 import { ArrowLeft, ArrowRight, Eye, EyeOff, Flame, LockKeyhole, Mail, Phone, UserRound } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
+import { GoogleOAuthProvider, GoogleLogin, type CredentialResponse } from '@react-oauth/google'
 import { useAuth } from '../state'
 import { Notice } from '../components'
 import { confirmPasswordReset, requestPasswordReset } from '../api'
 
 export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recovery' }) {
-  const { signIn, register } = useAuth()
+  const { signIn, register, googleSignIn } = useAuth()
   const navigate = useNavigate()
+  const googleClientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim()
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
@@ -51,6 +53,21 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
     }
   }
 
+  async function onGoogleSuccess(credentialResponse: CredentialResponse) {
+    if (!credentialResponse.credential) return
+    setError('')
+    setSuccess('')
+    setBusy(true)
+    try {
+      await googleSignIn(credentialResponse.credential)
+      navigate(isRegister ? '/' : '/workspace', { replace: true })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Google sign-in was unsuccessful.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return <main className="auth-page">
     <section className="auth-visual">
       <Link className="auth-back" to="/"><ArrowLeft size={16} /> Back to the menu</Link>
@@ -70,6 +87,21 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
         {isRecovery && otpSent && <><label className="field-label">One-time code<div className="input-wrap"><LockKeyhole size={17} /><input inputMode="numeric" autoComplete="one-time-code" required pattern="\d{6}" maxLength={6} placeholder="6-digit code from your email" value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, '').slice(0, 6))} /></div></label><label className="field-label">New password<div className="input-wrap"><LockKeyhole size={17} /><input type={showPassword ? 'text' : 'password'} autoComplete="new-password" required minLength={10} maxLength={128} placeholder="At least 10 characters" value={password} onChange={(event) => setPassword(event.target.value)} /><button className="input-trailing" type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></label></>}
         {isRecovery ? <button className="button button-dark auth-submit" type="submit" disabled={busy}>{busy ? 'One moment…' : otpSent ? 'Verify code & reset password' : 'Send OTP'}<ArrowRight size={17} /></button> : <button className="button button-dark auth-submit" type="submit" disabled={busy}>{busy ? 'One moment…' : isRegister ? 'Create my account' : 'Sign in'}<ArrowRight size={17} /></button>}
       </form>
+      {!isRecovery && Boolean(googleClientId) && <>
+        <div className="auth-divider"><span>or continue with</span></div>
+        <div className="google-auth-wrap">
+          <GoogleOAuthProvider clientId={googleClientId}>
+            <GoogleLogin
+              onSuccess={onGoogleSuccess}
+              onError={() => setError('Google sign-in was unsuccessful.')}
+              shape="pill"
+              size="large"
+              text={isRegister ? 'signup_with' : 'signin_with'}
+              width="360"
+            />
+          </GoogleOAuthProvider>
+        </div>
+      </>}
       <div className="auth-switch">{isRecovery ? 'Remembered it?' : isRegister ? 'Already have an account?' : 'New around here?'} <Link to={isRecovery || isRegister ? '/login' : '/register'}>{isRecovery || isRegister ? 'Sign in' : 'Create an account'}</Link></div>
       <div className="auth-secure"><LockKeyhole size={14} /> Your account is secured with encrypted sign-in.</div>
     </div></section>

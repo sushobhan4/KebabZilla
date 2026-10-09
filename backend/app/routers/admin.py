@@ -94,6 +94,10 @@ def change_role(account_id: int, role: Role, actor: CurrentAccount, db: DbSessio
         raise HTTPException(status_code=404, detail="Account not found")
     if actor.id == account.id:
         raise HTTPException(status_code=400, detail="You cannot change your own role")
+    if account.role == Role.ADMIN and role != Role.ADMIN:
+        admin_count = db.scalar(select(func.count(Account.id)).where(Account.role == Role.ADMIN)) or 0
+        if admin_count <= 1:
+            raise HTTPException(status_code=400, detail="Cannot change the role of the last remaining administrator")
     account.role = role
     db.add(AdminEvent(event_type="account_role_changed", message=f"{account.name}'s role changed to {role.value}", actor_id=actor.id, details={"account_id": account.id, "role": role.value}))
     db.commit()
@@ -219,6 +223,7 @@ async def create_offer(data: OfferInput, actor: CurrentAccount, db: DbSession):
     sent = 0
     failures = []
     delivery_counts = {channel: {"recipient_count": len(eligible[channel]), "sent_count": 0} for channel in data.channels}
+    clean_subject = " ".join(data.subject.splitlines()).strip()
     for channel in data.channels:
         if not configured[channel]:
             failures.append("SMS is not configured" if channel == "SMS" else "Email is not configured")
@@ -226,7 +231,7 @@ async def create_offer(data: OfferInput, actor: CurrentAccount, db: DbSession):
         channel_recipients = eligible[channel]
         failed_count = 0
         for person in channel_recipients:
-            if staff_account_notifier.send_offer(recipient=person.email, subject=data.subject, message_text=data.message):
+            if staff_account_notifier.send_offer(recipient=person.email, subject=clean_subject, message_text=data.message):
                 sent += 1
                 delivery_counts[channel]["sent_count"] += 1
             else:
@@ -234,7 +239,7 @@ async def create_offer(data: OfferInput, actor: CurrentAccount, db: DbSession):
         if failed_count:
             failures.append(f"Email could not be delivered to {failed_count} recipient{'s' if failed_count != 1 else ''}")
     state = "SENT" if sent and not failures else "PARTIAL" if sent else "NOT_CONFIGURED" if not any(configured[c] for c in data.channels) else "FAILED"
-    log = OfferLog(actor_id=actor.id, audience=data.audience, channels=data.channels, subject=data.subject, message=data.message, delivery_counts=delivery_counts, recipient_count=sum(len(eligible[channel]) for channel in data.channels), sent_count=sent, status=state)
+    log = OfferLog(actor_id=actor.id, audience=data.audience, channels=data.channels, subject=clean_subject, message=data.message, delivery_counts=delivery_counts, recipient_count=sum(len(eligible[channel]) for channel in data.channels), sent_count=sent, status=state)
     db.add(log)
     db.add(AdminEvent(event_type="offer_sent", message=f"Offer message campaign {state.lower()} by {actor.name}", actor_id=actor.id, details={"audience": data.audience, "channels": data.channels, "recipients": len(recipients), "sent": sent, "status": state}))
     db.commit()

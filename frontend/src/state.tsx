@@ -6,6 +6,7 @@ type AuthContextValue = {
   loading: boolean
   signIn: (email: string, password: string) => Promise<Account>
   register: (name: string, email: string, phone: string, password: string) => Promise<Account>
+  googleSignIn: (credential: string) => Promise<Account>
   signOut: () => void
   updateAccount: (account: Account) => void
 }
@@ -14,56 +15,75 @@ const AuthContext = createContext<AuthContextValue | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [account, setAccount] = useState<Account | null>(() => {
-    const saved = sessionStorage.getItem('kz_account')
-    return saved ? JSON.parse(saved) as Account : null
+    try {
+      const saved = localStorage.getItem('kz_account') || sessionStorage.getItem('kz_account')
+      return saved ? (JSON.parse(saved) as Account) : null
+    } catch {
+      return null
+    }
   })
-  const [loading, setLoading] = useState(Boolean(sessionStorage.getItem('kz_access_token')))
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (!sessionStorage.getItem('kz_access_token')) return
-    api<Account>('/auth/me').then((next) => {
-      setAccount(next)
-      sessionStorage.setItem('kz_account', JSON.stringify(next))
-    }).catch(() => {
-      setAccessToken(null)
-      sessionStorage.removeItem('kz_account')
-      setAccount(null)
-    }).finally(() => setLoading(false))
+    // Validate active 30-day session with backend (HttpOnly cookie is attached automatically)
+    api<Account>('/auth/me')
+      .then((next) => {
+        setAccount(next)
+        localStorage.setItem('kz_account', JSON.stringify(next))
+      })
+      .catch(() => {
+        setAccessToken(null)
+        localStorage.removeItem('kz_account')
+        sessionStorage.removeItem('kz_account')
+        sessionStorage.removeItem('kz_access_token')
+        setAccount(null)
+      })
+      .finally(() => setLoading(false))
   }, [])
 
-  const accept = useCallback((result: { access_token: string; account: Account }) => {
-    setAccessToken(result.access_token)
+  const accept = useCallback((result: { access_token?: string; account: Account }) => {
+    if (result.access_token) setAccessToken(result.access_token)
     setAccount(result.account)
-    sessionStorage.setItem('kz_account', JSON.stringify(result.account))
+    localStorage.setItem('kz_account', JSON.stringify(result.account))
     return result.account
   }, [])
 
   const signIn = useCallback(async (email: string, password: string) => {
-    const result = await api<{ access_token: string; account: Account }>('/auth/login', {
+    const result = await api<{ access_token?: string; account: Account }>('/auth/login', {
       method: 'POST', body: JSON.stringify({ email, password }),
     })
     return accept(result)
   }, [accept])
 
   const register = useCallback(async (name: string, email: string, phone: string, password: string) => {
-    const result = await api<{ access_token: string; account: Account }>('/auth/register', {
+    const result = await api<{ access_token?: string; account: Account }>('/auth/register', {
       method: 'POST', body: JSON.stringify({ name, email, phone: phone || null, password }),
     })
     return accept(result)
   }, [accept])
 
+  const googleSignIn = useCallback(async (credential: string) => {
+    const result = await api<{ access_token?: string; account: Account }>('/auth/google', {
+      method: 'POST', body: JSON.stringify({ credential }),
+    })
+    return accept(result)
+  }, [accept])
+
   const signOut = useCallback(() => {
+    api('/auth/logout', { method: 'POST' }).catch(() => {})
     setAccessToken(null)
+    localStorage.removeItem('kz_account')
     sessionStorage.removeItem('kz_account')
+    sessionStorage.removeItem('kz_access_token')
     setAccount(null)
   }, [])
 
   const updateAccount = useCallback((next: Account) => {
     setAccount(next)
-    sessionStorage.setItem('kz_account', JSON.stringify(next))
+    localStorage.setItem('kz_account', JSON.stringify(next))
   }, [])
 
-  const value = useMemo(() => ({ account, loading, signIn, register, signOut, updateAccount }), [account, loading, signIn, register, signOut, updateAccount])
+  const value = useMemo(() => ({ account, loading, signIn, register, googleSignIn, signOut, updateAccount }), [account, loading, signIn, register, googleSignIn, signOut, updateAccount])
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 

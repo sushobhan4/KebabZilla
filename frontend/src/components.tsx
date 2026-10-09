@@ -15,13 +15,14 @@ export function PageTitle({ eyebrow, title, description, action }: { eyebrow?: s
   return <div className="page-title-row"><div>{eyebrow && <div className="eyebrow">{eyebrow}</div>}<h1>{title}</h1>{description && <p>{description}</p>}</div>{action && <div className="page-action">{action}</div>}</div>
 }
 
-export function RoundedSelect({ value, options, onChange, className = '', disabled = false, ariaLabel }: {
+export function RoundedSelect({ value, options, onChange, className = '', disabled = false, ariaLabel, icon }: {
   value: string
   options: { value: string; label: string }[]
   onChange: (value: string) => void
   className?: string
   disabled?: boolean
   ariaLabel?: string
+  icon?: ReactNode
 }) {
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)
@@ -68,8 +69,10 @@ export function RoundedSelect({ value, options, onChange, className = '', disabl
     return () => document.removeEventListener('pointerdown', close)
   }, [open])
   return <div className={`rounded-select ${className}`} ref={root}>
-    <button ref={trigger} type="button" className="rounded-select-trigger" aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open} disabled={disabled} onClick={() => setOpen((current) => !current)}>
-      <span>{selected?.label || 'Choose…'}</span><ChevronDown aria-hidden="true" className={`rounded-select-chevron ${open ? 'open' : ''}`} size={14} strokeWidth={1.8} />
+    <button ref={trigger} type="button" className={`rounded-select-trigger ${icon ? 'has-icon' : ''}`} aria-label={ariaLabel || selected?.label} aria-haspopup="listbox" aria-expanded={open} disabled={disabled} onClick={() => setOpen((current) => !current)}>
+      {icon && <span className="rounded-select-icon">{icon}</span>}
+      <span className="rounded-select-label">{selected?.label || 'Choose…'}</span>
+      <ChevronDown aria-hidden="true" className={`rounded-select-chevron ${open ? 'open' : ''}`} size={14} strokeWidth={1.8} />
     </button>
     {open && createPortal(<div ref={menu} className="rounded-select-menu" style={menuPosition} role="listbox" aria-label={ariaLabel}>{options.map((option) => <button key={option.value} type="button" role="option" aria-selected={option.value === value} className={option.value === value ? 'selected' : ''} onClick={() => { onChange(option.value); setOpen(false) }}>{option.label}</button>)}</div>, document.body)}
   </div>
@@ -118,14 +121,178 @@ export function MenuImageCarousel({ images, alt, className = '' }: { images: str
       return fileId ? `${API_BASE}/menu/images/${encodeURIComponent(fileId)}` : url
     } catch { return url }
   })
+  const [modalOpen, setModalOpen] = useState(false)
   const [active, setActive] = useState(0)
   const [failedSource, setFailedSource] = useState('')
+
+  useEffect(() => {
+    if (!modalOpen) return
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setModalOpen(false)
+      } else if (event.key === 'ArrowLeft' && urls.length > 1) {
+        setActive((curr) => (curr + urls.length - 1) % urls.length)
+      } else if (event.key === 'ArrowRight' && urls.length > 1) {
+        setActive((curr) => (curr + 1) % urls.length)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    const originalOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      document.body.style.overflow = originalOverflow
+    }
+  }, [modalOpen, urls.length])
+
   if (!urls.length) return null
-  const index = active % urls.length
-  return <div className={`menu-image-carousel ${className}`} role="group" aria-label={`${alt} photos`} onClick={(event) => event.stopPropagation()}>
-    {failedSource === urls[index] ? <span className="menu-image-unavailable"><ImageOff size={22} /><small>Image unavailable</small></span> : <img src={urls[index]} alt={`${alt} · image ${index + 1}`} onError={() => setFailedSource(urls[index])} />}
-    {urls.length > 1 && <><button type="button" className="menu-gallery-arrow menu-gallery-prev" aria-label="Previous image" onClick={() => setActive((value) => (value + urls.length - 1) % urls.length)}><ArrowLeft size={14} /></button><button type="button" className="menu-gallery-arrow menu-gallery-next" aria-label="Next image" onClick={() => setActive((value) => (value + 1) % urls.length)}><ArrowRight size={14} /></button><div className="menu-gallery-dots" role="radiogroup" aria-label="Choose menu image">{urls.map((url, dot) => <button type="button" role="radio" aria-checked={index === dot} aria-label={`Show image ${dot + 1}`} key={`${dot}-${url}`} onClick={() => setActive(dot)}><span /></button>)}</div></>}
-  </div>
+
+  const mainUrl = urls[0]
+
+  return (
+    <>
+      <div
+        className={`menu-image-carousel menu-image-thumb-trigger ${className}`}
+        role="button"
+        tabIndex={0}
+        aria-label={`View photos of ${alt}`}
+        onClick={(event) => {
+          event.stopPropagation()
+          event.preventDefault()
+          setActive(0)
+          setModalOpen(true)
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.stopPropagation()
+            event.preventDefault()
+            setActive(0)
+            setModalOpen(true)
+          }
+        }}
+      >
+        {failedSource === mainUrl ? (
+          <span className="menu-image-unavailable">
+            <ImageOff size={22} />
+            <small>Image unavailable</small>
+          </span>
+        ) : (
+          <img src={mainUrl} alt={alt} onError={() => setFailedSource(mainUrl)} />
+        )}
+        {urls.length > 1 && (
+          <span className="menu-photo-multi-badge" title={`${urls.length} photos · Click to view`}>
+            <span>{urls.length}</span>
+          </span>
+        )}
+      </div>
+
+      {modalOpen &&
+        createPortal(
+          <div
+            className="menu-lightbox-backdrop"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${alt} photos`}
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) {
+                event.stopPropagation()
+                setModalOpen(false)
+              }
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="menu-lightbox-square-card">
+              <div className="menu-lightbox-topbar">
+                <div className="menu-lightbox-info">
+                  <strong className="menu-lightbox-title">{alt}</strong>
+                  {urls.length > 1 && (
+                    <span className="menu-lightbox-count">
+                      {active + 1} / {urls.length}
+                    </span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="menu-lightbox-close"
+                  aria-label="Close photo viewer"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    setModalOpen(false)
+                  }}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="menu-lightbox-image-viewport">
+                {failedSource === urls[active] ? (
+                  <div className="menu-image-unavailable">
+                    <ImageOff size={32} />
+                    <small>Image unavailable</small>
+                  </div>
+                ) : (
+                  <img
+                    src={urls[active]}
+                    alt={`${alt} · photo ${active + 1}`}
+                    className="menu-lightbox-big-img"
+                    onError={() => setFailedSource(urls[active])}
+                  />
+                )}
+
+                {urls.length > 1 && (
+                  <>
+                    <button
+                      type="button"
+                      className="menu-lightbox-arrow prev"
+                      aria-label="Previous photo"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        setActive((curr) => (curr + urls.length - 1) % urls.length)
+                      }}
+                    >
+                      <ArrowLeft size={20} />
+                    </button>
+                    <button
+                      type="button"
+                      className="menu-lightbox-arrow next"
+                      aria-label="Next photo"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        setActive((curr) => (curr + 1) % urls.length)
+                      }}
+                    >
+                      <ArrowRight size={20} />
+                    </button>
+                  </>
+                )}
+              </div>
+
+              {urls.length > 1 && (
+                <div className="menu-lightbox-bottombar">
+                  <div className="menu-lightbox-dots" role="tablist">
+                    {urls.map((url, dotIndex) => (
+                      <button
+                        type="button"
+                        key={`${dotIndex}-${url}`}
+                        role="tab"
+                        aria-selected={dotIndex === active}
+                        className={`menu-lightbox-dot ${dotIndex === active ? 'active' : ''}`}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          setActive(dotIndex)
+                        }}
+                        aria-label={`Go to photo ${dotIndex + 1}`}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>,
+          document.body,
+        )}
+    </>
+  )
 }
 
 export function HeroArrow() { return <ArrowRight size={17} /> }

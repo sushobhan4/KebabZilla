@@ -2,17 +2,33 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import admin, auth, cart, delivery, menu, orders, payments, staff
+from app.routers import admin, auth, cart, custom_menu, delivery, menu, orders, payments, staff
 from app.services import restaurant_settings
 from app.dependencies import CurrentAccount, DbSession
 from app.models import Account, Role
 from sqlalchemy import select
+
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 
 app = FastAPI(
     title=settings.app_name,
     version="1.0.0",
     description="Role-secured restaurant ordering, payments, and operations API.",
 )
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response: Response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), payment=(self)"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -21,8 +37,9 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "X-Razorpay-Signature"],
 )
 
-for route_module in (auth, menu, cart, orders, staff, delivery, admin, payments):
+for route_module in (auth, menu, cart, orders, staff, delivery, admin, payments, custom_menu):
     app.include_router(route_module.router, prefix=settings.api_prefix)
+
 
 
 @app.get(f"{settings.api_prefix}/restaurant", tags=["restaurant"])

@@ -18,9 +18,22 @@ def drive_menu_image(file_id: str):
     if not re.fullmatch(r"[A-Za-z0-9_-]{10,200}", file_id):
         raise HTTPException(status_code=404, detail="Menu image not found")
 
+    def _is_allowed_google_host(host: str) -> bool:
+        h = host.lower()
+        return (
+            h == "drive.google.com"
+            or h == "google.com"
+            or h.endswith(".google.com")
+            or h.endswith(".googleusercontent.com")
+        )
+
     url = f"https://drive.google.com/thumbnail?id={file_id}&sz=w1200"
     try:
         with httpx.stream("GET", url, follow_redirects=True, timeout=12) as upstream:
+            # Validate the final resolved URL after all redirects
+            final_url = upstream.url
+            if final_url.scheme != "https" or not _is_allowed_google_host(final_url.host):
+                raise HTTPException(status_code=502, detail="Menu image could not be loaded")
             if upstream.status_code != 200:
                 raise HTTPException(status_code=502, detail="Menu image could not be loaded")
             media_type = upstream.headers.get("content-type", "").split(";", 1)[0].lower()

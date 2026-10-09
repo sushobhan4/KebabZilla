@@ -323,7 +323,7 @@ function Queue() {
                       </span>
                       <span>
                         <small>Address</small>
-                        <strong>Address provided at checkout</strong>
+                        <strong>{order.address || "Address provided at checkout"}</strong>
                       </span>
                     </div>
                     <div className="customer-detail">

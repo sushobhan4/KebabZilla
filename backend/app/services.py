@@ -109,7 +109,12 @@ def assemble_order(
             return max(1, (item.price_paise * (100 - percent) + 50) // 100)
         return _effective_price(item)
 
-    subtotal = sum(price(menu_by_id[line.menu_item_id]) * line.quantity for line in lines)
+    def line_unit_price(line, item: MenuItem) -> int:
+        base = price(item)
+        extra = sum(opt.get("extra_paise", 0) for opt in (getattr(line, "customizations", None) or []))
+        return base + extra
+
+    subtotal = sum(line_unit_price(line, menu_by_id[line.menu_item_id]) * line.quantity for line in lines)
     if check_minimum and subtotal < config.minimum_order_paise:
         raise HTTPException(status_code=400, detail=f"Minimum order is ₹{config.minimum_order_paise / 100:.0f}")
     tax = 0
@@ -138,6 +143,8 @@ def assemble_order(
             OrderItem(
                 menu_item_id=menu_by_id[line.menu_item_id].id,
                 quantity=line.quantity,
+                customizations=getattr(line, "customizations", None) or [],
+                unit_price_paise=line_unit_price(line, menu_by_id[line.menu_item_id]),
             )
             for line in lines
         ],
@@ -217,21 +224,32 @@ def order_payload(order: Order, *, include_delivery_otp: bool = False) -> dict:
     customer = order.customer
     delivery = order.delivery
     payment = order.payment
-    items = [
-        {
+    items = []
+    for line in order.items:
+        unit_price = line.unit_price_paise if line.unit_price_paise is not None else (line.menu_item.price_paise if line.menu_item else 0)
+        customs = line.customizations or []
+        custom_parts = [opt.get("name") for opt in customs if isinstance(opt, dict) and opt.get("name")]
+        custom_summary = ", ".join(custom_parts)
+        if custom_summary and line.menu_item:
+            item_name = f"{line.menu_item.name} ({custom_summary})"
+        elif line.menu_item:
+            item_name = line.menu_item.name
+        else:
+            item_name = "Unavailable item"
+
+        items.append({
             "id": line.id,
             "menu_item_id": line.menu_item_id,
-            "name": line.menu_item.name if line.menu_item else "Unavailable item",
+            "name": item_name,
             "quantity": line.quantity,
-            "unit_price_paise": line.menu_item.price_paise if line.menu_item else 0,
-            "line_total_paise": (line.menu_item.price_paise if line.menu_item else 0) * line.quantity,
+            "unit_price_paise": unit_price,
+            "line_total_paise": unit_price * line.quantity,
             "tax_percent": 0,
             "tax_paise": 0,
+            "customizations": customs,
             "image_url": (line.menu_item.image_urls or [None])[0] if line.menu_item else None,
             "image_urls": line.menu_item.image_urls if line.menu_item else [],
-        }
-        for line in order.items
-    ]
+        })
     subtotal = sum(line["line_total_paise"] for line in items)
     return {
         "order_id": order.order_id,
@@ -247,9 +265,20 @@ def order_payload(order: Order, *, include_delivery_otp: bool = False) -> dict:
         "tax_paise": 0,
         "delivery_fee_paise": order.delivery_fee_paise,
         "total_paise": subtotal + order.delivery_fee_paise,
-        "address": "",
-        "latitude": None,
-        "longitude": None,
+        "address": (
+            ", ".join(
+                p for p in [
+                    chosen.house_number,
+                    chosen.road,
+                    chosen.area,
+                    chosen.landmark,
+                    chosen.city,
+                    chosen.pincode,
+                ] if p
+            ) or chosen.label
+        ) if customer and customer.addresses and (chosen := next((a for a in customer.addresses if a.is_default), customer.addresses[0])) else "",
+        "latitude": next((a.latitude for a in customer.addresses if a.is_default), customer.addresses[0].latitude) if customer and customer.addresses else None,
+        "longitude": next((a.longitude for a in customer.addresses if a.is_default), customer.addresses[0].longitude) if customer and customer.addresses else None,
         "scheduled_for": order.scheduled_for,
         "notes": order.notes,
         "assigned_delivery_id": order.assigned_delivery_id,

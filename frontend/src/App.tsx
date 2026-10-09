@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, Navigate, NavLink, Route, Routes, useNavigate } from 'react-router-dom'
-import { Activity, ArrowLeft, BarChart3, Boxes, ClipboardList, CookingPot, LayoutDashboard, LogIn, LogOut, MapPinned, Menu as MenuIcon, PackageCheck, Plus, Settings, ShoppingBag, Users, X, Send, Percent, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Activity, ArrowLeft, BarChart3, ClipboardList, CookingPot, LayoutDashboard, LogIn, LogOut, MapPinned, Menu as MenuIcon, PackageCheck, Plus, Settings, ShoppingBag, Users, X, Send, Percent, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useAuth } from './state'
 import type { Role } from './api'
 import { Brand, Button, Notice } from './components'
@@ -26,7 +26,7 @@ function defaultQuickPaths(role: Role): string[] {
 function savedQuickPaths(role: Role): string[] {
   const saved = localStorage.getItem(`kz_quick_${role}`)
   if (saved === null) return defaultQuickPaths(role)
-  try { return (JSON.parse(saved) as string[]).filter((path) => path !== '/admin/preview' && path !== '/admin/takeover') } catch { return defaultQuickPaths(role) }
+  try { return (JSON.parse(saved) as string[]).filter((path) => path !== '/admin/preview' && path !== '/admin/takeover' && path !== '/ops/drafts') } catch { return defaultQuickPaths(role) }
 }
 
 function homeFor(role: Role) {
@@ -48,7 +48,6 @@ function navFor(role: Role): NavItem[] {
     { to: '/ops', label: 'Order queue', icon: <ClipboardList size={17} />, end: true, tone: 'employee' },
     { to: '/ops/menu', label: 'Menu availability', icon: <CookingPot size={17} />, tone: 'employee' },
     { to: '/ops/billing', label: 'Walk-in billing', icon: <ShoppingBag size={17} />, tone: 'employee' },
-    { to: '/ops/drafts', label: 'Saved drafts', icon: <Boxes size={17} />, tone: 'employee' },
     { to: '/delivery', label: 'Delivery queue', icon: <PackageCheck size={17} />, end: true, tone: 'delivery' },
     { to: '/delivery/routes', label: 'Route batches', icon: <MapPinned size={17} />, tone: 'delivery' },
     { to: '/admin/reports', label: 'Sales reports', icon: <BarChart3 size={17} /> },
@@ -58,7 +57,6 @@ function navFor(role: Role): NavItem[] {
     { to: '/ops', label: 'Order queue', icon: <ClipboardList size={17} />, end: true },
     { to: '/ops/menu', label: 'Menu availability', icon: <CookingPot size={17} /> },
     { to: '/ops/billing', label: 'Walk-in billing', icon: <ShoppingBag size={17} /> },
-    { to: '/ops/drafts', label: 'Saved drafts', icon: <Boxes size={17} /> },
   ]
   if (role === 'DELIVERY') return [
     { to: '/delivery', label: 'My delivery queue', icon: <PackageCheck size={17} />, end: true },
@@ -74,11 +72,23 @@ function AppHeader() {
   const [quickItems, setQuickItems] = useState<string[]>(() => account ? savedQuickPaths(account.role) : [])
   const [quickExpanded, setQuickExpanded] = useState(false)
   const [tabsOverflow, setTabsOverflow] = useState(false)
+  const [canScrollLeft, setCanScrollLeft] = useState(false)
+  const [canScrollRight, setCanScrollRight] = useState(false)
+  const [maxCenterWidth, setMaxCenterWidth] = useState<number | null>(null)
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 700)
   const topNavRef = useRef<HTMLElement>(null)
+  const headerInnerRef = useRef<HTMLDivElement>(null)
+  const headerBrandRef = useRef<HTMLDivElement>(null)
+  const headerAccountRef = useRef<HTMLDivElement>(null)
   const tabDrag = useRef<{ pointerId: number; startX: number; startScroll: number } | null>(null)
   const tabWasDragged = useRef(false)
   const navigate = useNavigate()
   const items = account ? navFor(account.role) : []
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 700)
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
   useEffect(() => {
     if (!account) return
     setQuickItems(savedQuickPaths(account.role))
@@ -86,17 +96,70 @@ function AppHeader() {
   // Keep the quick-tab selection intentionally unbounded. The top navigation
   // scrolls horizontally when it no longer fits instead of hiding a tab.
   const selected = items.filter((item) => quickItems.includes(item.to))
-  useEffect(() => {
+
+  const updateScrollIndicators = () => {
     const nav = topNavRef.current
     if (!nav) return
-    const checkOverflow = () => setTabsOverflow(nav.scrollWidth > nav.clientWidth + 1)
-    checkOverflow()
-    const observer = new ResizeObserver(checkOverflow)
-    observer.observe(nav)
-    return () => observer.disconnect()
-  }, [selected.length])
+    setCanScrollLeft(nav.scrollLeft > 4)
+    setCanScrollRight(nav.scrollLeft < nav.scrollWidth - nav.clientWidth - 4)
+  }
+
+  useEffect(() => {
+    const updateDynamicLayout = () => {
+      const inner = headerInnerRef.current
+      const brand = headerBrandRef.current
+      const accountEl = headerAccountRef.current
+      const nav = topNavRef.current
+      if (!inner || !brand || !accountEl || !nav) return
+
+      const innerRect = inner.getBoundingClientRect()
+      const brandRect = brand.getBoundingClientRect()
+      const accountRect = accountEl.getBoundingClientRect()
+
+      const centerCoord = innerRect.left + innerRect.width / 2
+      const safetyMargin = 16
+
+      // Max available space on left of center without touching brand
+      const leftAvailable = Math.max(40, (centerCoord - brandRect.right) - safetyMargin)
+      // Max available space on right of center without touching account
+      const rightAvailable = Math.max(40, (accountRect.left - centerCoord) - safetyMargin)
+
+      // Symmetric width centered at 50% that guarantees zero overlap on both sides
+      const availableSymmetric = Math.floor(2 * Math.min(leftAvailable, rightAvailable))
+
+      setMaxCenterWidth(availableSymmetric > 0 ? availableSymmetric : null)
+
+      // Natural width of the tab items
+      const isOverflowing = nav.scrollWidth > availableSymmetric
+      setTabsOverflow(isOverflowing)
+
+      if (isOverflowing) {
+        setCanScrollLeft(nav.scrollLeft > 4)
+        setCanScrollRight(nav.scrollLeft < nav.scrollWidth - nav.clientWidth - 4)
+      } else {
+        setCanScrollLeft(false)
+        setCanScrollRight(false)
+      }
+    }
+
+    updateDynamicLayout()
+
+    const observer = new ResizeObserver(updateDynamicLayout)
+    if (headerInnerRef.current) observer.observe(headerInnerRef.current)
+    if (headerBrandRef.current) observer.observe(headerBrandRef.current)
+    if (headerAccountRef.current) observer.observe(headerAccountRef.current)
+    if (topNavRef.current) observer.observe(topNavRef.current)
+
+    window.addEventListener('resize', updateDynamicLayout)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', updateDynamicLayout)
+    }
+  }, [selected.length, account?.role])
+
   function scrollTabs(direction: -1 | 1) {
     topNavRef.current?.scrollBy({ left: direction * 220, behavior: 'smooth' })
+    setTimeout(updateScrollIndicators, 320)
   }
   function saveQuick(path: string) {
     const next = quickItems.includes(path) ? quickItems.filter((item) => item !== path) : [...quickItems, path]
@@ -105,17 +168,17 @@ function AppHeader() {
   }
   return <>
   <header className="app-header">
-    <div className="header-inner">
-      <div className="header-brand">{account && items.length > 0 ? <button className="workspace-drawer-trigger" aria-label="Open workspace menu" onClick={() => { setQuickExpanded(false); setMobileOpen(true) }}><MenuIcon size={19} /></button> : <Brand />}</div>
-      <div className="header-center">
-        {account && items.length > 0 ? <div className={`top-nav-shell${tabsOverflow ? ' has-overflow' : ''}`}>{tabsOverflow && <button className="top-nav-arrow top-nav-arrow-left" type="button" onClick={() => scrollTabs(-1)} aria-label="Scroll tabs left"><ChevronLeft size={16} /></button>}<nav ref={topNavRef} className="top-nav" onDragStart={(event) => event.preventDefault()} onClickCapture={(event) => { if (tabWasDragged.current) { event.preventDefault(); event.stopPropagation(); tabWasDragged.current = false } }} onPointerDown={(event) => { if (event.button !== 0) return; tabWasDragged.current = false; tabDrag.current = { pointerId: event.pointerId, startX: event.clientX, startScroll: event.currentTarget.scrollLeft } }} onPointerMove={(event) => { const drag = tabDrag.current; if (!drag || drag.pointerId !== event.pointerId) return; const distance = event.clientX - drag.startX; if (Math.abs(distance) > 4) tabWasDragged.current = true; event.currentTarget.scrollLeft = drag.startScroll - distance }} onPointerUp={(event) => { if (tabDrag.current?.pointerId === event.pointerId) tabDrag.current = null }} onPointerCancel={() => { tabDrag.current = null }}>{selected.map((item) => <NavLink key={item.to} end={item.end} to={item.to} className={({ isActive }) => `${isActive ? 'top-nav-link active' : 'top-nav-link'}${item.tone ? ` staff-nav-${item.tone}` : ''}`}>{item.label}</NavLink>)}</nav>{tabsOverflow && <button className="top-nav-arrow top-nav-arrow-right" type="button" onClick={() => scrollTabs(1)} aria-label="Scroll tabs right"><ChevronRight size={16} /></button>}</div> : null}
+    <div className="header-inner" ref={headerInnerRef}>
+      <div className="header-brand" ref={headerBrandRef}>{account && items.length > 0 ? <><button className="workspace-drawer-trigger" aria-label="Open workspace menu" onClick={() => { setQuickExpanded(false); setMobileOpen(true) }}><MenuIcon size={19} /></button><Brand /></> : <Brand />}</div>
+      <div className="header-center" style={{ maxWidth: maxCenterWidth ? `${maxCenterWidth}px` : undefined }}>
+        {account && items.length > 0 ? <div className={`top-nav-shell${tabsOverflow ? ' has-overflow' : ''}`}>{tabsOverflow && <button className="top-nav-arrow top-nav-arrow-left" type="button" disabled={!canScrollLeft} style={{ opacity: canScrollLeft ? 1 : 0.2, pointerEvents: canScrollLeft ? 'auto' : 'none' }} onClick={() => scrollTabs(-1)} aria-label="Scroll tabs left"><ChevronLeft size={16} /></button>}<nav ref={topNavRef} className="top-nav" onScroll={updateScrollIndicators} onDragStart={(event) => event.preventDefault()} onClickCapture={(event) => { if (tabWasDragged.current) { event.preventDefault(); event.stopPropagation(); tabWasDragged.current = false } }} onPointerDown={(event) => { if (event.button !== 0) return; tabWasDragged.current = false; tabDrag.current = { pointerId: event.pointerId, startX: event.clientX, startScroll: event.currentTarget.scrollLeft } }} onPointerMove={(event) => { const drag = tabDrag.current; if (!drag || drag.pointerId !== event.pointerId) return; const distance = event.clientX - drag.startX; if (Math.abs(distance) > 4) tabWasDragged.current = true; event.currentTarget.scrollLeft = drag.startScroll - distance; updateScrollIndicators() }} onPointerUp={(event) => { if (tabDrag.current?.pointerId === event.pointerId) tabDrag.current = null }} onPointerCancel={() => { tabDrag.current = null }}>{selected.map((item) => <NavLink key={item.to} end={item.end} to={item.to} className={({ isActive }) => `${isActive ? 'top-nav-link active' : 'top-nav-link'}${item.tone ? ` staff-nav-${item.tone}` : ''}`}>{item.label}</NavLink>)}</nav>{tabsOverflow && <button className="top-nav-arrow top-nav-arrow-right" type="button" disabled={!canScrollRight} style={{ opacity: canScrollRight ? 1 : 0.2, pointerEvents: canScrollRight ? 'auto' : 'none' }} onClick={() => scrollTabs(1)} aria-label="Scroll tabs right"><ChevronRight size={16} /></button>}</div> : null}
       </div>
-      <div className="header-account">
+      <div className="header-account" ref={headerAccountRef}>
         {account ? <><div className="profile-menu-wrap"><button className="account-chip" aria-expanded={profileOpen} onClick={() => setProfileOpen((open) => !open)}><span className="avatar">{account.name.slice(0, 1).toUpperCase()}</span><span className="account-name">{account.name.split(' ')[0]}</span><span className="role-dot" title={account.role} /></button>{profileOpen && <div className="profile-dropdown">{account.role === 'USER' && <Link to="/orders" onClick={() => setProfileOpen(false)}><ClipboardList size={16} /> Track orders</Link>}<Link to="/profile" onClick={() => setProfileOpen(false)}><Users size={16} /> Edit profile</Link></div>}</div><button className="icon-button" title="Sign out" onClick={() => { signOut(); navigate('/') }}><LogOut size={18} /></button></> : <><NavLink className="header-login" to="/login"><LogIn size={16} /> <span>Sign in</span></NavLink><NavLink className="header-join" to="/register">Sign up <Plus size={15} /></NavLink></>}
       </div>
     </div>
   </header>
-  {mobileOpen && account?.role !== 'USER' && createPortal(<div className="workspace-drawer-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setMobileOpen(false) }}><aside className="workspace-drawer"><div className="workspace-drawer-head"><div><small>{account?.role || 'GUEST'} WORKSPACE</small><strong>Navigation</strong></div><button className="icon-button" onClick={() => setMobileOpen(false)} aria-label="Close menu"><X size={18} /></button></div><section className="drawer-quick-settings"><button className="drawer-quick-toggle" aria-expanded={quickExpanded} onClick={() => setQuickExpanded((expanded) => !expanded)}><span><strong>Quick access</strong><small>Choose any tabs to keep at the top.</small></span><ChevronDown className={quickExpanded ? 'expanded' : ''} size={18} /></button>{quickExpanded && <div className="drawer-quick-options">{items.map((item) => <label className={item.tone ? `staff-nav-${item.tone}` : ''} key={item.to}><input type="checkbox" checked={quickItems.includes(item.to)} onChange={() => saveQuick(item.to)} />{item.icon}{item.label}</label>)}</div>}</section><nav className="drawer-all-links">{items.filter((item) => !quickItems.includes(item.to)).map((item) => <NavLink key={item.to} end={item.end} to={item.to} onClick={() => setMobileOpen(false)} className={({ isActive }) => `${isActive ? 'sidebar-link active' : 'sidebar-link'}${item.tone ? ` staff-nav-${item.tone}` : ''}`}>{item.icon}<span>{item.label}</span></NavLink>)}</nav><button className="sidebar-signout" onClick={() => { signOut(); setMobileOpen(false); navigate('/') }}><LogOut size={16} /> Sign out</button></aside></div>, document.body)}
+  {mobileOpen && account?.role !== 'USER' && createPortal(<div className="workspace-drawer-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setMobileOpen(false) }}><aside className="workspace-drawer"><div className="workspace-drawer-head"><div><small>{account?.role || 'GUEST'} WORKSPACE</small><strong>Navigation</strong></div><button className="icon-button" onClick={() => setMobileOpen(false)} aria-label="Close menu"><X size={18} /></button></div>{!isMobile && <section className="drawer-quick-settings"><button className="drawer-quick-toggle" aria-expanded={quickExpanded} onClick={() => setQuickExpanded((expanded) => !expanded)}><span><strong>Quick access</strong><small>Choose any tabs to keep at the top.</small></span><ChevronDown className={quickExpanded ? 'expanded' : ''} size={18} /></button>{quickExpanded && <div className="drawer-quick-options">{items.map((item) => <label className={item.tone ? `staff-nav-${item.tone}` : ''} key={item.to}><input type="checkbox" checked={quickItems.includes(item.to)} onChange={() => saveQuick(item.to)} />{item.icon}{item.label}</label>)}</div>}</section>}<nav className="drawer-all-links">{(isMobile ? items : items.filter((item) => !quickItems.includes(item.to))).map((item) => <NavLink key={item.to} end={item.end} to={item.to} onClick={() => setMobileOpen(false)} className={({ isActive }) => `${isActive ? 'sidebar-link active' : 'sidebar-link'}${item.tone ? ` staff-nav-${item.tone}` : ''}`}>{item.icon}<span>{item.label}</span></NavLink>)}</nav></aside></div>, document.body)}
   </>
 }
 

@@ -67,6 +67,10 @@ class LoginRequest(BaseModel):
             raise ValueError("Enter a valid email address") from exc
 
 
+class GoogleLoginRequest(BaseModel):
+    credential: str = Field(min_length=10, max_length=4096)
+
+
 class PasswordResetRequest(BaseModel):
     email: str = Field(min_length=3, max_length=255)
 
@@ -203,6 +207,8 @@ class MenuItemInput(BaseModel):
     is_vegetarian: bool = False
     is_available: bool = True
     is_featured: bool = False
+    is_custom: bool = False
+    custom_sections: list[dict] = Field(default_factory=list)
 
 
 class MenuItemOut(ORMModel):
@@ -219,6 +225,8 @@ class MenuItemOut(ORMModel):
     is_vegetarian: bool
     is_available: bool
     is_featured: bool
+    is_custom: bool = False
+    custom_sections: list[dict] = Field(default_factory=list)
     discount_campaign_name: str | None = None
     popularity_count: int = 0
 
@@ -226,9 +234,16 @@ class MenuItemOut(ORMModel):
     @classmethod
     def derive_menu_fields(cls, value):
         if hasattr(value, "image_urls"):
+            import json
             data = dict(value.__dict__)
             data["image_url"] = (value.image_urls or [None])[0]
-            data["category"] = value.category.name if value.category else ""
+            cat = getattr(value, "category", None)
+            data["category"] = cat.name if cat else ""
+            if "custom_sections" in data and isinstance(data["custom_sections"], str):
+                try:
+                    data["custom_sections"] = json.loads(data["custom_sections"])
+                except Exception:
+                    data["custom_sections"] = []
             return data
         return value
 
@@ -249,6 +264,7 @@ class MenuCategoryDeleteOut(BaseModel):
 class OrderLineInput(BaseModel):
     menu_item_id: int
     quantity: int = Field(gt=0, le=30)
+    customizations: list[dict] = Field(default_factory=list)
 
 
 class OrderCreate(BaseModel):
@@ -269,9 +285,13 @@ class OrderCreate(BaseModel):
     @field_validator("items")
     @classmethod
     def unique_items(cls, items: list[OrderLineInput]) -> list[OrderLineInput]:
-        ids = [item.menu_item_id for item in items]
-        if len(ids) != len(set(ids)):
-            raise ValueError("Each menu item can only appear once; set its quantity instead.")
+        import json
+        keys = []
+        for item in items:
+            custom_key = json.dumps(item.customizations, sort_keys=True) if item.customizations else ""
+            keys.append((item.menu_item_id, custom_key))
+        if len(keys) != len(set(keys)):
+            raise ValueError("Each menu item selection can only appear once; adjust its quantity instead.")
         return items
 
 
@@ -405,3 +425,61 @@ class MenuDiscountInput(BaseModel):
         if self.campaign_name is not None:
             self.campaign_name = self.campaign_name.strip() or None
         return self
+
+
+class CustomMenuSectionOptionInput(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    extra_paise: int = Field(ge=0, le=10_000_000)
+
+
+class CustomMenuSectionInput(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    required: bool = True
+    options: list[CustomMenuSectionOptionInput] = Field(min_length=1, max_length=20)
+
+
+class CustomMenuItemInput(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    description: str = Field(default="", max_length=2000)
+    category_id: int | None = None
+    category: str | None = None
+    base_price_paise: int = Field(gt=0, le=10_000_000)
+    image_urls: list[str] = Field(default_factory=list, max_length=20)
+    is_vegetarian: bool = False
+    is_available: bool = True
+    is_featured: bool = False
+    sections: list[CustomMenuSectionInput] = Field(default_factory=list, max_length=10)
+
+
+class CustomMenuSectionOut(ORMModel):
+    id: int
+    name: str
+    position: int
+    required: bool = True
+    options: list[dict]
+
+
+class CustomMenuItemOut(ORMModel):
+    id: int
+    name: str
+    description: str
+    category_id: int | None
+    category: str = ""
+    base_price_paise: int
+    image_urls: list[str]
+    image_url: str | None = None
+    is_vegetarian: bool
+    is_available: bool
+    is_featured: bool
+    sections: list[CustomMenuSectionOut]
+
+    @model_validator(mode="before")
+    @classmethod
+    def derive_custom_fields(cls, value):
+        if hasattr(value, "image_urls"):
+            data = dict(value.__dict__)
+            data["image_url"] = (value.image_urls or [None])[0]
+            data["category"] = value.category.name if value.category else ""
+            return data
+        return value
+

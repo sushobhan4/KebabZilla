@@ -10,6 +10,7 @@ import { importLibrary, setOptions } from "@googlemaps/js-api-loader";
 import {
   Activity,
   ArrowRight,
+  ArrowUpDown,
   ArrowUpRight,
   BarChart3,
   Check,
@@ -39,6 +40,8 @@ import {
   formatStatus,
   friendlyDate,
   type Account,
+  type CustomMenuItem,
+  type CustomMenuSection,
   type MenuItem,
   type Order,
   type ProvisionedAccount,
@@ -209,7 +212,7 @@ function Overview() {
               void refresh();
             }}
           >
-            <RefreshCw size={15} /> Refresh
+            <RefreshCw size={15} /> <span>Refresh</span>
           </Button>
         }
       />
@@ -559,7 +562,7 @@ function AdminOrders() {
               void refresh();
             }}
           >
-            <RefreshCw size={15} /> Refresh
+            <RefreshCw size={15} /> <span>Refresh</span>
           </Button>
         }
       />
@@ -598,7 +601,7 @@ function AdminOrders() {
         <div className="order-filter-bar">
           <div className="admin-search-sort-controls">
             <label className="admin-search-field"><Search size={16} /><input value={q} onChange={(event) => { setQ(event.target.value); setPage(0); setLoading(true); }} placeholder="Search order number, name or phone" aria-label="Search orders" /></label>
-            <RoundedSelect ariaLabel="Filter orders by time" value={period} onChange={(next) => { setPeriod(next); setPage(0); setLoading(true); }} options={[{ value: "all", label: "All time" }, { value: "day", label: "Today" }, { value: "week", label: "This week" }, { value: "month", label: "This month" }, { value: "year", label: "This year" }]} className="orders-period-select" />
+            <RoundedSelect icon={<ArrowUpDown size={15} />} ariaLabel="Filter orders by time" value={period} onChange={(next) => { setPeriod(next); setPage(0); setLoading(true); }} options={[{ value: "all", label: "All time" }, { value: "day", label: "Today" }, { value: "week", label: "This week" }, { value: "month", label: "This month" }, { value: "year", label: "This year" }]} className="orders-period-select activity-sort-select" />
           </div>
           <div className="filter-tabs">
             <button
@@ -871,8 +874,8 @@ function Team() {
         title="People & permissions"
         description="Create and manage restaurant admins, employees, and delivery partners. Customer accounts are created through customer sign-up."
         action={
-          <Button onClick={() => setCreating(true)}>
-            <Plus size={16} /> Create account
+          <Button className="team-create-btn" onClick={() => setCreating(true)}>
+            <Plus size={16} /> <span>Create account</span>
           </Button>
         }
       />
@@ -882,20 +885,20 @@ function Team() {
       </Notice>}
       <div className="team-metrics">
         <div>
-          <strong>{total}</strong>
-          <span>{q || role !== "ALL" ? "Matching accounts" : "Team accounts"}</span>
+          <strong>{roleCounts.ADMIN || 0}</strong>
+          <span>Admin accounts</span>
         </div>
         <div>
           <strong>{roleCounts.EMPLOYEE || 0}</strong>
-          <span>Employees</span>
+          <span>Employee accounts</span>
         </div>
         <div>
           <strong>{roleCounts.DELIVERY || 0}</strong>
-          <span>Delivery partners</span>
+          <span>Delivery accounts</span>
         </div>
         <div>
-          <strong>{total}</strong>
-          <span>Team accounts</span>
+          <strong>{roleCounts.USER || 0}</strong>
+          <span>User accounts</span>
         </div>
       </div>
       <section className="admin-panel team-panel">
@@ -912,7 +915,7 @@ function Team() {
               placeholder="Search name, email or phone…"
             />
           </label>
-          <div className="role-filter"><Users size={15} /><RoundedSelect ariaLabel="Sort people by role" value={role} onChange={(next) => { setRole(next); setPage(0); setLoading(true); }} options={[{ value: "ALL", label: "All roles" }, ...roles.map((r) => ({ value: r, label: formatStatus(r) }))]} /></div>
+          <RoundedSelect className="role-filter-select activity-sort-select" icon={<Users size={15} />} ariaLabel="Sort people by role" value={role} onChange={(next) => { setRole(next); setPage(0); setLoading(true); }} options={[{ value: "ALL", label: "All roles" }, ...roles.map((r) => ({ value: r, label: formatStatus(r) }))]} />
         </div>
         {loading ? (
           <Loading label="Finding people…" />
@@ -1126,6 +1129,24 @@ function MenuManagement() {
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<MenuItem | null>(null);
   const [creating, setCreating] = useState(false);
+  const [showTypePicker, setShowTypePicker] = useState(false);
+  const [creatingCustom, setCreatingCustom] = useState(false);
+  const [editingCustom, setEditingCustom] = useState<CustomMenuItem | null>(null);
+  const [customItems, setCustomItems] = useState<CustomMenuItem[]>([]);
+  const blankCustom = {
+    name: "",
+    description: "",
+    category: "",
+    category_id: null as number | null,
+    base_price_paise: 0,
+    image_urls: [] as string[],
+    is_vegetarian: false,
+    is_available: true,
+    is_featured: false,
+    sections: [] as { name: string; required: boolean; options: { name: string; extra_paise: number }[] }[],
+  };
+  const [customForm, setCustomForm] = useState(blankCustom);
+  const [customImagePrompt, setCustomImagePrompt] = useState<{ index: number; value: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [imagePrompt, setImagePrompt] = useState<{ index: number; value: string } | null>(null);
   const blank = {
@@ -1145,10 +1166,12 @@ function MenuManagement() {
       Promise.all([
         api<MenuItem[]>("/menu/manage"),
         api<{ id: number; name: string }[]>("/menu/categories"),
+        api<CustomMenuItem[]>("/custom-menu/manage"),
       ])
-        .then(([menu, categories]) => {
+        .then(([menu, categories, custom]) => {
           setItems(menu);
           setMenuCategories(categories);
+          setCustomItems(custom);
         })
         .catch((err) =>
           setError(
@@ -1177,10 +1200,147 @@ function MenuManagement() {
     setCreating(false);
   }
   function openCreate() {
+    setShowTypePicker(true);
+    setEditing(null);
+    setCreating(false);
+    setCreatingCustom(false);
+    setEditingCustom(null);
+  }
+  function openCreateNormal() {
+    setShowTypePicker(false);
     setCreating(true);
     setEditing(null);
     setForm(blank);
   }
+  function openCreateCustom() {
+    setShowTypePicker(false);
+    setCreatingCustom(true);
+    setEditingCustom(null);
+    setCustomForm(blankCustom);
+  }
+  function openEditCustom(item: CustomMenuItem) {
+    setEditingCustom(item);
+    setCreatingCustom(false);
+    setShowTypePicker(false);
+    setCreating(false);
+    setEditing(null);
+    setCustomForm({
+      name: item.name,
+      description: item.description,
+      category: item.category,
+      category_id: item.category_id,
+      base_price_paise: item.base_price_paise / 100,
+      image_urls: item.image_urls,
+      is_vegetarian: item.is_vegetarian,
+      is_available: item.is_available,
+      is_featured: item.is_featured,
+      sections: item.sections.map((s: CustomMenuSection) => ({
+        name: s.name,
+        required: s.required !== false,
+        options: s.options.map((o) => ({ name: o.name, extra_paise: o.extra_paise / 100 })),
+      })),
+    });
+  }
+  async function submitCustom(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    const matchedCategory = menuCategories.find((c) => c.name === customForm.category);
+    const payload = {
+      name: customForm.name,
+      description: customForm.description,
+      category: customForm.category || null,
+      category_id: matchedCategory?.id ?? null,
+      base_price_paise: Math.round(Number(customForm.base_price_paise) * 100),
+      image_urls: customForm.image_urls,
+      is_vegetarian: customForm.is_vegetarian,
+      is_available: customForm.is_available,
+      is_featured: customForm.is_featured,
+      sections: customForm.sections.map((s) => ({
+        name: s.name,
+        required: s.required !== false,
+        options: s.options.map((o) => ({ name: o.name, extra_paise: Math.round(Number(o.extra_paise) * 100) })),
+      })),
+    };
+    try {
+      await api<CustomMenuItem>(
+        editingCustom ? `/custom-menu/${editingCustom.id}` : "/custom-menu",
+        { method: editingCustom ? "PATCH" : "POST", body: JSON.stringify(payload) },
+      );
+      await refresh();
+      setEditingCustom(null);
+      setCreatingCustom(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save this custom item.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function archiveCustom(item: CustomMenuItem) {
+    try {
+      await api(`/custom-menu/${item.id}`, { method: "DELETE" });
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not remove this item.");
+    }
+  }
+  function addSection() {
+    setCustomForm((f) => ({
+      ...f,
+      sections: [...f.sections, { name: "", required: true, options: [{ name: "", extra_paise: 0 }] }],
+    }));
+  }
+  function setSectionRequired(si: number, required: boolean) {
+    setCustomForm((f) => {
+      const sections = [...f.sections];
+      sections[si] = { ...sections[si], required };
+      return { ...f, sections };
+    });
+  }
+  function removeSection(si: number) {
+    setCustomForm((f) => ({ ...f, sections: f.sections.filter((_, i) => i !== si) }));
+  }
+  function updateSection(si: number, name: string) {
+    setCustomForm((f) => { const sections = [...f.sections]; sections[si] = { ...sections[si], name }; return { ...f, sections }; });
+  }
+  function addOption(si: number) {
+    setCustomForm((f) => { const sections = [...f.sections]; sections[si] = { ...sections[si], options: [...sections[si].options, { name: "", extra_paise: 0 }] }; return { ...f, sections }; });
+  }
+  function removeOption(si: number, oi: number) {
+    setCustomForm((f) => { const sections = [...f.sections]; sections[si] = { ...sections[si], options: sections[si].options.filter((_, i) => i !== oi) }; return { ...f, sections }; });
+  }
+  function updateOption(si: number, oi: number, field: "name" | "extra_paise", value: string) {
+    setCustomForm((f) => {
+      const sections = [...f.sections];
+      const options = [...sections[si].options];
+      options[oi] = { ...options[oi], [field]: field === "extra_paise" ? Number(value) : value };
+      sections[si] = { ...sections[si], options };
+      return { ...f, sections };
+    });
+  }
+  function saveCustomImage() {
+    if (!customImagePrompt) return;
+    const url = customImagePrompt.value.trim();
+    if (!url) { setError("Please enter an image URL."); return; }
+    let imageUrl: string;
+    try {
+      const parsed = new URL(url);
+      const driveFileId = parsed.hostname === "drive.google.com"
+        ? parsed.pathname.match(/\/file\/d\/([^/]+)/)?.[1] || parsed.searchParams.get("id")
+        : parsed.hostname === "docs.google.com" ? parsed.searchParams.get("id") : null;
+      imageUrl = driveFileId ? `https://drive.google.com/thumbnail?id=${encodeURIComponent(driveFileId)}&sz=w1200` : url;
+    } catch { setError("Please enter a valid image URL."); return; }
+    const imageUrls = [...customForm.image_urls];
+    if (customImagePrompt.index === -1) imageUrls.push(imageUrl);
+    else imageUrls[customImagePrompt.index] = imageUrl;
+    setCustomForm((f) => ({ ...f, image_urls: imageUrls }));
+    setError("");
+    setCustomImagePrompt(null);
+  }
+  function removeCustomImage(index: number) {
+    setCustomForm((f) => ({ ...f, image_urls: f.image_urls.filter((_, i) => i !== index) }));
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
@@ -1331,7 +1491,7 @@ function MenuManagement() {
         description="Keep the good stuff up to date, one plate at a time."
         action={
           <Button onClick={openCreate}>
-            <Plus size={16} /> Add a menu item
+            <Plus size={16} /> <span>Add a menu item</span>
           </Button>
         }
       />
@@ -1391,7 +1551,7 @@ function MenuManagement() {
             >
               <span>{category.name}</span>
               <small>
-                {items.filter((item) => item.category === category.name).length}{" "}
+                {items.filter((item) => item.category === category.name || item.category_id === category.id).length}{" "}
                 menus
               </small>
               <button
@@ -1411,7 +1571,7 @@ function MenuManagement() {
         <Loading label="Laying out the menu…" />
       ) : (
         <div className="menu-admin-list">
-          {items.map((item) => (
+          {items.filter((item) => !item.is_custom).map((item) => (
             <article
               className={`menu-admin-card ${!item.is_available ? "menu-item-muted" : ""}`}
               key={item.id}
@@ -1470,6 +1630,86 @@ function MenuManagement() {
             </article>
           ))}
         </div>
+      )}
+      {customItems.length > 0 && (
+        <section className="admin-panel custom-menu-admin-section">
+          <div className="panel-heading">
+            <div>
+              <span className="eyebrow">BUILD-YOUR-OWN</span>
+              <h2>Custom menu items</h2>
+            </div>
+          </div>
+          <div className="menu-admin-list">
+            {customItems.map((item) => (
+              <article
+                className={`menu-admin-card custom-menu-card ${!item.is_available ? "menu-item-muted" : ""}`}
+                key={`custom-${item.id}`}
+              >
+                <div
+                  className={`menu-admin-art ${item.is_vegetarian ? "admin-art-green" : "admin-art-red"}`}
+                >
+                  {item.image_urls?.length || item.image_url ? (
+                    <MenuImageCarousel
+                      images={
+                        item.image_urls?.length
+                          ? item.image_urls
+                          : item.image_url
+                            ? [item.image_url]
+                            : []
+                      }
+                      alt={item.name}
+                      className="menu-gallery-admin"
+                    />
+                  ) : (
+                    <span>{item.is_vegetarian ? "🥬" : "🍢"}</span>
+                  )}
+                  {item.is_featured && <i>✦</i>}
+                </div>
+                <div className="menu-admin-main">
+                  <div className="menu-admin-tags">
+                    <Badge tone="soft">{item.category || "Uncategorized"}</Badge>
+                    <Badge tone="amber">Custom</Badge>
+                    {item.is_vegetarian && <span className="veg-label">VEG</span>}
+                    {!item.is_available && (
+                      <Badge tone="danger">Unavailable</Badge>
+                    )}
+                  </div>
+                  <h3>{item.name}</h3>
+                  <p>
+                    {item.description || "A build-your-own KebabZilla favorite."}
+                  </p>
+                  <div className="menu-admin-price">
+                    {formatINR(item.base_price_paise)} <small>base + addons</small>
+                  </div>
+                  <div className="custom-sections-preview">
+                    {item.sections?.map((s) => (
+                      <span key={s.id || s.name} className="custom-section-chip">
+                        {s.name} · {s.required !== false ? "Must choose" : "Optional"} · {s.options?.length || 0} options
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <div className="menu-admin-actions">
+                  <button
+                    className="button button-secondary button-sm"
+                    onClick={() => openEditCustom(item)}
+                  >
+                    <Edit3 size={14} /> Edit
+                  </button>
+                  {item.is_available && (
+                    <button
+                      className="icon-button danger-icon"
+                      title="Remove from live menu"
+                      onClick={() => void archiveCustom(item)}
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
       )}
       {showModal && (
         <div
@@ -1681,6 +1921,437 @@ function MenuManagement() {
           <section className="modal-card image-url-modal" role="dialog" aria-modal="true" aria-labelledby="image-url-title">
             <div className="modal-heading"><div><span className="eyebrow">MENU PHOTOGRAPHY</span><h2 id="image-url-title">{imagePrompt.index === -1 ? "Add image" : "Replace image"}</h2></div><button className="icon-button" type="button" aria-label="Close" onClick={() => setImagePrompt(null)}><X size={18} /></button></div>
             <div className="modal-form"><label className="field-label">Image URL<input autoFocus type="url" required value={imagePrompt.value} onChange={(event) => setImagePrompt({ ...imagePrompt, value: event.target.value })} placeholder="https://…" /></label><div className="modal-actions"><Button type="button" variant="secondary" onClick={() => setImagePrompt(null)}>Cancel</Button><Button type="button" onClick={saveImage}>Use image <ArrowRight size={15} /></Button></div></div>
+          </section>
+        </div>
+      )}
+      {showTypePicker && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setShowTypePicker(false);
+          }}
+        >
+          <section className="modal-card type-picker-modal">
+            <div className="modal-heading">
+              <div>
+                <span className="eyebrow">ADD SOMETHING DELICIOUS</span>
+                <h2>What type of item?</h2>
+              </div>
+              <button
+                className="icon-button"
+                onClick={() => setShowTypePicker(false)}
+                aria-label="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="type-picker-cards">
+              <button
+                type="button"
+                className="type-picker-card"
+                onClick={openCreateNormal}
+              >
+                <span className="type-picker-icon">
+                  <CookingPot size={28} />
+                </span>
+                <strong>Standard item</strong>
+                <small>A single item with a fixed price (e.g. Chicken Tikka, Masala Fries).</small>
+              </button>
+              <button
+                type="button"
+                className="type-picker-card"
+                onClick={openCreateCustom}
+              >
+                <span className="type-picker-icon type-picker-icon-amber">
+                  <Plus size={28} />
+                </span>
+                <strong>Custom menu item</strong>
+                <small>Base item with customizable sections & addon prices (e.g. Roll with kebab choices).</small>
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+      {(creatingCustom || Boolean(editingCustom)) && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setCreatingCustom(false);
+              setEditingCustom(null);
+            }
+          }}
+        >
+          <section className="modal-card menu-modal custom-menu-modal">
+            <div className="modal-heading">
+              <div>
+                <span className="eyebrow">
+                  {editingCustom ? "EDIT CUSTOM ITEM" : "BUILD YOUR OWN"}
+                </span>
+                <h2>{editingCustom ? "Edit custom menu item" : "New custom menu item"}</h2>
+              </div>
+              <button
+                className="icon-button"
+                onClick={() => {
+                  setCreatingCustom(false);
+                  setEditingCustom(null);
+                }}
+                aria-label="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <form
+              className="modal-form"
+              onSubmit={(e) => void submitCustom(e)}
+            >
+              <label className="field-label">
+                Item name
+                <input
+                  required
+                  minLength={2}
+                  maxLength={120}
+                  value={customForm.name}
+                  onChange={(e) =>
+                    setCustomForm((f) => ({ ...f, name: e.target.value }))
+                  }
+                  placeholder="e.g. Roll, Thali, Bowl"
+                />
+              </label>
+              <label className="field-label">
+                Description
+                <textarea
+                  rows={2}
+                  maxLength={2000}
+                  value={customForm.description}
+                  onChange={(e) =>
+                    setCustomForm((f) => ({ ...f, description: e.target.value }))
+                  }
+                  placeholder="What makes this customizable dish special?"
+                />
+              </label>
+              <div className="modal-two-col">
+                <label className="field-label">
+                  Category
+                  <select
+                    value={customForm.category}
+                    onChange={(e) =>
+                      setCustomForm((f) => ({ ...f, category: e.target.value }))
+                    }
+                  >
+                    <option value="">No category</option>
+                    {menuCategories.map((cat) => (
+                      <option key={cat.name} value={cat.name}>
+                        {cat.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field-label">
+                  Base price · INR
+                  <input
+                    required
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={customForm.base_price_paise}
+                    onChange={(e) =>
+                      setCustomForm((f) => ({
+                        ...f,
+                        base_price_paise: Number(e.target.value),
+                      }))
+                    }
+                    placeholder="120"
+                  />
+                </label>
+              </div>
+
+              {/* Addon sections */}
+              <div className="custom-sections-builder">
+                <div className="custom-sections-header">
+                  <strong>Customization sections</strong>
+                  <small>
+                    Add sections with addon options. The option price adds to the base price.
+                  </small>
+                </div>
+                {customForm.sections.map((section, si) => (
+                  <div className="custom-section-block" key={si}>
+                    <div className="custom-section-title-row">
+                      <input
+                        required
+                        className="custom-section-name-input"
+                        placeholder="Section name (e.g. Kebab Selection, Bread Choice, Sauce)"
+                        value={section.name}
+                        maxLength={120}
+                        onChange={(e) => updateSection(si, e.target.value)}
+                      />
+                      <div className="custom-section-type-toggle" role="group" aria-label="Section requirement">
+                        <button
+                          type="button"
+                          className={`custom-type-pill required-pill ${section.required !== false ? "active" : ""}`}
+                          onClick={() => setSectionRequired(si, true)}
+                        >
+                          Must choose
+                        </button>
+                        <button
+                          type="button"
+                          className={`custom-type-pill optional-pill ${section.required === false ? "active" : ""}`}
+                          onClick={() => setSectionRequired(si, false)}
+                        >
+                          Optional
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        className="icon-button danger-icon"
+                        onClick={() => removeSection(si)}
+                        aria-label="Remove section"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                    <div className="custom-section-options">
+                      {section.options.map((opt, oi) => (
+                        <div className="custom-option-row" key={oi}>
+                          <input
+                            required
+                            placeholder="Option name (e.g. Chicken Tikka, Paneer Tikka)"
+                            value={opt.name}
+                            maxLength={120}
+                            onChange={(e) =>
+                              updateOption(si, oi, "name", e.target.value)
+                            }
+                          />
+                          <div className="custom-option-price">
+                            <span>+₹</span>
+                            <input
+                              required
+                              type="number"
+                              min="0"
+                              step="1"
+                              placeholder="0"
+                              value={opt.extra_paise}
+                              onChange={(e) =>
+                                updateOption(si, oi, "extra_paise", e.target.value)
+                              }
+                            />
+                          </div>
+                          {section.options.length > 1 && (
+                            <button
+                              type="button"
+                              className="icon-button"
+                              onClick={() => removeOption(si, oi)}
+                              aria-label="Remove option"
+                            >
+                              <X size={13} />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        className="custom-add-option-btn"
+                        onClick={() => addOption(si)}
+                      >
+                        <Plus size={13} /> Add option
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="custom-add-section-btn"
+                  onClick={addSection}
+                >
+                  <Plus size={14} /> Add section
+                </button>
+              </div>
+
+              {/* Images */}
+              <div className="field-label">
+                Menu images{" "}
+                <span className="field-optional">First image is the main photo</span>
+                <div className="menu-image-grid">
+                  {customForm.image_urls.map((url, index) => (
+                    <div className="menu-image-tile" key={`${index}-${url}`}>
+                      <img
+                        src={url}
+                        alt={`Custom item image ${index + 1}`}
+                        onError={(e) =>
+                          e.currentTarget
+                            .closest(".menu-image-tile")
+                            ?.classList.add("menu-image-failed")
+                        }
+                      />
+                      <span className="menu-image-order">
+                        {index === 0 ? "MAIN" : `#${index + 1}`}
+                      </span>
+                      <div className="menu-image-actions">
+                        <button
+                          type="button"
+                          aria-label="Change image"
+                          onClick={() =>
+                            setCustomImagePrompt({ index, value: url })
+                          }
+                        >
+                          <Edit3 size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Delete image"
+                          onClick={() => removeCustomImage(index)}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    className="menu-image-add"
+                    onClick={() =>
+                      setCustomImagePrompt({ index: -1, value: "" })
+                    }
+                  >
+                    <Plus size={25} />
+                    <span>Add image</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Checkboxes */}
+              <div className="checkbox-settings">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={customForm.is_vegetarian}
+                    onChange={(e) =>
+                      setCustomForm((f) => ({
+                        ...f,
+                        is_vegetarian: e.target.checked,
+                      }))
+                    }
+                  />
+                  <span>
+                    <strong>Vegetarian</strong>
+                    <small>Show a green veg marker.</small>
+                  </span>
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={customForm.is_available}
+                    onChange={(e) =>
+                      setCustomForm((f) => ({
+                        ...f,
+                        is_available: e.target.checked,
+                      }))
+                    }
+                  />
+                  <span>
+                    <strong>Available</strong>
+                    <small>Show on the customer menu.</small>
+                  </span>
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={customForm.is_featured}
+                    onChange={(e) =>
+                      setCustomForm((f) => ({
+                        ...f,
+                        is_featured: e.target.checked,
+                      }))
+                    }
+                  />
+                  <span>
+                    <strong>KZ pick</strong>
+                    <small>Feature this menu favorite.</small>
+                  </span>
+                </label>
+              </div>
+
+              <div className="modal-actions">
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setCreatingCustom(false);
+                    setEditingCustom(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={busy}>
+                  {busy
+                    ? "Saving…"
+                    : editingCustom
+                      ? "Save changes"
+                      : "Create custom item"}{" "}
+                  <ArrowRight size={15} />
+                </Button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+      {customImagePrompt && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setCustomImagePrompt(null);
+          }}
+        >
+          <section
+            className="modal-card image-url-modal"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="modal-heading">
+              <div>
+                <span className="eyebrow">MENU PHOTOGRAPHY</span>
+                <h2>
+                  {customImagePrompt.index === -1 ? "Add image" : "Replace image"}
+                </h2>
+              </div>
+              <button
+                className="icon-button"
+                type="button"
+                aria-label="Close"
+                onClick={() => setCustomImagePrompt(null)}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="modal-form">
+              <label className="field-label">
+                Image URL
+                <input
+                  autoFocus
+                  type="url"
+                  required
+                  value={customImagePrompt.value}
+                  onChange={(e) =>
+                    setCustomImagePrompt({
+                      ...customImagePrompt,
+                      value: e.target.value,
+                    })
+                  }
+                  placeholder="https://…"
+                />
+              </label>
+              <div className="modal-actions">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setCustomImagePrompt(null)}
+                >
+                  Cancel
+                </Button>
+                <Button type="button" onClick={saveCustomImage}>
+                  Use image <ArrowRight size={15} />
+                </Button>
+              </div>
+            </div>
           </section>
         </div>
       )}
@@ -2198,8 +2869,21 @@ function ActivityCenter() {
       .finally(() => setLoading(false));
   }, []);
   const visibleEvents = events
-    .filter((event) => `${event.message} ${event.actor_name} ${event.event_type}`.toLowerCase().includes(query.trim().toLowerCase()))
-    .sort((a, b) => sort === "oldest" ? a.created_at.localeCompare(b.created_at) : sort === "actor" ? a.actor_name.localeCompare(b.actor_name) : b.created_at.localeCompare(a.created_at));
+    .filter((event) => {
+      const textMatches = `${event.message} ${event.actor_name} ${event.event_type}`.toLowerCase().includes(query.trim().toLowerCase());
+      if (!textMatches) return false;
+      const eventTime = new Date(event.created_at).getTime();
+      const now = Date.now();
+      if (sort === "day") return (now - eventTime) <= 24 * 60 * 60 * 1000;
+      if (sort === "week") return (now - eventTime) <= 7 * 24 * 60 * 60 * 1000;
+      if (sort === "month") return (now - eventTime) <= 30 * 24 * 60 * 60 * 1000;
+      return true;
+    })
+    .sort((a, b) => {
+      if (sort === "oldest") return a.created_at.localeCompare(b.created_at);
+      if (sort === "actor") return a.actor_name.localeCompare(b.actor_name);
+      return b.created_at.localeCompare(a.created_at);
+    });
   return (
     <>
       <PageTitle
@@ -2213,7 +2897,7 @@ function ActivityCenter() {
         <section className="admin-panel">
           <div className="activity-filter-bar">
             <label className="admin-search"><Search size={16} /><input aria-label="Search activity" placeholder="Search activity or person" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
-            <RoundedSelect ariaLabel="Sort activity" value={sort} onChange={setSort} options={[{ value: "newest", label: "Newest first" }, { value: "oldest", label: "Oldest first" }, { value: "actor", label: "Person A–Z" }]} />
+            <RoundedSelect className="activity-sort-select" icon={<ArrowUpDown size={15} />} ariaLabel="Sort activity" value={sort} onChange={setSort} options={[{ value: "newest", label: "Newest first" }, { value: "oldest", label: "Oldest first" }, { value: "day", label: "Today" }, { value: "week", label: "This week" }, { value: "month", label: "This month" }, { value: "actor", label: "Person A–Z" }]} />
           </div>
           {visibleEvents.length ? visibleEvents.map((event) => (
             <div className="status-break-row" key={event.id}>
@@ -2291,8 +2975,21 @@ function Offers() {
     }
   }
   const visibleLogs = logs
-    .filter((log) => `${log.subject} ${log.message} ${log.status} ${log.audience} ${log.channels.join(" ")}`.toLowerCase().includes(logQuery.trim().toLowerCase()))
-    .sort((a, b) => logSort === "oldest" ? a.created_at.localeCompare(b.created_at) : logSort === "status" ? a.status.localeCompare(b.status) : b.created_at.localeCompare(a.created_at));
+    .filter((log) => {
+      const textMatches = `${log.subject} ${log.message} ${log.status} ${log.audience} ${log.channels.join(" ")}`.toLowerCase().includes(logQuery.trim().toLowerCase());
+      if (!textMatches) return false;
+      const logTime = new Date(log.created_at).getTime();
+      const now = Date.now();
+      if (logSort === "day") return (now - logTime) <= 24 * 60 * 60 * 1000;
+      if (logSort === "week") return (now - logTime) <= 7 * 24 * 60 * 60 * 1000;
+      if (logSort === "month") return (now - logTime) <= 30 * 24 * 60 * 60 * 1000;
+      return true;
+    })
+    .sort((a, b) => {
+      if (logSort === "oldest") return a.created_at.localeCompare(b.created_at);
+      if (logSort === "status") return a.status.localeCompare(b.status);
+      return b.created_at.localeCompare(a.created_at);
+    });
   return (
     <>
       <PageTitle
@@ -2355,15 +3052,17 @@ function Offers() {
         <h2>Campaign log</h2>
         <div className="activity-filter-bar">
           <label className="admin-search"><Search size={16} /><input aria-label="Search campaign log" placeholder="Search campaigns" value={logQuery} onChange={(event) => setLogQuery(event.target.value)} /></label>
-          <RoundedSelect ariaLabel="Sort campaign log" value={logSort} onChange={setLogSort} options={[{ value: "newest", label: "Newest first" }, { value: "oldest", label: "Oldest first" }, { value: "status", label: "Status A–Z" }]} />
+          <RoundedSelect className="activity-sort-select" icon={<ArrowUpDown size={15} />} ariaLabel="Sort campaign log" value={logSort} onChange={setLogSort} options={[{ value: "newest", label: "Newest first" }, { value: "oldest", label: "Oldest first" }, { value: "day", label: "Today" }, { value: "week", label: "This week" }, { value: "month", label: "This month" }, { value: "status", label: "Status A–Z" }]} />
         </div>
-        {visibleLogs.length ? visibleLogs.map((log) => (
-          <button type="button" className="campaign-log-row" key={log.id} onClick={() => setSelectedLog(log)}>
-            <span className="campaign-log-copy"><strong>{log.subject}</strong><span>{log.message}</span></span>
-            <span className="campaign-log-delivery">{log.channels.map((channel) => <span key={channel}>{channel} · {log.delivery_counts?.[channel]?.sent_count || 0}/{log.delivery_counts?.[channel]?.recipient_count || 0}</span>)}</span>
-            <time>{friendlyDate(log.created_at)}</time>
-          </button>
-        )) : <EmptyState title="No campaigns found" description="Try a different search." />}
+        <div className="campaign-log-scroll-wrap">
+          {visibleLogs.length ? visibleLogs.map((log) => (
+            <button type="button" className="campaign-log-row" key={log.id} onClick={() => setSelectedLog(log)}>
+              <span className="campaign-log-copy"><strong>{log.subject}</strong><span>{log.message}</span></span>
+              <span className="campaign-log-delivery">{log.channels.map((channel) => <span key={channel}>{channel} · {log.delivery_counts?.[channel]?.sent_count || 0}/{log.delivery_counts?.[channel]?.recipient_count || 0}</span>)}</span>
+              <time>{friendlyDate(log.created_at)}</time>
+            </button>
+          )) : <EmptyState title="No campaigns found" description="Try a different search." />}
+        </div>
       </section>
       {selectedLog && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedLog(null); }}><section className="modal-card campaign-detail-modal" role="dialog" aria-modal="true" aria-labelledby="campaign-detail-title"><div className="modal-heading"><div><span className="eyebrow">CAMPAIGN DETAILS</span><h2 id="campaign-detail-title">{selectedLog.subject}</h2></div><button className="icon-button" type="button" onClick={() => setSelectedLog(null)} aria-label="Close campaign details"><X size={18} /></button></div><p className="campaign-detail-message">{selectedLog.message}</p><div className={`campaign-channel-details campaign-channel-details-${selectedLog.channels.length}`}>{selectedLog.channels.map((channel) => { const detail = selectedLog.delivery_counts?.[channel] || { recipient_count: 0, sent_count: 0 }; return <section key={channel} className="campaign-channel-card"><span className="eyebrow">{channel}</span><h3>{detail.sent_count} delivered</h3><p>{detail.sent_count} of {detail.recipient_count} selected customers received this message via {channel.toLowerCase()}.</p></section>; })}</div><div className="campaign-detail-footer"><span>{selectedLog.audience} customers</span><time>{friendlyDate(selectedLog.created_at)}</time></div></section></div>}
     </>
@@ -2446,7 +3145,7 @@ function Discounts() {
   };
 
   return <>
-    <PageTitle eyebrow="A LITTLE SOMETHING OFF THE MENU" title="Discounts" description="Schedule percentage discounts across one or more menu items." action={<Button onClick={openCreateModal}><Plus size={16} /> Create discount</Button>} />
+    <PageTitle eyebrow="A LITTLE SOMETHING OFF THE MENU" title="Discounts" description="Schedule percentage discounts across one or more menu items." action={<Button onClick={openCreateModal}><Plus size={16} /> <span>Create discount</span></Button>} />
     {error && <Notice onDismiss={() => setError("")}>{error}</Notice>}
     {loading ? <Loading label="Loading discounts…" /> : discounts.length ? (
       <section className="admin-panel discount-list-panel">

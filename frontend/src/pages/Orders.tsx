@@ -52,7 +52,7 @@ export default function OrdersPage() {
 
   if (loading) return <main className="customer-page"><Loading label="Finding your orders…" /></main>
   return <main className="customer-page">
-    <PageTitle eyebrow="YOUR TABLE, ANYTIME" title="My orders" description="A little something delicious is always worth keeping track of." action={<Button variant="secondary" onClick={() => { setLoading(true); void refresh() }}><RefreshCw size={15} /> Refresh</Button>} />
+    <PageTitle eyebrow="YOUR TABLE, ANYTIME" title="My orders" description="A little something delicious is always worth keeping track of." action={<Button variant="secondary" onClick={() => { setLoading(true); void refresh() }}><RefreshCw size={15} /> <span>Refresh</span></Button>} />
     {error && <Notice>{error}</Notice>}
     {!orders.length ? <EmptyState icon={<ShoppingBag size={21} />} title="Nothing on the table yet" description="Your first KebabZilla order is just a few good choices away." action={<Link className="button button-dark" to="/">Explore the menu <ArrowRight size={16} /></Link>} /> : <div className="customer-order-list">{orders.map((order) => {
       const currentIndex = progress.indexOf(order.status)

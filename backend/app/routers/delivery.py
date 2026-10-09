@@ -162,13 +162,22 @@ def list_batches(account: CurrentAccount, db: DbSession):
     ]
 
 
+from collections import defaultdict
+
+_failed_otp_attempts: dict[str, int] = defaultdict(int)
+
+
 @router.post("/orders/{order_id}/verify-otp")
 def deliver(order_id: str, data: VerifyOtpInput, account: CurrentAccount, db: DbSession):
     order = db.get(Order, order_id)
     if order is None or order.assigned_delivery_id != account.id or order.status != OrderStatus.OUT_FOR_DELIVERY:
         raise HTTPException(status_code=404, detail="Active delivery not found")
+    if _failed_otp_attempts[order_id] >= 5:
+        raise HTTPException(status_code=429, detail="Too many incorrect delivery code attempts. Please contact the customer or dispatch.")
     if not verify_delivery_otp(order, data.otp):
+        _failed_otp_attempts[order_id] += 1
         raise HTTPException(status_code=400, detail="The delivery code is incorrect or expired")
+    _failed_otp_attempts.pop(order_id, None)
     transition_order(order, OrderStatus.DELIVERED)
     db.add(AdminEvent(event_type="order_delivered", message=f"Order {order.order_id} delivered by {account.name}", actor_id=account.id, details={"order_id": order.order_id, "delivery_id": account.id, "delivery_name": account.name}))
     order.delivered_at = datetime.now(timezone.utc)

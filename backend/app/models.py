@@ -54,6 +54,7 @@ class Account(Base):
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     addresses: Mapped[list["AccountAddress"]] = relationship(cascade="all, delete-orphan", lazy="selectin")
+    sessions: Mapped[list["UserSession"]] = relationship("UserSession", back_populates="account", cascade="all, delete-orphan", lazy="selectin")
 
 
 class AccountAddress(Base):
@@ -90,6 +91,23 @@ class PasswordResetCode(Base):
     account: Mapped[Account] = relationship()
 
 
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    user_agent: Mapped[str] = mapped_column(String(512), default="")
+    ip_address: Mapped[str] = mapped_column(String(64), default="")
+    device_fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_active_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    is_revoked: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+
+    account: Mapped[Account] = relationship("Account", back_populates="sessions", lazy="joined")
+
+
 class MenuItem(Base):
     __tablename__ = "menu_items"
 
@@ -103,8 +121,37 @@ class MenuItem(Base):
     is_vegetarian: Mapped[bool] = mapped_column(Boolean, default=False)
     is_available: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     is_featured: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_custom: Mapped[bool] = mapped_column(Boolean, default=False)
+    custom_sections: Mapped[list[dict]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     category: Mapped["MenuCategory | None"] = relationship(lazy="joined")
+
+
+class CustomMenuItem(Base):
+    __tablename__ = "custom_menu_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    category_id: Mapped[int | None] = mapped_column(ForeignKey("menu_categories.id", ondelete="SET NULL"), nullable=True, index=True)
+    base_price_paise: Mapped[int] = mapped_column(Integer)
+    image_urls: Mapped[list[str]] = mapped_column(JSON, default=list)
+    is_vegetarian: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_available: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    is_featured: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    category: Mapped["MenuCategory | None"] = relationship(lazy="joined")
+    sections: Mapped[list["CustomMenuSection"]] = relationship(cascade="all, delete-orphan", order_by="CustomMenuSection.position", lazy="selectin")
+
+
+class CustomMenuSection(Base):
+    __tablename__ = "custom_menu_sections"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("custom_menu_items.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(120))  # e.g. "Kebab Selection"
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    options: Mapped[list[dict]] = mapped_column(JSON, default=list)  # [{"name": "Chicken Tikka", "extra_paise": 4000}]
 
 
 class MenuCategory(Base):
@@ -183,13 +230,14 @@ class Order(Base):
 
 class OrderItem(Base):
     __tablename__ = "order_items"
-    __table_args__ = (UniqueConstraint("order_id", "menu_item_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     order_id: Mapped[str] = mapped_column(ForeignKey("orders.order_id", ondelete="CASCADE"), index=True)
     menu_item_id: Mapped[int | None] = mapped_column(ForeignKey("menu_items.id", ondelete="SET NULL"), nullable=True)
     menu_item: Mapped[MenuItem | None] = relationship(lazy="joined")
     quantity: Mapped[int] = mapped_column(Integer)
+    customizations: Mapped[list[dict]] = mapped_column(JSON, default=list)
+    unit_price_paise: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class CartItem(Base):

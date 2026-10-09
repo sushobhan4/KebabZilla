@@ -19,14 +19,14 @@ from app.models import (
     utcnow,
 )
 from app.schemas import DraftInput, OrderCreate, OrderStatusUpdate
-from app.schemas import MenuPauseInput
+from app.schemas import MenuItemOut, MenuPauseInput
 from app.config import settings
 from app.services import assemble_order, order_payload, order_total_paise, restaurant_settings, transition_order
 
 router = APIRouter(prefix="/staff", tags=["staff operations"], dependencies=[Depends(require_roles(Role.ADMIN, Role.EMPLOYEE))])
 
 
-@router.get("/menu")
+@router.get("/menu", response_model=list[MenuItemOut])
 def staff_menu(db: DbSession):
     return db.scalars(select(MenuItem).order_by(MenuItem.category_id, MenuItem.name)).all()
 
