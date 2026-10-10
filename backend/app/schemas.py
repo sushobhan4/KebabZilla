@@ -107,6 +107,7 @@ class AccountOut(ORMModel):
     addresses: list[dict] = Field(default_factory=list)
     role: Role
     must_change_password: bool
+    is_accepting_deliveries: bool = False
     created_at: datetime
 
     @model_validator(mode="before")
@@ -196,6 +197,11 @@ class TokenOut(BaseModel):
     account: AccountOut
 
 
+class MenuItemVariationInput(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    price_paise: int = Field(gt=0, le=10_000_000)
+
+
 class MenuItemInput(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     description: str = Field(default="", max_length=2000)
@@ -207,8 +213,7 @@ class MenuItemInput(BaseModel):
     is_vegetarian: bool = False
     is_available: bool = True
     is_featured: bool = False
-    is_custom: bool = False
-    custom_sections: list[dict] = Field(default_factory=list)
+    variations: list[MenuItemVariationInput] = Field(default_factory=list)
 
 
 class MenuItemOut(ORMModel):
@@ -225,8 +230,7 @@ class MenuItemOut(ORMModel):
     is_vegetarian: bool
     is_available: bool
     is_featured: bool
-    is_custom: bool = False
-    custom_sections: list[dict] = Field(default_factory=list)
+    variations: list[dict] = Field(default_factory=list)
     discount_campaign_name: str | None = None
     popularity_count: int = 0
 
@@ -239,11 +243,21 @@ class MenuItemOut(ORMModel):
             data["image_url"] = (value.image_urls or [None])[0]
             cat = getattr(value, "category", None)
             data["category"] = cat.name if cat else ""
-            if "custom_sections" in data and isinstance(data["custom_sections"], str):
+            vars_val = data.get("variations")
+            if isinstance(vars_val, str):
                 try:
-                    data["custom_sections"] = json.loads(data["custom_sections"])
+                    data["variations"] = json.loads(vars_val)
                 except Exception:
-                    data["custom_sections"] = []
+                    data["variations"] = []
+            elif vars_val is None:
+                data["variations"] = []
+
+            # If variations exist, show lowest possible price
+            vars_list = data.get("variations") or []
+            if vars_list:
+                min_price = min(v.get("price_paise", data["price_paise"]) for v in vars_list if isinstance(v, dict))
+                data["price_paise"] = min_price
+
             return data
         return value
 
@@ -262,9 +276,17 @@ class MenuCategoryDeleteOut(BaseModel):
 
 
 class OrderLineInput(BaseModel):
-    menu_item_id: int
+    menu_item_id: int | None = None
+    custom_menu_item_id: int | None = None
     quantity: int = Field(gt=0, le=30)
     customizations: list[dict] = Field(default_factory=list)
+    variation_name: str | None = None
+
+    @model_validator(mode="after")
+    def has_an_item(self):
+        if self.menu_item_id is None and self.custom_menu_item_id is None:
+            raise ValueError("Must provide either menu_item_id or custom_menu_item_id")
+        return self
 
 
 class OrderCreate(BaseModel):
@@ -289,7 +311,8 @@ class OrderCreate(BaseModel):
         keys = []
         for item in items:
             custom_key = json.dumps(item.customizations, sort_keys=True) if item.customizations else ""
-            keys.append((item.menu_item_id, custom_key))
+            var_key = item.variation_name or ""
+            keys.append((item.menu_item_id, item.custom_menu_item_id, var_key, custom_key))
         if len(keys) != len(set(keys)):
             raise ValueError("Each menu item selection can only appear once; adjust its quantity instead.")
         return items
@@ -332,17 +355,22 @@ class AdminOrdersPageOut(BaseModel):
 class RestaurantSettingsInput(BaseModel):
     restaurant_name: str = Field(min_length=2, max_length=120)
     tagline: str = Field(max_length=200)
-    phone: str = Field(max_length=32)
+    phone: str = Field(max_length=300)
+    phones: list[str] = Field(default_factory=list)
     address: str = Field(max_length=300)
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
-    weekly_schedule: dict[str, dict[str, str | bool]] = Field(default_factory=dict)
-    tax_percent: int = Field(ge=0, le=30)
+    weekly_schedule: dict = Field(default_factory=dict)
     minimum_order_paise: int = Field(ge=0, le=10_000_000)
     delivery_radius_km: float = Field(ge=0.1, le=500)
     free_delivery_radius_km: float = Field(ge=0, le=500)
     delivery_fee_per_km_paise: int = Field(ge=0, le=1_000_000)
     accepting_orders: bool
+    admin_override_open: bool | None = None
+    distance_calculation_mode: str = Field(default="AUTO", pattern=r"^(AUTO|GOOGLE_MAPS|HAVERSINE)$")
+    enforce_driver_geofence: bool = Field(default=False)
+    driver_geofence_meters: int = Field(default=500, ge=50, le=50000)
+    haversine_routing_factor: float = Field(default=1.3, ge=1.0, le=4.0)
 
 
 class RestaurantSettingsOut(ORMModel):
@@ -350,16 +378,36 @@ class RestaurantSettingsOut(ORMModel):
     restaurant_name: str
     tagline: str
     phone: str
+    phones: list[str] = Field(default_factory=list)
     address: str
     latitude: float | None
     longitude: float | None
     weekly_schedule: dict
-    tax_percent: int
     minimum_order_paise: int
     delivery_radius_km: float
     free_delivery_radius_km: float
     delivery_fee_per_km_paise: int
     accepting_orders: bool
+    admin_override_open: bool = False
+    distance_calculation_mode: str = "AUTO"
+    enforce_driver_geofence: bool = False
+    driver_geofence_meters: int = 500
+    haversine_routing_factor: float = 1.3
+
+    @model_validator(mode="before")
+    @classmethod
+    def derive_phones(cls, value):
+        data = dict(value.__dict__) if hasattr(value, "__dict__") else dict(value)
+        raw_phone = data.get("phone") or ""
+        phones = [p.strip() for p in raw_phone.split(",") if p.strip()]
+        data["phones"] = phones
+        return data
+
+
+class DriverDutyInput(BaseModel):
+    accepting: bool
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
 
 
 class DispatchInput(BaseModel):
@@ -410,7 +458,8 @@ class OfferInput(BaseModel):
 
 
 class MenuDiscountInput(BaseModel):
-    menu_item_ids: list[int] = Field(min_length=1)
+    menu_item_ids: list[int] = Field(default_factory=list)
+    custom_menu_item_ids: list[int] = Field(default_factory=list)
     campaign_name: str | None = Field(default=None, max_length=80)
     discount_percent: int = Field(ge=1, le=99)
     starts_at: datetime
@@ -418,6 +467,8 @@ class MenuDiscountInput(BaseModel):
 
     @model_validator(mode="after")
     def valid_range(self):
+        if not self.menu_item_ids and not self.custom_menu_item_ids:
+            raise ValueError("Select at least one menu item or custom menu item")
         if self.starts_at.tzinfo is None or self.ends_at.tzinfo is None:
             raise ValueError("Discount start and end times must include a timezone")
         if self.ends_at <= self.starts_at:
@@ -466,6 +517,10 @@ class CustomMenuItemOut(ORMModel):
     category_id: int | None
     category: str = ""
     base_price_paise: int
+    lowest_price_paise: int = 0
+    discount_percent: int = 0
+    discounted_base_price_paise: int | None = None
+    discount_campaign_name: str | None = None
     image_urls: list[str]
     image_url: str | None = None
     is_vegetarian: bool
@@ -479,7 +534,23 @@ class CustomMenuItemOut(ORMModel):
         if hasattr(value, "image_urls"):
             data = dict(value.__dict__)
             data["image_url"] = (value.image_urls or [None])[0]
-            data["category"] = value.category.name if value.category else ""
+            cat = getattr(value, "category", None)
+            data["category"] = cat.name if cat else ""
+
+            # Calculate lowest possible price
+            # base price + minimum price from each mandatory/required section
+            secs = getattr(value, "sections", []) or []
+            lowest = data.get("base_price_paise", 0)
+            for sec in secs:
+                is_req = getattr(sec, "required", True) if hasattr(sec, "required") else sec.get("required", True)
+                opts = getattr(sec, "options", []) if hasattr(sec, "options") else sec.get("options", [])
+                if is_req and opts:
+                    min_extra = min(
+                        (opt.get("extra_paise", 0) if isinstance(opt, dict) else getattr(opt, "extra_paise", 0))
+                        for opt in opts
+                    )
+                    lowest += min_extra
+            data["lowest_price_paise"] = lowest
             return data
         return value
 

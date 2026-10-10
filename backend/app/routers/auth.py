@@ -212,8 +212,7 @@ def request_password_reset(data: PasswordResetRequest, db: DbSession):
         )
         if not recent:
             db.query(PasswordResetCode).filter(
-                PasswordResetCode.account_id == account.id,
-                PasswordResetCode.used_at.is_(None),
+                (PasswordResetCode.account_id == account.id) | (PasswordResetCode.expires_at <= utcnow())
             ).delete(synchronize_session=False)
             otp = f"{secrets.randbelow(1_000_000):06d}"
             reset_code = PasswordResetCode(
@@ -243,7 +242,6 @@ def reset_password(data: PasswordResetConfirm, db: DbSession):
         select(PasswordResetCode)
         .where(
             PasswordResetCode.account_id == account.id,
-            PasswordResetCode.used_at.is_(None),
         )
         .order_by(PasswordResetCode.created_at.desc())
     )
@@ -251,14 +249,22 @@ def reset_password(data: PasswordResetConfirm, db: DbSession):
     if expires_at and expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=utcnow().tzinfo)
     if not reset_code or not expires_at or expires_at <= utcnow() or reset_code.attempts >= 5:
+        if reset_code:
+            db.delete(reset_code)
+            db.commit()
         raise HTTPException(status_code=400, detail="The code is invalid or has expired")
     if not verify_password(data.otp, reset_code.otp_hash):
         reset_code.attempts += 1
+        if reset_code.attempts >= 5:
+            db.delete(reset_code)
         db.commit()
         raise HTTPException(status_code=400, detail="The code is invalid or has expired")
+
     account.password_hash = hash_password(data.new_password)
     account.must_change_password = False
-    reset_code.used_at = utcnow()
+    # Remove the password reset OTP row once used
+    db.delete(reset_code)
+
     # Invalidate all active sessions for this account across all devices on password reset
     db.query(UserSession).filter(UserSession.account_id == account.id).update(
         {UserSession.is_revoked: True},
@@ -297,14 +303,26 @@ def update_profile(data: AccountProfileUpdate, account: CurrentAccount, db: DbSe
             raise HTTPException(status_code=422, detail="Choose only one default delivery address")
         if not defaults and addresses:
             addresses[0]["is_default"] = True
-        account.addresses.clear()
-        account.addresses.extend(
-            AccountAddress(
-                address_id=address.pop("id"),
-                **address,
-            )
-            for address in addresses
-        )
+        existing_by_id = {addr.address_id: addr for addr in account.addresses}
+        incoming_ids = set()
+        for item in addresses:
+            addr_id = item.pop("id")
+            incoming_ids.add(addr_id)
+            if addr_id in existing_by_id:
+                existing = existing_by_id[addr_id]
+                for key, val in item.items():
+                    setattr(existing, key, val)
+            else:
+                account.addresses.append(
+                    AccountAddress(
+                        address_id=addr_id,
+                        **item,
+                    )
+                )
+
+        for addr in list(account.addresses):
+            if addr.address_id not in incoming_ids:
+                account.addresses.remove(addr)
     db.commit()
     db.refresh(account)
     return account

@@ -8,6 +8,7 @@ from app.dependencies import CurrentAccount, DbSession, require_roles
 from app.models import (
     AdminEvent,
     Account,
+    CustomMenuItem,
     DraftOrder,
     MenuItem,
     Order,
@@ -34,8 +35,13 @@ def staff_menu(db: DbSession):
 @router.get("/menu-pauses")
 def staff_menu_pauses(db: DbSession):
     rows = db.scalars(select(MenuItem).where(MenuItem.paused_by_id.is_not(None))).all()
-    people = {person.id: person.name for person in db.scalars(select(Account).where(Account.id.in_([row.paused_by_id for row in rows]))).all()} if rows else {}
-    return [{"menu_item_id": row.id, "employee_name": people.get(row.paused_by_id, "Staff member"), "paused_until": None} for row in rows]
+    custom_rows = db.scalars(select(CustomMenuItem).where(CustomMenuItem.paused_by_id.is_not(None))).all()
+    all_paused_by = [r.paused_by_id for r in rows if r.paused_by_id] + [r.paused_by_id for r in custom_rows if r.paused_by_id]
+    people = {person.id: person.name for person in db.scalars(select(Account).where(Account.id.in_(all_paused_by))).all()} if all_paused_by else {}
+    results = [{"menu_item_id": row.id, "employee_name": people.get(row.paused_by_id, "Staff member"), "paused_until": None} for row in rows]
+    for crow in custom_rows:
+        results.append({"menu_item_id": f"custom-{crow.id}", "employee_name": people.get(crow.paused_by_id, "Staff member"), "paused_until": None})
+    return results
 
 
 @router.post("/menu/{item_id}/pause", status_code=status.HTTP_201_CREATED)
@@ -76,6 +82,48 @@ def staff_resume_menu_item(item_id: int, actor: CurrentAccount, db: DbSession):
         raise HTTPException(status_code=404, detail="Menu item not found")
     item.paused_by_id = None
     db.add(AdminEvent(event_type="menu_resumed", message=f"{item.name} restored to menu by {actor.name}", actor_id=actor.id, details={"menu_item_id": item.id, "menu_item_name": item.name}))
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/custom-menu/{item_id}/pause", status_code=status.HTTP_201_CREATED)
+def staff_pause_custom_menu_item(item_id: int, data: MenuPauseInput, actor: CurrentAccount, db: DbSession):
+    item = db.get(CustomMenuItem, item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Custom menu item not found")
+    local_now = datetime.now(ZoneInfo(settings.business_timezone))
+    if data.mode == "manual":
+        until = datetime.max.replace(tzinfo=timezone.utc)
+    else:
+        schedule = restaurant_settings(db).weekly_schedule or {}
+        until = None
+        for offset in range(1, 9):
+            day = local_now.date() + timedelta(days=offset)
+            hours = schedule.get(day.strftime("%A").lower())
+            if not hours or not hours.get("open"):
+                continue
+            try:
+                opening = datetime.combine(day, time.fromisoformat(hours["opens"]), tzinfo=ZoneInfo(settings.business_timezone))
+            except (KeyError, ValueError, TypeError):
+                continue
+            if opening > local_now:
+                until = opening.astimezone(timezone.utc)
+                break
+        if until is None:
+            until = datetime.combine(local_now.date() + timedelta(days=1), time.min, tzinfo=ZoneInfo(settings.business_timezone)).astimezone(timezone.utc)
+    item.paused_by_id = actor.id
+    db.add(AdminEvent(event_type="custom_menu_paused", message=f"Custom item '{item.name}' paused by {actor.name} ({data.mode})", actor_id=actor.id, details={"custom_menu_item_id": item.id, "custom_menu_item_name": item.name, "mode": data.mode, "paused_until": until.isoformat()}))
+    db.commit()
+    return {"menu_item_id": f"custom-{item.id}", "menu_item_name": item.name, "employee_name": actor.name, "paused_until": until}
+
+
+@router.delete("/custom-menu/{item_id}/pause", status_code=status.HTTP_204_NO_CONTENT)
+def staff_resume_custom_menu_item(item_id: int, actor: CurrentAccount, db: DbSession):
+    item = db.get(CustomMenuItem, item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Custom menu item not found")
+    item.paused_by_id = None
+    db.add(AdminEvent(event_type="custom_menu_resumed", message=f"Custom item '{item.name}' restored to menu by {actor.name}", actor_id=actor.id, details={"custom_menu_item_id": item.id, "custom_menu_item_name": item.name}))
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

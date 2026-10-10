@@ -1,3 +1,15 @@
+@font-face {
+  font-family: "Serambhi Ramadhan";
+  src: url("/fonts/SerambiRamadhan.ttf") format("truetype");
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Slopes";
+  src: url("/fonts/Slopes.ttf") format("truetype");
+  font-display: swap;
+}
+
 :root {
   font-family: "DM Sans", sans-serif;
   color: #23302e;
@@ -101,6 +113,45 @@ select:focus-visible {
   gap: 9px;
   color: var(--ink);
   width: max-content;
+}
+.brand-identity {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  position: relative;
+  text-decoration: none;
+  color: inherit;
+  line-height: 1;
+  user-select: none;
+  padding: 0;
+}
+.brand-name-serif {
+  font-family: "Serambhi Ramadhan", serif;
+  font-size: 40px;
+  line-height: 0.9;
+  color: #1e2926;
+  letter-spacing: -0.2px;
+  display: block;
+}
+.brand-tagline-script {
+  position: absolute;
+  top: 100%;
+  left: 32px;
+  margin-top: -6px;
+  font-family: "Slopes", cursive, sans-serif;
+  font-size: 10px;
+  line-height: 0.85;
+  color: #c94428;
+  letter-spacing: 0.3px;
+  display: block;
+  white-space: nowrap;
+}
+.brand-compact .brand-name-serif {
+  font-size: 24px;
+}
+.brand-compact .brand-tagline-script {
+  display: none;
 }
 .brand-mark {
   width: 33px;
@@ -255,20 +306,91 @@ select:focus-visible {
   display: none;
 }
 .app-footer {
-  min-height: 78px;
+  min-height: 85px;
   border-top: 1px solid var(--line);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 18px max(44px, calc((100vw - 1344px) / 2));
-  color: #858981;
-  font-size: 10px;
+  flex-wrap: wrap;
+  gap: 20px 32px;
+  padding: 22px max(44px, calc((100vw - 1344px) / 2));
+  color: #727a74;
+  font-size: 11px;
   background: #f8f6f1;
 }
+.footer-identity-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
 .footer-copy {
-  margin-right: auto;
-  margin-left: 25px;
+  margin: 0;
+  color: #8c938c;
+  font-size: 10px;
+}
+.footer-contact-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.footer-phone-list {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #525a54;
+}
+.footer-phones {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.footer-phone-link {
+  color: #3b443e;
+  font-weight: 600;
+  text-decoration: none;
+  transition: color 0.15s;
+}
+.footer-phone-link:hover {
+  color: var(--red);
+  text-decoration: underline;
+}
+.footer-address-link,
+.footer-address-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #525a54;
+  text-decoration: none;
+  max-width: 440px;
+  text-align: right;
+  line-height: 1.35;
+  transition: color 0.15s;
+}
+.footer-address-link:hover {
+  color: var(--red);
+  text-decoration: underline;
+}
+.footer-icon {
+  flex-shrink: 0;
+  color: var(--red);
+}
+@media (max-width: 768px) {
+  .app-footer {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 20px 24px;
+    gap: 16px;
+  }
+  .footer-contact-col {
+    align-items: flex-start;
+  }
+  .footer-address-link,
+  .footer-address-text {
+    text-align: left;
+  }
 }
 .footer-meta {
   font-size: 10px;
@@ -4470,9 +4592,217 @@ select:focus-visible {
 }
 .settings-layout {
   display: grid;
-  grid-template-columns: 1fr 255px;
+  grid-template-columns: 1fr;
   gap: 13px;
   align-items: start;
+}
+.settings-form {
+  margin-top: 2px;
+  padding-bottom: 5.5rem;
+}
+.settings-pinned-bar {
+  position: fixed;
+  bottom: 1.5rem;
+  left: 0;
+  right: 0;
+  z-index: 900;
+  background: transparent !important;
+  border: none !important;
+  padding: 0;
+  box-shadow: none !important;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  backdrop-filter: none !important;
+  pointer-events: none;
+}
+.settings-pinned-bar-content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.settings-save-button {
+  pointer-events: auto;
+  border-radius: 9999px !important;
+  padding: 12px 32px !important;
+  font-size: 0.95rem !important;
+  font-weight: 700 !important;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  transition: all 0.2s ease;
+  max-width: calc(100vw - 32px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.settings-save-button.is-pristine {
+  background-color: #6b7280 !important;
+  color: #f3f4f6 !important;
+  border: 1px solid #4b5563 !important;
+  opacity: 0.9;
+}
+.settings-save-button.is-dirty {
+  background-color: #c54d2f !important;
+  color: #ffffff !important;
+  border: 1px solid #a83d23 !important;
+}
+.settings-save-button.is-dirty:hover {
+  background-color: #a83d23 !important;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(197, 77, 47, 0.4);
+}
+@media (max-width: 600px) {
+  .settings-pinned-bar {
+    bottom: 1rem;
+    padding: 0 12px;
+  }
+  .settings-save-button {
+    width: 100%;
+    max-width: 400px;
+    padding: 11px 20px !important;
+    font-size: 0.88rem !important;
+  }
+}
+.restaurant-phones-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 0.65rem 0.85rem;
+}
+.restaurant-phone-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+.restaurant-phone-item input {
+  width: 100%;
+  padding-right: 36px !important;
+}
+.restaurant-phone-item .phone-remove-btn {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  color: #8c938e;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  transition: all 0.15s ease;
+}
+.restaurant-phone-item .phone-remove-btn:hover {
+  color: #b33927;
+  background: #f7e8e5;
+}
+.restaurant-location-control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.settings-fields .field-label input,
+.restaurant-location-control .button {
+  box-sizing: border-box;
+  height: 42px;
+  min-height: 42px;
+}
+.restaurant-location-control .button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 8px;
+  border: 1px solid #e8e5dd;
+  background: white;
+  color: #3c4640;
+  padding: 10px 11px;
+  transition: all 0.18s ease;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.restaurant-location-control .button:hover:not(:disabled) {
+  border-color: #d8d4cb;
+  background: #fbf9f5;
+  transform: none;
+}
+.settings-pinned-notice {
+  display: none;
+}
+.schedule-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-top: 0.75rem;
+}
+.schedule-item-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.85rem 1.15rem;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+  gap: 1rem;
+}
+.schedule-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.schedule-item-time {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.95rem;
+}
+.schedule-item-days {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+.schedule-day-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+.schedule-day-badge.active {
+  background: rgba(255, 107, 0, 0.18);
+  color: var(--primary, #ff6b00);
+  border: 1px solid rgba(255, 107, 0, 0.35);
+}
+.schedule-day-badge.inactive {
+  background: transparent;
+  color: var(--muted, #888);
+  opacity: 0.35;
+  border: 1px solid transparent;
+}
+.schedule-day-chip {
+  padding: 0.45rem 0.85rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  border: 1px solid var(--border, #333);
+  background: var(--surface, #1e1e1e);
+  color: var(--text, #fff);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.schedule-day-chip:hover {
+  border-color: var(--primary, #ff6b00);
+}
+.schedule-day-chip.selected {
+  background: var(--primary, #ff6b00);
+  color: #fff;
+  border-color: var(--primary, #ff6b00);
 }
 .settings-main {
   display: flex;
@@ -6374,7 +6704,7 @@ select:focus-visible {
 }
 .delivery-available-card {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: 16px;
   padding: 12px;
   border: 1px solid #efede7;
@@ -7865,7 +8195,7 @@ body {
     overflow-x: auto;
   }
   .settings-layout {
-    grid-template-columns: minmax(0, 1fr) 240px;
+    grid-template-columns: 1fr;
   }
 }
 @media (max-width: 760px) {
@@ -11019,6 +11349,251 @@ input[type="radio"]:focus-visible {
   color: #29332f;
 }
 
+/* Custom rounded dropdowns in form fields, settings, checkout, and modals */
+.field-label .rounded-select,
+.modal-two-col .rounded-select,
+.checkout-fields .rounded-select,
+.settings-fields .rounded-select {
+  width: 100%;
+  min-width: 0;
+  margin-top: 2px;
+}
 
+.field-label .rounded-select .rounded-select-trigger,
+.modal-two-col .rounded-select .rounded-select-trigger,
+.checkout-fields .rounded-select .rounded-select-trigger,
+.settings-fields .rounded-select .rounded-select-trigger {
+  width: 100%;
+  height: 42px;
+  min-height: 42px;
+  border-radius: 8px;
+  border: 1px solid #e8e5dd;
+  background: #ffffff;
+  padding: 0 14px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  color: #3c4640;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-sizing: border-box;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.field-label .rounded-select .rounded-select-trigger:focus-visible,
+.field-label .rounded-select .rounded-select-trigger[aria-expanded="true"] {
+  border-color: #c99073;
+  box-shadow: 0 0 0 3px #c3422613;
+}
+
+.field-label .rounded-select .rounded-select-label,
+.modal-two-col .rounded-select .rounded-select-label,
+.checkout-fields .rounded-select .rounded-select-label,
+.settings-fields .rounded-select .rounded-select-label {
+  flex: 1 1 auto;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.field-label .rounded-select .rounded-select-chevron,
+.modal-two-col .rounded-select .rounded-select-chevron,
+.checkout-fields .rounded-select .rounded-select-chevron,
+.settings-fields .rounded-select .rounded-select-chevron {
+  flex-shrink: 0;
+  margin-left: 10px;
+  color: #7f887e;
+  transition: transform 0.16s ease;
+}
+
+.field-label .rounded-select .rounded-select-chevron.open,
+.modal-two-col .rounded-select .rounded-select-chevron.open,
+.checkout-fields .rounded-select .rounded-select-chevron.open,
+.settings-fields .rounded-select .rounded-select-chevron.open {
+  transform: rotate(180deg);
+}
+
+/* Side-by-side Order Timing and Schedule Time in Cart Checkout */
+.checkout-timing-row {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+}
+
+.checkout-timing-row.two-col {
+  grid-template-columns: 1fr 1fr;
+}
+
+.checkout-timing-row.single-col {
+  grid-template-columns: 1fr;
+}
+
+@media (max-width: 480px) {
+  .checkout-timing-row.two-col {
+    grid-template-columns: 1fr;
+  }
+}
+
+.field-badge-today {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: #fdf1e8;
+  color: #c34226;
+  border-radius: 99px;
+  vertical-align: middle;
+}
+
+.schedule-no-slots-notice {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  padding: 0 12px;
+  background: #fcfaf7;
+  border: 1px dashed #e4ded5;
+  border-radius: 8px;
+  color: #8f968e;
+  font-size: 10px;
+}
+
+/* Custom Rounded Time & Date Pickers */
+.rounded-time-picker-root,
+.rounded-date-picker-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.rounded-picker-trigger-icon {
+  flex-shrink: 0;
+  margin-left: 8px;
+  color: #7f887e;
+  pointer-events: none;
+}
+
+.rounded-date-hidden-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  width: 1px;
+  height: 1px;
+  bottom: 0;
+  left: 0;
+}
+
+.rounded-time-menu {
+  position: fixed;
+  background: #ffffff;
+  border: 1px solid #e2ddd5;
+  border-radius: 12px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.05);
+  z-index: 10001;
+  width: 130px;
+  min-width: 120px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  animation: roundedMenuIn 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.rounded-time-header {
+  display: none;
+}
+
+.rounded-time-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 0;
+  height: 200px;
+}
+
+.rounded-time-col {
+  height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 1px;
+  scrollbar-width: none;
+}
+
+.rounded-time-col::-webkit-scrollbar {
+  display: none;
+}
+
+.rounded-time-col button {
+  width: 100%;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #333333;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 5px 0;
+  text-align: center;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease;
+  line-height: 1.2;
+}
+
+.rounded-time-col button:hover {
+  background: #fdf3ed;
+  color: #c34226;
+}
+
+.rounded-time-col button.selected {
+  background: #f7e9e1;
+  color: #a44028;
+  font-weight: 700;
+  border: 1px solid #ebd4c6;
+  border-radius: 7px;
+}
+
+.rounded-time-footer {
+  display: none;
+}
+
+/* Cookie consent & policy styling */
+@keyframes slideUpCookie {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 28px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.footer-cookie-links {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 8px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.footer-cookie-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  transition: color 0.15s ease;
+}
+
+.footer-cookie-link:hover {
+  color: var(--primary);
+}
 
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { ArrowRight, BadgeIndianRupee, Check, CircleCheck, ClipboardList, CookingPot, Flame, Plus, ReceiptText, Save, Trash2, Truck, UserRound, Search, Sparkles, X } from 'lucide-react'
 import { Link, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { api, formatINR, friendlyDate, type CustomMenuSectionOption, type MenuItem, type Order } from '../api'
+import { api, formatINR, friendlyDate, getCustomItemLowestPrice, type CustomMenuItem, type CustomMenuSectionOption, type MenuItem, type MenuItemVariation, type Order } from '../api'
 import { Badge, Button, EmptyState, Loading, MenuImageCarousel, Notice, PageTitle, QuantityPicker, StatusBadge } from '../components'
 
 function Queue() {
@@ -82,34 +82,67 @@ function getCategoryName(category: unknown): string {
 
 function MenuAvailability() {
   const [menu, setMenu] = useState<MenuItem[]>([])
-  const [paused, setPaused] = useState<Record<number, { employee_name: string; paused_until: string }>>({})
+  const [paused, setPaused] = useState<Record<string | number, { employee_name: string; paused_until: string }>>({})
   const [search, setSearch] = useState('')
   const [error, setError] = useState('')
-  const [busy, setBusy] = useState<number | null>(null)
+  const [busy, setBusy] = useState<string | number | null>(null)
   const refresh = useCallback(async () => {
-    const [items, pauses] = await Promise.all([api<MenuItem[]>('/staff/menu'), api<{ menu_item_id: number; employee_name: string; paused_until: string }[]>('/staff/menu-pauses')])
-    setMenu(items)
+    const [items, customItems, pauses] = await Promise.all([
+      api<MenuItem[]>('/staff/menu'),
+      api<CustomMenuItem[]>('/custom-menu/manage'),
+      api<{ menu_item_id: number | string; employee_name: string; paused_until: string }[]>('/staff/menu-pauses'),
+    ])
+    const mappedCustom: MenuItem[] = (customItems || []).map((ci) => {
+      const lowestPaise = getCustomItemLowestPrice(ci)
+      return {
+        id: ci.id,
+        name: ci.name,
+        description: ci.description,
+        category: ci.category || 'Specialty Rolls',
+        category_id: ci.category_id || null,
+        price_paise: lowestPaise,
+        base_price_paise: ci.base_price_paise,
+        discount_percent: 0,
+        discounted_price_paise: null,
+        image_url: ci.image_urls?.[0] || ci.image_url || null,
+        image_urls: ci.image_urls || [],
+        is_vegetarian: ci.is_vegetarian,
+        is_available: ci.is_available,
+        is_featured: ci.is_featured,
+        variations: [],
+        is_custom: true,
+        custom_menu_item_id: ci.id,
+        custom_sections: ci.sections,
+        discount_campaign_name: null,
+        popularity_count: 0,
+      }
+    })
+    setMenu([...items, ...mappedCustom])
     setPaused(Object.fromEntries(pauses.map((pause) => [pause.menu_item_id, pause])))
   }, [])
   useEffect(() => { void refresh().catch((err) => setError(err instanceof Error ? err.message : 'Could not load menu availability.')) }, [refresh])
   async function setItem(item: MenuItem, mode?: 'today') {
-    setBusy(item.id); setError('')
+    const itemKey = item.is_custom ? `custom-${item.id}` : item.id
+    setBusy(itemKey); setError('')
     try {
-      await api(mode ? `/staff/menu/${item.id}/pause` : `/staff/menu/${item.id}/pause`, { method: mode ? 'POST' : 'DELETE', ...(mode ? { body: JSON.stringify({ mode }) } : {}) })
+      const endpoint = item.is_custom ? `/staff/custom-menu/${item.id}/pause` : `/staff/menu/${item.id}/pause`
+      await api(endpoint, { method: mode ? 'POST' : 'DELETE', ...(mode ? { body: JSON.stringify({ mode }) } : {}) })
       await refresh()
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not update this menu item.') }
     finally { setBusy(null) }
   }
   const visibleMenu = menu.filter((item) => `${item.name} ${getCategoryName(item.category)} ${item.description}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()))
-  return <><PageTitle eyebrow="WHAT'S ON THE MENU" title="Menu availability" description="Turn an item off until the next working day, then turn it back on any time." />{error && <Notice>{error}</Notice>}<section className="admin-panel employee-menu-panel"><label className="menu-search employee-menu-search"><Search size={17} /><input type="search" aria-label="Search menu availability" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search menu items" /></label><div className="employee-menu-list">{visibleMenu.map((item) => { const pausedItem = paused[item.id]; return <article className="employee-menu-row" key={item.id}><div className="employee-menu-info"><strong>{item.name} {item.is_custom && <Badge tone="amber">Custom</Badge>}</strong><small>{getCategoryName(item.category)} · {item.is_custom ? `Base ${formatINR(item.price_paise)} · ` : ''}{pausedItem ? `Off until the next working day · paused by ${pausedItem.employee_name}` : 'Available to order'}</small></div><label className="availability-switch"><input type="checkbox" checked={!pausedItem} disabled={busy === item.id} onChange={() => void setItem(item, pausedItem ? undefined : 'today')} /><span aria-hidden="true" /><b>{pausedItem ? 'Off' : 'On'}</b></label></article>})}</div>{!visibleMenu.length && <EmptyState icon={<Search size={20} />} title="No menu item found" description="Try a different menu item name or category." />}</section></>
+  return <><PageTitle eyebrow="WHAT'S ON THE MENU" title="Menu availability" description="Turn an item off until the next working day, then turn it back on any time." />{error && <Notice>{error}</Notice>}<section className="admin-panel employee-menu-panel"><label className="menu-search employee-menu-search"><Search size={17} /><input type="search" aria-label="Search menu availability" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search menu items" /></label><div className="employee-menu-list">{visibleMenu.map((item) => { const itemKey = item.is_custom ? `custom-${item.id}` : item.id; const pausedItem = paused[itemKey]; return <article className="employee-menu-row" key={itemKey}><div className="employee-menu-info"><strong>{item.name} {item.is_custom && <Badge tone="amber">Custom</Badge>}</strong><small>{getCategoryName(item.category)} · {item.is_custom ? `Base ${formatINR(item.price_paise)} · ` : ''}{pausedItem ? `Off until the next working day · paused by ${pausedItem.employee_name}` : 'Available to order'}</small></div><label className="availability-switch"><input type="checkbox" checked={!pausedItem} disabled={busy === itemKey} onChange={() => void setItem(item, pausedItem ? undefined : 'today')} /><span aria-hidden="true" /><b>{pausedItem ? 'Off' : 'On'}</b></label></article>})}</div>{!visibleMenu.length && <EmptyState icon={<Search size={20} />} title="No menu item found" description="Try a different menu item name or category." />}</section></>
 }
 
 type BillingCartLine = {
   item: MenuItem
   quantity: number
   customizations?: CustomMenuSectionOption[]
+  variation_name?: string
   unit_price_paise?: number
   lineKey: string
+  custom_menu_item_id?: number
 }
 
 function Billing() {
@@ -118,6 +151,7 @@ function Billing() {
   const [cart, setCart] = useState<BillingCartLine[]>([])
   const [customizingItem, setCustomizingItem] = useState<MenuItem | null>(null)
   const [selectedOptions, setSelectedOptions] = useState<Record<string, CustomMenuSectionOption>>({})
+  const [selectedVariation, setSelectedVariation] = useState<MenuItemVariation | null>(null)
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [busy, setBusy] = useState(false)
@@ -128,17 +162,53 @@ function Billing() {
   const { state } = location as { state: { draft?: { customer_name?: string; phone?: string; payload?: { items?: { id: number; quantity: number }[] }; items?: { id: number; quantity: number }[] } } | null }
   const subtotal = cart.reduce((sum, line) => sum + (line.unit_price_paise ?? line.item.price_paise) * line.quantity, 0)
   const tax = 0
-  const total = subtotal + tax
+  const roundedTotalInr = Math.round((subtotal + tax) / 100)
+  const total = roundedTotalInr * 100
+  const roundOffPaise = total - (subtotal + tax)
+
   useEffect(() => {
-    api<MenuItem[]>('/menu').then(setMenu).catch((err) => setError(err instanceof Error ? err.message : 'Could not load menu.'))
+    Promise.all([
+      api<MenuItem[]>('/menu'),
+      api<CustomMenuItem[]>('/custom-menu'),
+    ]).then(([items, customItems]) => {
+      const mappedCustom: MenuItem[] = (customItems || []).map((ci) => {
+        const lowestPaise = getCustomItemLowestPrice(ci)
+        const discPercent = (ci as any).discount_percent || 0
+        const discPricePaise = (ci as any).discounted_base_price_paise || null
+        return {
+          id: ci.id,
+          name: ci.name,
+          description: ci.description,
+          category: ci.category || 'Specialty Rolls',
+          category_id: ci.category_id || null,
+          price_paise: lowestPaise,
+          base_price_paise: ci.base_price_paise,
+          discount_percent: discPercent,
+          discounted_price_paise: discPricePaise,
+          image_url: ci.image_urls?.[0] || ci.image_url || null,
+          image_urls: ci.image_urls || [],
+          is_vegetarian: ci.is_vegetarian,
+          is_available: ci.is_available,
+          is_featured: ci.is_featured,
+          variations: [],
+          is_custom: true,
+          custom_menu_item_id: ci.id,
+          custom_sections: ci.sections,
+          discount_campaign_name: (ci as any).discount_campaign_name || null,
+          popularity_count: (ci as any).popularity_count || 0,
+        }
+      })
+      setMenu([...items, ...mappedCustom])
+    }).catch((err) => setError(err instanceof Error ? err.message : 'Could not load menu.'))
   }, [])
+
   useEffect(() => {
     if (!state?.draft || !menu.length) return
     const draft = state.draft
     const lines = draft.payload?.items || draft.items || []
     setCart(lines.map((line) => {
       const item = menu.find((m) => m.id === line.id)
-      return item ? { item, quantity: line.quantity, lineKey: String(item.id), unit_price_paise: item.price_paise } : null
+      return item ? { item, quantity: line.quantity, lineKey: String(item.id), unit_price_paise: item.discounted_price_paise ?? item.price_paise } : null
     }).filter(Boolean) as BillingCartLine[])
     setName(draft.customer_name || '')
     setPhone(draft.phone || '')
@@ -146,47 +216,104 @@ function Billing() {
   }, [location.pathname, menu, navigate, state])
 
   function handleItemClick(item: MenuItem) {
-    if (item.is_custom && item.custom_sections && item.custom_sections.length > 0) {
+    if (item.is_custom) {
       setCustomizingItem(item)
+      setSelectedVariation(null)
       const initial: Record<string, CustomMenuSectionOption> = {}
-      for (const sec of item.custom_sections) {
+      for (const sec of item.custom_sections || []) {
         if (sec.required !== false && sec.options && sec.options.length > 0) {
           initial[sec.name] = sec.options[0]
         }
       }
       setSelectedOptions(initial)
+    } else if (item.variations && item.variations.length > 0) {
+      setCustomizingItem(item)
+      setSelectedOptions({})
+      setSelectedVariation(item.variations[0])
     } else {
-      setQuantity(item, (cart.find((l) => l.lineKey === String(item.id))?.quantity || 0) + 1)
+      const unitP = item.discounted_price_paise ?? (item.discount_percent ? Math.round(item.price_paise * (100 - item.discount_percent) / 100) : item.price_paise)
+      const existing = cart.find((l) => l.lineKey === String(item.id))
+      if (existing) {
+        setLineQuantity(existing.lineKey, existing.quantity + 1)
+      } else {
+        setCart((prev) => [...prev, { item, quantity: 1, lineKey: String(item.id), unit_price_paise: unitP }])
+      }
     }
   }
 
   const modalCustomPrice = useMemo(() => {
     if (!customizingItem) return 0
-    const base = customizingItem.price_paise
-    const extra = Object.values(selectedOptions).reduce((sum, opt) => sum + (opt?.extra_paise || 0), 0)
-    return base + extra
-  }, [customizingItem, selectedOptions])
-
-  function addCustomItemToCart() {
-    if (!customizingItem) return
-    const missing = customizingItem.custom_sections?.filter(
-      (s) => s.required !== false && !selectedOptions[s.name],
-    )
-    if (missing && missing.length > 0) {
-      setError(`Please select an option for ${missing.map((s) => s.name).join(', ')}.`)
-      return
+    const disc = customizingItem.discount_percent || 0
+    if (customizingItem.is_custom) {
+      const base = customizingItem.base_price_paise ?? customizingItem.price_paise
+      const extra = Object.values(selectedOptions).reduce((sum, opt) => sum + (opt?.extra_paise || 0), 0)
+      const rawTotal = base + extra
+      return disc ? (rawTotal * (100 - disc)) / 100 : rawTotal
     }
-    const optionsList = Object.values(selectedOptions).filter(Boolean)
-    const key = `${customizingItem.id}-${optionsList.map(o => `${o.name}:${o.extra_paise}`).sort().join('|')}`
-    const unitPrice = modalCustomPrice
-    setCart((prev) => {
-      const found = prev.find((l) => l.lineKey === key)
-      if (found) {
-        return prev.map((l) => l.lineKey === key ? { ...l, quantity: l.quantity + 1 } : l)
+    if (selectedVariation) {
+      const rawPrice = selectedVariation.price_paise
+      return disc ? (rawPrice * (100 - disc)) / 100 : rawPrice
+    }
+    return customizingItem.discounted_price_paise ?? (disc ? (customizingItem.price_paise * (100 - disc)) / 100 : customizingItem.price_paise)
+  }, [customizingItem, selectedOptions, selectedVariation])
+
+  function addModalItemToCart() {
+    if (!customizingItem) return
+    if (customizingItem.is_custom) {
+      const missing = customizingItem.custom_sections?.filter(
+        (s) => s.required !== false && !selectedOptions[s.name],
+      )
+      if (missing && missing.length > 0) {
+        setError(`Please select an option for ${missing.map((s) => s.name).join(', ')}.`)
+        return
       }
-      return [...prev, { item: customizingItem, quantity: 1, customizations: optionsList, unit_price_paise: unitPrice, lineKey: key }]
-    })
-    setCustomizingItem(null)
+      const optionsList = Object.values(selectedOptions).filter(Boolean)
+      const key = `custom-${customizingItem.id}-${optionsList.map(o => `${o.name}:${o.extra_paise}`).sort().join('|')}`
+      const unitPrice = modalCustomPrice
+      setCart((prev) => {
+        const found = prev.find((l) => l.lineKey === key)
+        if (found) {
+          return prev.map((l) => l.lineKey === key ? { ...l, quantity: l.quantity + 1 } : l)
+        }
+        return [
+          ...prev,
+          {
+            item: customizingItem,
+            quantity: 1,
+            customizations: optionsList,
+            unit_price_paise: unitPrice,
+            lineKey: key,
+            custom_menu_item_id: customizingItem.custom_menu_item_id || customizingItem.id,
+          },
+        ]
+      })
+      setCustomizingItem(null)
+    } else if (customizingItem.variations && customizingItem.variations.length > 0) {
+      if (!selectedVariation) {
+        setError('Please select a variation.')
+        return
+      }
+      const lineKey = `${customizingItem.id}-${selectedVariation.name}`
+      const unitPrice = modalCustomPrice
+      setCart((prev) => {
+        const found = prev.find((l) => l.lineKey === lineKey)
+        if (found) {
+          return prev.map((l) => l.lineKey === lineKey ? { ...l, quantity: l.quantity + 1 } : l)
+        }
+        return [
+          ...prev,
+          {
+            item: customizingItem,
+            quantity: 1,
+            variation_name: selectedVariation.name,
+            customizations: [{ name: selectedVariation.name, extra_paise: 0 }],
+            unit_price_paise: unitPrice,
+            lineKey,
+          },
+        ]
+      })
+      setCustomizingItem(null)
+    }
   }
 
   function setLineQuantity(lineKey: string, quantity: number) {
@@ -196,14 +323,6 @@ function Billing() {
     })
   }
 
-  function setQuantity(item: MenuItem, quantity: number) {
-    const lineKey = String(item.id)
-    setCart((previous) => {
-      const found = previous.find((line) => line.lineKey === lineKey)
-      if (quantity <= 0) return previous.filter((line) => line.lineKey !== lineKey)
-      return found ? previous.map((line) => line.lineKey === lineKey ? { ...line, quantity } : line) : [...previous, { item, quantity, lineKey, unit_price_paise: item.price_paise }]
-    })
-  }
 
   const itemCountFor = (itemId: number) => cart.filter((line) => line.item.id === itemId).reduce((sum, line) => sum + line.quantity, 0)
 
@@ -229,8 +348,10 @@ function Billing() {
         method: 'POST',
         body: JSON.stringify({
           items: cart.map((line) => ({
-            menu_item_id: line.item.id,
+            menu_item_id: line.custom_menu_item_id ? null : line.item.id,
+            custom_menu_item_id: line.custom_menu_item_id || (line.item.is_custom ? line.item.id : null),
             quantity: line.quantity,
+            variation_name: line.variation_name || null,
             customizations: line.customizations || [],
           })),
           payment_method: 'CASH',
@@ -243,20 +364,56 @@ function Billing() {
     finally { setBusy(false) }
   }
 
-  if (invoice) return <div className="invoice-wrap"><article className="invoice-card"><div className="invoice-success"><span><Check size={20} /></span><div><div className="eyebrow">BILL PAID · WALK-IN</div><h1>All squared away.</h1></div></div><div className="invoice-brand"><span><Flame size={15} /></span> KebabZilla <small> · PAYMENT RECEIPT</small></div><div className="invoice-id"><span>INVOICE</span><strong>{invoice.order_id}</strong><small>{friendlyDate(invoice.created_at)}</small></div><div className="invoice-lines">{invoice.items.map((line) => <div key={`${line.menu_item_id}-${line.name}`}><span>{line.quantity} × {line.name}</span><strong>{formatINR(line.line_total_paise)}</strong></div>)}<div className="invoice-total"><span>Total paid</span><strong>{formatINR(invoice.total_paise)}</strong></div></div><div className="invoice-customer"><span><UserRound size={14} /> {invoice.customer_name}</span><Badge tone="success">CASH</Badge></div><div className="invoice-actions"><Button onClick={() => window.print()}><ReceiptText size={16} /> Print receipt</Button><Button variant="secondary" onClick={() => { setInvoice(null); setCart([]); setName(''); setPhone('') }}>New bill</Button></div></article></div>
+  if (invoice) return <div className="invoice-wrap"><article className="invoice-card"><div className="invoice-success"><span><Check size={20} /></span><div><div className="eyebrow">BILL PAID · WALK-IN</div><h1>All squared away.</h1></div></div><div className="invoice-brand"><span><Flame size={15} /></span> KebabZilla <small> · PAYMENT RECEIPT</small></div><div className="invoice-id"><span>INVOICE</span><strong>{invoice.order_id}</strong><small>{friendlyDate(invoice.created_at)}</small></div><div className="invoice-lines">{invoice.items.map((line, idx) => <div key={`${line.menu_item_id ?? idx}-${line.name}`}><span>{line.quantity} × {line.name}</span><strong>{formatINR(line.line_total_paise)}</strong></div>)}<div className="invoice-total"><span>Total paid</span><strong>{formatINR(invoice.total_paise)}</strong></div></div><div className="invoice-customer"><span><UserRound size={14} /> {invoice.customer_name}</span><Badge tone="success">CASH</Badge></div><div className="invoice-actions"><Button onClick={() => window.print()}><ReceiptText size={16} /> Print receipt</Button><Button variant="secondary" onClick={() => { setInvoice(null); setCart([]); setName(''); setPhone('') }}>New bill</Button></div></article></div>
 
   return <><PageTitle eyebrow="AT THE COUNTER" title="Walk-in billing" description="Close out a dine-in bill when your guest is ready to leave." />
     {error && <Notice tone={error.startsWith('Draft saved') ? 'success' : 'error'} onDismiss={() => setError('')} >{error}</Notice>}
-    <form onSubmit={submit} className="billing-layout"><section className="billing-menu"><div className="section-header"><div><h2>Menu</h2><span>Tap an item to add it</span></div><span className="menu-count">{menu.length} items</span></div><label className="menu-search billing-menu-search"><Search size={17} /><input type="search" aria-label="Search walk-in menu" value={menuSearch} onChange={(event) => setMenuSearch(event.target.value)} placeholder="Search menu items" /></label><div className="billing-item-grid">{menu.filter((item) => `${item.name} ${getCategoryName(item.category)} ${item.description}`.toLocaleLowerCase().includes(menuSearch.trim().toLocaleLowerCase())).map((item) => { const count = itemCountFor(item.id); return <div role="button" tabIndex={0} aria-pressed={count > 0} className={`billing-item ${count ? 'in-cart' : ''}`} key={item.id} onClick={() => handleItemClick(item)} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); handleItemClick(item) } }}>{item.image_urls?.length || item.image_url ? <span className="billing-item-icon billing-item-photo"><MenuImageCarousel images={item.image_urls?.length ? item.image_urls : item.image_url ? [item.image_url] : []} alt={item.name} className="menu-gallery-billing" /></span> : <span className="billing-item-icon">{item.is_vegetarian ? '🥬' : '🍢'}</span>}<span><strong>{item.name} {item.is_custom && <Badge tone="amber">Custom</Badge>}</strong><small>{getCategoryName(item.category)} · {item.is_custom ? `From ${formatINR(item.price_paise)}` : formatINR(item.price_paise)}</small></span>{count > 0 ? <Badge tone="soft">×{count}</Badge> : item.is_custom ? <Sparkles size={15} /> : <Plus size={16} />}</div>})}</div></section>
-      <aside className="billing-ticket"><div className="ticket-heading"><span><ReceiptText size={17} /></span><div><h2>New bill</h2><small>Cash · Dine-in</small></div></div><label className="field-label">Customer name<input required maxLength={120} value={name} onChange={(event) => setName(event.target.value)} /></label><label className="field-label">Phone <span className="field-optional">optional</span><input type="tel" maxLength={32} value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Customer phone" /></label><div className="ticket-items">{cart.map((line) => { const unitPrice = line.unit_price_paise ?? line.item.price_paise; const customSummary = (line.customizations || []).map((o) => o.name).join(', '); return <div className="ticket-line" key={line.lineKey}><span>{line.item.name}{customSummary && <small className="cart-custom-desc">{customSummary}</small>}<small>{formatINR(unitPrice)} each</small></span><QuantityPicker small quantity={line.quantity} onChange={(next) => setLineQuantity(line.lineKey, next)} /><b>{formatINR(unitPrice * line.quantity)}</b></div> })}</div><div className="ticket-total"><span>Bill total <small>· tax {formatINR(tax)} included</small></span><strong>{formatINR(total)}</strong></div><Button type="submit" disabled={busy || !cart.length || !name.trim()} className="full-width">{busy ? 'Working…' : <>Complete bill · {formatINR(total)} <BadgeIndianRupee size={16} /></>}</Button><Button type="button" variant="secondary" className="full-width" disabled={!cart.length} onClick={() => void saveDraft()}><Save size={15} /> Save as draft</Button></aside>
+    <form onSubmit={submit} className="billing-layout"><section className="billing-menu"><div className="section-header"><div><h2>Menu</h2><span>Tap an item to add it</span></div><span className="menu-count">{menu.length} items</span></div><label className="menu-search billing-menu-search"><Search size={17} /><input type="search" aria-label="Search walk-in menu" value={menuSearch} onChange={(event) => setMenuSearch(event.target.value)} placeholder="Search menu items" /></label><div className="billing-item-grid">{menu.filter((item) => `${item.name} ${getCategoryName(item.category)} ${item.description}`.toLocaleLowerCase().includes(menuSearch.trim().toLocaleLowerCase())).map((item) => { const count = itemCountFor(item.id); const hasVariations = Boolean(item.variations && item.variations.length > 0); return <div role="button" tabIndex={0} aria-pressed={count > 0} className={`billing-item ${count ? 'in-cart' : ''}`} key={`${item.is_custom ? 'c-' : 'm-'}${item.id}`} onClick={() => handleItemClick(item)} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); handleItemClick(item) } }}>{item.image_urls?.length || item.image_url ? <span className="billing-item-icon billing-item-photo"><MenuImageCarousel images={item.image_urls?.length ? item.image_urls : item.image_url ? [item.image_url] : []} alt={item.name} className="menu-gallery-billing" /></span> : <span className="billing-item-icon">{item.is_vegetarian ? '🥬' : '🍢'}</span>}<span><strong>{item.name} {item.is_custom ? <Badge tone="amber">Custom</Badge> : hasVariations ? <Badge tone="soft">Options</Badge> : null}</strong><small>{getCategoryName(item.category)} · {item.is_custom || hasVariations ? `From ${formatINR(item.price_paise)}` : formatINR(item.price_paise)}</small></span>{count > 0 ? <Badge tone="soft">×{count}</Badge> : item.is_custom || hasVariations ? <Sparkles size={15} /> : <Plus size={16} />}</div>})}</div></section>
+      <aside className="billing-ticket">
+        <div className="ticket-heading">
+          <span><ReceiptText size={17} /></span>
+          <div><h2>New bill</h2><small>Cash · Dine-in</small></div>
+        </div>
+        <label className="field-label">Customer name<input required maxLength={120} value={name} onChange={(event) => setName(event.target.value)} /></label>
+        <label className="field-label">Phone <span className="field-optional">optional</span><input type="tel" maxLength={32} value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Customer phone" /></label>
+        <div className="ticket-items">
+          {cart.map((line) => {
+            const unitPrice = line.unit_price_paise ?? line.item.price_paise;
+            const customSummary = line.variation_name ? line.variation_name : (line.customizations || []).map((o) => o.name).join(', ');
+            return (
+              <div className="ticket-line" key={line.lineKey}>
+                <span>
+                  {line.item.name}
+                  {customSummary && <small className="cart-custom-desc">{customSummary}</small>}
+                  <small>{formatINR(unitPrice)} each</small>
+                </span>
+                <QuantityPicker small quantity={line.quantity} onChange={(next) => setLineQuantity(line.lineKey, next)} />
+                <b>{formatINR(unitPrice * line.quantity)}</b>
+              </div>
+            );
+          })}
+        </div>
+        {Math.abs(roundOffPaise) >= 0.01 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: '13px', opacity: 0.85 }}>
+            <span>Round off</span>
+            <span>{roundOffPaise >= 0 ? '+' : ''}{formatINR(roundOffPaise)}</span>
+          </div>
+        )}
+        <div className="ticket-total">
+          <span>Bill total <small>· tax {formatINR(tax)} included</small></span>
+          <strong>{formatINR(total)}</strong>
+        </div>
+        <Button type="submit" disabled={busy || !cart.length || !name.trim()} className="full-width">{busy ? 'Working…' : <>Complete bill · {formatINR(total)} <BadgeIndianRupee size={16} /></>}</Button>
+        <Button type="button" variant="secondary" className="full-width" disabled={!cart.length} onClick={() => void saveDraft()}><Save size={15} /> Save as draft</Button>
+      </aside>
     </form>
     {customizingItem && (
       <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setCustomizingItem(null) }}>
         <section className="modal-card customize-food-modal" role="dialog" aria-modal="true">
           <div className="modal-heading">
             <div>
-              <span className="eyebrow">{customizingItem.category || "BUILD YOUR OWN"}</span>
-              <h2>Customize {customizingItem.name}</h2>
+              <span className="eyebrow">{customizingItem.category || (customizingItem.is_custom ? "BUILD YOUR OWN" : "CHOOSE OPTION")}</span>
+              <h2>{customizingItem.is_custom ? `Customize ${customizingItem.name}` : `Select ${customizingItem.name}`}</h2>
             </div>
             <button className="icon-button" type="button" onClick={() => setCustomizingItem(null)} aria-label="Close">
               <X size={18} />
@@ -264,57 +421,96 @@ function Billing() {
           </div>
 
           <div className="customize-food-body">
-            <div className="customize-sections-list">
-              {customizingItem.custom_sections?.map((section) => (
-                <div className="customize-section-group" key={section.name}>
+            {customizingItem.description && (
+              <p className="customize-food-desc">{customizingItem.description}</p>
+            )}
+
+            {customizingItem.variations && customizingItem.variations.length > 0 && (
+              <div className="customize-sections-list">
+                <div className="customize-section-group">
                   <div className="customize-section-title">
-                    <strong>{section.name}</strong>
-                    {section.required !== false ? (
-                      <span className="customize-tag-required">Required</span>
-                    ) : (
-                      <span className="customize-tag-optional">Optional</span>
-                    )}
+                    <strong>Select Portion / Size</strong>
+                    <span className="customize-tag-required">Required</span>
                   </div>
                   <div className="customize-options-grid">
-                    {section.options.map((opt) => {
-                      const isSelected = selectedOptions[section.name]?.name === opt.name
+                    {customizingItem.variations.map((v) => {
+                      const isSelected = selectedVariation?.name === v.name
+                      const disc = customizingItem.discount_percent || 0
+                      const discountedVarPrice = disc ? (v.price_paise * (100 - disc)) / 100 : v.price_paise
                       return (
                         <button
                           type="button"
-                          key={opt.name}
+                          key={v.name}
                           className={`customize-option-pill ${isSelected ? 'selected' : ''}`}
-                          onClick={() => {
-                            if (isSelected && section.required === false) {
-                              setSelectedOptions((prev) => {
-                                const next = { ...prev }
-                                delete next[section.name]
-                                return next
-                              })
-                            } else {
-                              setSelectedOptions((prev) => ({ ...prev, [section.name]: opt }))
-                            }
-                          }}
+                          onClick={() => setSelectedVariation(v)}
                         >
                           <span className="customize-radio-dot">{isSelected ? '●' : '○'}</span>
-                          <span className="customize-opt-name">{opt.name}</span>
+                          <span className="customize-opt-name">{v.name}</span>
                           <span className="customize-opt-price">
-                            {opt.extra_paise > 0 ? `+${formatINR(opt.extra_paise)}` : 'Free'}
+                            {formatINR(discountedVarPrice)}
+                            {disc > 0 && <del style={{ marginLeft: 5, fontSize: '0.85em', opacity: 0.65 }}>{formatINR(v.price_paise)}</del>}
                           </span>
                         </button>
                       )
                     })}
                   </div>
                 </div>
-              ))}
-            </div>
+              </div>
+            )}
+
+            {customizingItem.is_custom && customizingItem.custom_sections && customizingItem.custom_sections.length > 0 && (
+              <div className="customize-sections-list">
+                {customizingItem.custom_sections.map((section) => (
+                  <div className="customize-section-group" key={section.name}>
+                    <div className="customize-section-title">
+                      <strong>{section.name}</strong>
+                      {section.required !== false ? (
+                        <span className="customize-tag-required">Required</span>
+                      ) : (
+                        <span className="customize-tag-optional">Optional</span>
+                      )}
+                    </div>
+                    <div className="customize-options-grid">
+                      {section.options.map((opt) => {
+                        const isSelected = selectedOptions[section.name]?.name === opt.name
+                        return (
+                          <button
+                            type="button"
+                            key={opt.name}
+                            className={`customize-option-pill ${isSelected ? 'selected' : ''}`}
+                            onClick={() => {
+                              if (isSelected && section.required === false) {
+                                setSelectedOptions((prev) => {
+                                  const next = { ...prev }
+                                  delete next[section.name]
+                                  return next
+                                })
+                              } else {
+                                setSelectedOptions((prev) => ({ ...prev, [section.name]: opt }))
+                              }
+                            }}
+                          >
+                            <span className="customize-radio-dot">{isSelected ? '●' : '○'}</span>
+                            <span className="customize-opt-name">{opt.name}</span>
+                            <span className="customize-opt-price">
+                              {opt.extra_paise > 0 ? `+${formatINR(opt.extra_paise)}` : 'Free'}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="customize-food-footer">
             <div className="customize-price-breakdown">
-              <span>Dish total</span>
+              <span>Item total</span>
               <strong>{formatINR(modalCustomPrice)}</strong>
             </div>
-            <Button onClick={addCustomItemToCart}>
+            <Button onClick={addModalItemToCart}>
               Add to bill · {formatINR(modalCustomPrice)} <ArrowRight size={15} />
             </Button>
           </div>

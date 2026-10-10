@@ -5,15 +5,23 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 import httpx
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 
 from app.dependencies import CurrentAccount, DbSession, require_roles
 from app.config import settings
 from app.integrations import staff_account_notifier
-from app.models import Account, AdminEvent, MenuDiscount, MenuDiscountItem, MenuItem, OfferLog, Order, OrderItem, OrderStatus, Payment, PaymentMethod, PaymentStatus, RestaurantSettings, Role
+from app.models import Account, AdminEvent, CustomMenuItem, DeliveryDuty, MenuDiscount, MenuDiscountItem, MenuItem, OfferLog, Order, OrderItem, OrderStatus, Payment, PaymentMethod, PaymentStatus, RestaurantSettings, Role
 from app.schemas import AccountsPageOut, AccountOut, AdminAccountCreate, AdminOrdersPageOut, MenuDiscountInput, OfferInput, OrderStatusUpdate, ProvisionedAccountOut, RestaurantSettingsInput
 from app.security import hash_password
-from app.services import issue_razorpay_refund, order_payload, order_total_paise, restaurant_settings, transition_order
+from app.services import (
+    is_restaurant_open,
+    is_scheduled_open,
+    issue_razorpay_refund,
+    order_payload,
+    order_total_paise,
+    restaurant_settings,
+    transition_order,
+)
 
 router = APIRouter(prefix="/admin", tags=["administration"], dependencies=[Depends(require_roles(Role.ADMIN))])
 
@@ -194,9 +202,38 @@ def get_settings(db: DbSession):
 @router.put("/settings")
 def update_settings(data: RestaurantSettingsInput, db: DbSession):
     settings = restaurant_settings(db)
-    for field, value in data.model_dump().items():
-        setattr(settings, field, value)
-    db.add(AdminEvent(event_type="settings_changed", message="Restaurant settings updated", details={"weekly_schedule": data.weekly_schedule, "accepting_orders": data.accepting_orders}))
+    payload_data = data.model_dump()
+    if payload_data.get("phones"):
+        payload_data["phone"] = ", ".join(p.strip() for p in payload_data["phones"] if p.strip())
+    payload_data.pop("phones", None)
+
+    if "weekly_schedule" in payload_data and payload_data["weekly_schedule"]:
+        settings.weekly_schedule = payload_data["weekly_schedule"]
+
+    is_sched_open, _ = is_scheduled_open(settings)
+
+    if data.admin_override_open is not None:
+        admin_override = bool(data.admin_override_open and data.accepting_orders)
+    elif data.accepting_orders:
+        admin_override = not is_sched_open
+    else:
+        admin_override = False
+
+    payload_data["admin_override_open"] = admin_override
+
+    for field, value in payload_data.items():
+        if hasattr(settings, field):
+            setattr(settings, field, value)
+
+    is_now_open, _ = is_restaurant_open(settings)
+    if not is_now_open or not settings.accepting_orders:
+        db.execute(
+            update(DeliveryDuty)
+            .where(DeliveryDuty.is_accepting_deliveries == True)
+            .values(is_accepting_deliveries=False)
+        )
+
+    db.add(AdminEvent(event_type="settings_changed", message="Restaurant settings updated", details={"weekly_schedule": data.weekly_schedule, "accepting_orders": data.accepting_orders, "admin_override_open": admin_override}))
     db.commit()
     db.refresh(settings)
     return settings
@@ -260,19 +297,38 @@ def list_discounts(db: DbSession):
     for row in rows:
         starts_at = row.starts_at if row.starts_at.tzinfo else row.starts_at.replace(tzinfo=timezone.utc)
         ends_at = row.ends_at if row.ends_at.tzinfo else row.ends_at.replace(tzinfo=timezone.utc)
-        item_ids = [link.menu_item_id for link in row.items]
-        items = db.scalars(select(MenuItem).where(MenuItem.id.in_(item_ids))).all()
-        campaigns.append({"id": row.id, "campaign_name": row.campaign_name, "menu_item_ids": item_ids, "menu_item_names": [item.name for item in items], "discount_percent": row.discount_percent, "starts_at": starts_at.isoformat(), "ends_at": ends_at.isoformat(), "created_at": row.created_at})
+        item_ids = [link.menu_item_id for link in row.items if link.menu_item_id is not None]
+        custom_ids = [link.custom_menu_item_id for link in row.items if link.custom_menu_item_id is not None]
+        items = db.scalars(select(MenuItem).where(MenuItem.id.in_(item_ids))).all() if item_ids else []
+        custom_items = db.scalars(select(CustomMenuItem).where(CustomMenuItem.id.in_(custom_ids))).all() if custom_ids else []
+        item_names = [item.name for item in items] + [f"[Custom] {ci.name}" for ci in custom_items]
+        campaigns.append({
+            "id": row.id,
+            "campaign_name": row.campaign_name,
+            "menu_item_ids": item_ids,
+            "custom_menu_item_ids": custom_ids,
+            "menu_item_names": item_names,
+            "discount_percent": row.discount_percent,
+            "starts_at": starts_at.isoformat(),
+            "ends_at": ends_at.isoformat(),
+            "created_at": row.created_at,
+        })
     return campaigns
 
 
 @router.post("/discounts", status_code=status.HTTP_201_CREATED)
 def create_discount(data: MenuDiscountInput, actor: CurrentAccount, db: DbSession):
     item_ids = list(dict.fromkeys(data.menu_item_ids))
-    items = db.scalars(select(MenuItem).where(MenuItem.id.in_(item_ids))).all()
+    custom_ids = list(dict.fromkeys(data.custom_menu_item_ids))
+    items = db.scalars(select(MenuItem).where(MenuItem.id.in_(item_ids))).all() if item_ids else []
+    custom_items = db.scalars(select(CustomMenuItem).where(CustomMenuItem.id.in_(custom_ids))).all() if custom_ids else []
     items_by_id = {item.id: item for item in items}
+    custom_by_id = {ci.id: ci for ci in custom_items}
     if set(item_ids) != set(items_by_id):
         raise HTTPException(status_code=404, detail="One or more menu items were not found")
+    if set(custom_ids) != set(custom_by_id):
+        raise HTTPException(status_code=404, detail="One or more custom menu items were not found")
+
     starts_at = data.starts_at.astimezone(timezone.utc)
     ends_at = data.ends_at.astimezone(timezone.utc)
     existing = db.scalars(select(MenuDiscount)).all()
@@ -280,18 +336,31 @@ def create_discount(data: MenuDiscountInput, actor: CurrentAccount, db: DbSessio
         old_start = row.starts_at if row.starts_at.tzinfo else row.starts_at.replace(tzinfo=timezone.utc)
         old_end = row.ends_at if row.ends_at.tzinfo else row.ends_at.replace(tzinfo=timezone.utc)
         if starts_at < old_end and ends_at > old_start:
-            conflicting = next((link.menu_item_id for link in row.items if link.menu_item_id in item_ids), None)
-            if conflicting is None:
-                continue
-            raise HTTPException(status_code=409, detail=f"{items_by_id[conflicting].name} already has a discount during that time")
+            conflicting_std = next((link.menu_item_id for link in row.items if link.menu_item_id and link.menu_item_id in item_ids), None)
+            if conflicting_std is not None:
+                raise HTTPException(status_code=409, detail=f"{items_by_id[conflicting_std].name} already has a discount during that time")
+            conflicting_custom = next((link.custom_menu_item_id for link in row.items if link.custom_menu_item_id and link.custom_menu_item_id in custom_ids), None)
+            if conflicting_custom is not None:
+                raise HTTPException(status_code=409, detail=f"{custom_by_id[conflicting_custom].name} already has a discount during that time")
+
     discount = MenuDiscount(campaign_name=data.campaign_name, discount_percent=data.discount_percent, starts_at=starts_at, ends_at=ends_at, created_by_id=actor.id)
-    discount.items = [MenuDiscountItem(menu_item_id=item_id) for item_id in item_ids]
+    discount.items = [MenuDiscountItem(menu_item_id=mid) for mid in item_ids] + [MenuDiscountItem(custom_menu_item_id=cid) for cid in custom_ids]
     db.add(discount)
-    item_names = [items_by_id[item_id].name for item_id in item_ids]
-    db.add(AdminEvent(event_type="menu_discount_created", message=f"{data.discount_percent}% discount scheduled for {', '.join(item_names)}", actor_id=actor.id, details={"menu_item_ids": item_ids, "discount_percent": data.discount_percent, "starts_at": starts_at.isoformat(), "ends_at": ends_at.isoformat()}))
+    item_names = [items_by_id[mid].name for mid in item_ids] + [f"[Custom] {custom_by_id[cid].name}" for cid in custom_ids]
+    db.add(AdminEvent(event_type="menu_discount_created", message=f"{data.discount_percent}% discount scheduled for {', '.join(item_names)}", actor_id=actor.id, details={"menu_item_ids": item_ids, "custom_menu_item_ids": custom_ids, "discount_percent": data.discount_percent, "starts_at": starts_at.isoformat(), "ends_at": ends_at.isoformat()}))
     db.commit()
     db.flush()
-    return {"id": discount.id, "campaign_name": data.campaign_name, "menu_item_ids": item_ids, "menu_item_names": item_names, "discount_percent": data.discount_percent, "starts_at": starts_at.isoformat(), "ends_at": ends_at.isoformat(), "created_at": discount.created_at}
+    return {
+        "id": discount.id,
+        "campaign_name": data.campaign_name,
+        "menu_item_ids": item_ids,
+        "custom_menu_item_ids": custom_ids,
+        "menu_item_names": item_names,
+        "discount_percent": data.discount_percent,
+        "starts_at": starts_at.isoformat(),
+        "ends_at": ends_at.isoformat(),
+        "created_at": discount.created_at,
+    }
 
 
 @router.put("/discounts/{discount_id}")
@@ -302,34 +371,50 @@ def update_discount(discount_id: int, data: MenuDiscountInput, actor: CurrentAcc
     if (current.ends_at if current.ends_at.tzinfo else current.ends_at.replace(tzinfo=timezone.utc)) <= datetime.now(timezone.utc):
         raise HTTPException(status_code=409, detail="Ended discount campaigns cannot be edited")
     item_ids = list(dict.fromkeys(data.menu_item_ids))
-    items = db.scalars(select(MenuItem).where(MenuItem.id.in_(item_ids))).all()
+    custom_ids = list(dict.fromkeys(data.custom_menu_item_ids))
+    items = db.scalars(select(MenuItem).where(MenuItem.id.in_(item_ids))).all() if item_ids else []
+    custom_items = db.scalars(select(CustomMenuItem).where(CustomMenuItem.id.in_(custom_ids))).all() if custom_ids else []
     items_by_id = {item.id: item for item in items}
+    custom_by_id = {ci.id: ci for ci in custom_items}
     if set(item_ids) != set(items_by_id):
         raise HTTPException(status_code=404, detail="One or more menu items were not found")
+    if set(custom_ids) != set(custom_by_id):
+        raise HTTPException(status_code=404, detail="One or more custom menu items were not found")
+
     starts_at = data.starts_at.astimezone(timezone.utc)
     ends_at = data.ends_at.astimezone(timezone.utc)
-    existing = db.scalars(
-        select(MenuDiscount).where(
-            MenuDiscount.id != discount_id,
-        )
-    ).all()
+    existing = db.scalars(select(MenuDiscount).where(MenuDiscount.id != discount_id)).all()
     for row in existing:
         old_start = row.starts_at if row.starts_at.tzinfo else row.starts_at.replace(tzinfo=timezone.utc)
         old_end = row.ends_at if row.ends_at.tzinfo else row.ends_at.replace(tzinfo=timezone.utc)
-        row_item_ids = {link.menu_item_id for link in row.items}
-        if row_item_ids.intersection(item_ids) and starts_at < old_end and ends_at > old_start:
-            conflicting = next(iter(row_item_ids.intersection(item_ids)))
-            raise HTTPException(status_code=409, detail=f"{items_by_id[conflicting].name} already has a discount during that time")
-    item_names = [items_by_id[item_id].name for item_id in item_ids]
+        if starts_at < old_end and ends_at > old_start:
+            conflicting_std = next((link.menu_item_id for link in row.items if link.menu_item_id and link.menu_item_id in item_ids), None)
+            if conflicting_std is not None:
+                raise HTTPException(status_code=409, detail=f"{items_by_id[conflicting_std].name} already has a discount during that time")
+            conflicting_custom = next((link.custom_menu_item_id for link in row.items if link.custom_menu_item_id and link.custom_menu_item_id in custom_ids), None)
+            if conflicting_custom is not None:
+                raise HTTPException(status_code=409, detail=f"{custom_by_id[conflicting_custom].name} already has a discount during that time")
+
+    item_names = [items_by_id[mid].name for mid in item_ids] + [f"[Custom] {custom_by_id[cid].name}" for cid in custom_ids]
     current.campaign_name = data.campaign_name
     current.items.clear()
-    current.items.extend(MenuDiscountItem(menu_item_id=item_id) for item_id in item_ids)
+    current.items.extend([MenuDiscountItem(menu_item_id=mid) for mid in item_ids] + [MenuDiscountItem(custom_menu_item_id=cid) for cid in custom_ids])
     current.discount_percent = data.discount_percent
     current.starts_at = starts_at
     current.ends_at = ends_at
-    db.add(AdminEvent(event_type="menu_discount_updated", message=f"{data.discount_percent}% discount campaign updated for {', '.join(item_names)}", actor_id=actor.id, details={"discount_id": discount_id, "menu_item_ids": item_ids, "discount_percent": data.discount_percent, "starts_at": starts_at.isoformat(), "ends_at": ends_at.isoformat()}))
+    db.add(AdminEvent(event_type="menu_discount_updated", message=f"{data.discount_percent}% discount campaign updated for {', '.join(item_names)}", actor_id=actor.id, details={"discount_id": discount_id, "menu_item_ids": item_ids, "custom_menu_item_ids": custom_ids, "discount_percent": data.discount_percent, "starts_at": starts_at.isoformat(), "ends_at": ends_at.isoformat()}))
     db.commit()
-    return {"id": current.id, "campaign_name": data.campaign_name, "menu_item_ids": item_ids, "menu_item_names": item_names, "discount_percent": data.discount_percent, "starts_at": starts_at.isoformat(), "ends_at": ends_at.isoformat(), "created_at": current.created_at}
+    return {
+        "id": current.id,
+        "campaign_name": data.campaign_name,
+        "menu_item_ids": item_ids,
+        "custom_menu_item_ids": custom_ids,
+        "menu_item_names": item_names,
+        "discount_percent": data.discount_percent,
+        "starts_at": starts_at.isoformat(),
+        "ends_at": ends_at.isoformat(),
+        "created_at": current.created_at,
+    }
 
 
 @router.delete("/discounts/{discount_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -339,11 +424,15 @@ def delete_discount(discount_id: int, actor: CurrentAccount, db: DbSession):
         raise HTTPException(status_code=404, detail="Discount not found")
     if (discount.ends_at if discount.ends_at.tzinfo else discount.ends_at.replace(tzinfo=timezone.utc)) <= datetime.now(timezone.utc):
         raise HTTPException(status_code=409, detail="Ended discount campaigns cannot be deleted")
-    item_ids = [link.menu_item_id for link in discount.items]
-    item_names = db.scalars(select(MenuItem.name).where(MenuItem.id.in_(item_ids))).all()
-    db.add(AdminEvent(event_type="menu_discount_deleted", message=f"Scheduled discount for {', '.join(item_names)} deleted", actor_id=actor.id, details={"menu_item_ids": item_ids, "discount_percent": discount.discount_percent}))
+    item_ids = [link.menu_item_id for link in discount.items if link.menu_item_id is not None]
+    custom_ids = [link.custom_menu_item_id for link in discount.items if link.custom_menu_item_id is not None]
+    item_names = db.scalars(select(MenuItem.name).where(MenuItem.id.in_(item_ids))).all() if item_ids else []
+    custom_names = [f"[Custom] {name}" for name in (db.scalars(select(CustomMenuItem.name).where(CustomMenuItem.id.in_(custom_ids))).all() if custom_ids else [])]
+    all_names = list(item_names) + custom_names
+    db.add(AdminEvent(event_type="menu_discount_deleted", message=f"Scheduled discount for {', '.join(all_names)} deleted", actor_id=actor.id, details={"menu_item_ids": item_ids, "custom_menu_item_ids": custom_ids, "discount_percent": discount.discount_percent}))
     db.delete(discount)
     db.commit()
+
 
 
 def date_range(period: str, day: datetime | None) -> tuple[datetime, datetime, str]:

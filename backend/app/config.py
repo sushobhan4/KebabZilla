@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     google_client_id: str | None = None
     google_client_secret: str | None = None
     google_identity_platform_project_id: str | None = None
+    google_maps_api_key: str | None = None
     seed_admin_email: str = "admin@kebabzilla.local"
     seed_admin_password: str | None = None
     delivery_otp_api_url: str | None = None

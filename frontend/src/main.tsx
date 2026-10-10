@@ -1,7 +1,7 @@
 import React, { Component, type ReactNode } from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
-import { AuthProvider } from './state'
+import { AuthProvider, RestaurantProvider } from './state'
 import App from './App'
 import './styles.css'
 
@@ -38,7 +38,11 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ErrorBoundary>
       <BrowserRouter basename={import.meta.env.BASE_URL}>
-        <AuthProvider><App /></AuthProvider>
+        <AuthProvider>
+          <RestaurantProvider>
+            <App />
+          </RestaurantProvider>
+        </AuthProvider>
       </BrowserRouter>
     </ErrorBoundary>
   </React.StrictMode>,

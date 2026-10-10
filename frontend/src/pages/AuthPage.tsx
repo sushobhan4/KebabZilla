@@ -3,7 +3,7 @@ import { ArrowLeft, ArrowRight, Eye, EyeOff, Flame, LockKeyhole, Mail, Phone, Us
 import { Link, useNavigate } from 'react-router-dom'
 import { GoogleOAuthProvider, GoogleLogin, type CredentialResponse } from '@react-oauth/google'
 import { useAuth } from '../state'
-import { Notice } from '../components'
+import { Brand, Notice } from '../components'
 import { confirmPasswordReset, requestPasswordReset } from '../api'
 
 export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recovery' }) {
@@ -75,7 +75,7 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
       <div className="auth-art"><span className="auth-art-ring" /><span className="auth-art-spark">✳</span><span className="auth-art-food">🥙</span><span className="auth-art-leaf">✦</span><span className="auth-art-label">FIRE · FLAVOR · FEAST</span></div>
       <div className="auth-visual-footer">© KebabZilla · Made fresh, served with care</div>
     </section>
-    <section className="auth-form-side"><div className="auth-mobile-brand"><img src="/kebabzilla-mark.png" alt="" /><span className="brand-word">Kebab<span>Zilla</span></span></div><div className="auth-card">
+    <section className="auth-form-side"><div className="auth-mobile-brand"><Brand /></div><div className="auth-card">
       <div className="auth-heading"><div className="eyebrow">{isRecovery ? 'WE CAN HELP' : isRegister ? 'GOOD TASTE STARTS HERE' : 'WELCOME BACK'}</div><h1>{isRecovery ? 'Reset your password' : isRegister ? 'Create your account' : 'Come on in.'}</h1><p>{isRecovery ? 'Enter the email for your customer, admin, employee, or delivery account. Your restaurant administrator can help restore access.' : isRegister ? 'Get your favorites to your door in a few taps.' : 'The grill’s hot and your favorites are waiting.'}</p></div>
       {error && <Notice>{error}</Notice>}
       {success && <div className="notice notice-success">{success}</div>}

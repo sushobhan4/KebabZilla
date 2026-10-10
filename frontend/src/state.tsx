@@ -92,3 +92,46 @@ export function useAuth() {
   if (!context) throw new Error('useAuth must be used inside AuthProvider')
   return context
 }
+
+type RestaurantContextValue = {
+  restaurant: import('./api').Restaurant | null
+  reloadRestaurant: () => Promise<void>
+}
+
+const RestaurantContext = createContext<RestaurantContextValue>({
+  restaurant: null,
+  reloadRestaurant: async () => {},
+})
+
+export function RestaurantProvider({ children }: { children: ReactNode }) {
+  const [restaurant, setRestaurant] = useState<import('./api').Restaurant | null>(() => {
+    try {
+      const saved = localStorage.getItem('kz_restaurant')
+      return saved ? JSON.parse(saved) : null
+    } catch {
+      return null
+    }
+  })
+
+  const reloadRestaurant = useCallback(async () => {
+    try {
+      const data = await api<import('./api').Restaurant>('/restaurant')
+      setRestaurant(data)
+      localStorage.setItem('kz_restaurant', JSON.stringify(data))
+    } catch {
+      // Keep existing or null
+    }
+  }, [])
+
+  useEffect(() => {
+    reloadRestaurant()
+  }, [reloadRestaurant])
+
+  const value = useMemo(() => ({ restaurant, reloadRestaurant }), [restaurant, reloadRestaurant])
+
+  return <RestaurantContext.Provider value={value}>{children}</RestaurantContext.Provider>
+}
+
+export function useRestaurant() {
+  return useContext(RestaurantContext)
+}

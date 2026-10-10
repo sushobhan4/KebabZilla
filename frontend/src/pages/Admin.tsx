@@ -2,10 +2,12 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type FormEvent,
 } from "react";
+import { usePreference } from "../cookies";
 import { importLibrary, setOptions } from "@googlemaps/js-api-loader";
 import {
   Activity,
@@ -16,6 +18,7 @@ import {
   Check,
   ChevronDown,
   CircleDollarSign,
+  Clock,
   CookingPot,
   CreditCard,
   Edit3,
@@ -39,6 +42,8 @@ import {
   formatINR,
   formatStatus,
   friendlyDate,
+  getCustomItemLowestPrice,
+  getMenuItemLowestPrice,
   type Account,
   type CustomMenuItem,
   type CustomMenuSection,
@@ -57,7 +62,9 @@ import {
   MenuImageCarousel,
   Notice,
   PageTitle,
+  RoundedDatePicker,
   RoundedSelect,
+  RoundedTimePicker,
   StatusBadge,
 } from "../components";
 
@@ -490,8 +497,8 @@ function AdminOrders() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [filter, setFilter] = useState("ALL");
-  const [period, setPeriod] = useState("all");
+  const [filter, setFilter] = usePreference<string>("admin_orders_filter", "ALL");
+  const [period, setPeriod] = usePreference<string>("admin_orders_period", "all");
   const [q, setQ] = useState("");
   const refresh = useCallback(() => {
     const statusQuery = filter === "ALL" ? "" : `&status_filter=${filter}`;
@@ -767,7 +774,7 @@ function Team() {
   const { account } = useAuth();
   const [people, setPeople] = useState<Account[]>([]);
   const [q, setQ] = useState("");
-  const [role, setRole] = useState("ALL");
+  const [role, setRole] = usePreference<string>("admin_team_role", "ALL");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
@@ -1159,6 +1166,7 @@ function MenuManagement() {
     is_vegetarian: false,
     is_available: true,
     is_featured: false,
+    variations: [] as { name: string; price_paise: number }[],
   };
   const [form, setForm] = useState(blank);
   const refresh = useCallback(
@@ -1196,8 +1204,34 @@ function MenuManagement() {
       price_paise: item.price_paise / 100,
       image_url: imageUrls[0] || "",
       image_urls: imageUrls,
+      variations: (item.variations || []).map((v) => ({
+        name: v.name,
+        price_paise: v.price_paise / 100,
+      })),
     });
     setCreating(false);
+  }
+  function addVariation() {
+    setForm((f) => ({
+      ...f,
+      variations: [...f.variations, { name: "", price_paise: 0 }],
+    }));
+  }
+  function removeVariation(index: number) {
+    setForm((f) => ({
+      ...f,
+      variations: f.variations.filter((_, i) => i !== index),
+    }));
+  }
+  function updateVariation(index: number, field: "name" | "price_paise", value: string) {
+    setForm((f) => {
+      const vars = [...f.variations];
+      vars[index] = {
+        ...vars[index],
+        [field]: field === "price_paise" ? Number(value) : value,
+      };
+      return { ...f, variations: vars };
+    });
   }
   function openCreate() {
     setShowTypePicker(true);
@@ -1345,9 +1379,21 @@ function MenuManagement() {
     event.preventDefault();
     setBusy(true);
     setError("");
+    const variationsPayload = form.variations
+      .filter((v) => v.name.trim())
+      .map((v) => ({
+        name: v.name.trim(),
+        price_paise: Math.round(Number(v.price_paise) * 100),
+      }));
+
+    const calculatedPricePaise = variationsPayload.length > 0
+      ? Math.min(...variationsPayload.map((v) => v.price_paise))
+      : Math.round(Number(form.price_paise) * 100);
+
     const data = {
       ...form,
-      price_paise: Math.round(Number(form.price_paise) * 100),
+      price_paise: calculatedPricePaise,
+      variations: variationsPayload,
       image_urls: form.image_urls,
       image_url: form.image_urls[0] || null,
     };
@@ -1608,7 +1654,22 @@ function MenuManagement() {
                 <p>
                   {item.description || "A KebabZilla favorite, made fresh."}
                 </p>
-                <div className="menu-admin-price">{formatINR(item.price_paise)} <small>tax included</small></div>
+                <div className="menu-admin-price">
+                  {(item.variations?.length || 0) > 0 ? (
+                    <>From {formatINR(getMenuItemLowestPrice(item))} <small>tax included</small></>
+                  ) : (
+                    <>{formatINR(item.price_paise)} <small>tax included</small></>
+                  )}
+                </div>
+                {(item.variations?.length || 0) > 0 && (
+                  <div className="custom-sections-preview">
+                    {item.variations!.map((v) => (
+                      <span key={v.name} className="custom-section-chip">
+                        {v.name} · {formatINR(v.price_paise)}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="menu-admin-actions">
                 <button
@@ -1679,7 +1740,7 @@ function MenuManagement() {
                     {item.description || "A build-your-own KebabZilla favorite."}
                   </p>
                   <div className="menu-admin-price">
-                    {formatINR(item.base_price_paise)} <small>base + addons</small>
+                    From {formatINR(getCustomItemLowestPrice(item))} <small>base + mandatory addons</small>
                   </div>
                   <div className="custom-sections-preview">
                     {item.sections?.map((s) => (
@@ -1774,28 +1835,34 @@ function MenuManagement() {
               <div className="modal-two-col">
                 <label className="field-label">
                   Category
-                  <select
+                  <RoundedSelect
                     value={form.category}
-                    onChange={(event) =>
-                      setForm({ ...form, category: event.target.value })
+                    onChange={(val) =>
+                      setForm({ ...form, category: val })
                     }
-                  >
-                    <option value="">No category</option>
-                    {menuCategories.map((category) => (
-                      <option key={category.name} value={category.name}>
-                        {category.name}
-                      </option>
-                    ))}
-                  </select>
+                    placeholder="No category"
+                    options={[
+                      { value: "", label: "No category" },
+                      ...menuCategories.map((category) => ({
+                        value: category.name,
+                        label: category.name,
+                      })),
+                    ]}
+                  />
                 </label>
                 <label className="field-label">
                   Price · INR
                   <input
-                    required
+                    required={form.variations.length === 0}
                     type="number"
                     min="1"
                     step="1"
-                    value={form.price_paise}
+                    disabled={form.variations.length > 0}
+                    value={
+                      form.variations.length > 0
+                        ? (Math.min(...form.variations.map((v) => Number(v.price_paise) || 0)) || "")
+                        : form.price_paise
+                    }
                     onChange={(event) =>
                       setForm({
                         ...form,
@@ -1804,7 +1871,64 @@ function MenuManagement() {
                     }
                     placeholder="299"
                   />
+                  {form.variations.length > 0 && (
+                    <span className="field-optional">Auto-set to lowest portion price</span>
+                  )}
                 </label>
+              </div>
+              <div className="custom-sections-builder" style={{ marginTop: 4, marginBottom: 12 }}>
+                <div className="custom-sections-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexDirection: "row" }}>
+                  <div>
+                    <strong>Portions &amp; Variations (optional)</strong>
+                    <small>e.g., Half / Full portions with different prices</small>
+                  </div>
+                  <button
+                    type="button"
+                    className="custom-add-option-btn"
+                    onClick={addVariation}
+                  >
+                    <Plus size={14} /> Add portion
+                  </button>
+                </div>
+                {form.variations.length > 0 && (
+                  <div className="custom-section-options" style={{ marginTop: 8 }}>
+                    {form.variations.map((v, vi) => (
+                      <div className="custom-option-row" key={vi}>
+                        <input
+                          type="text"
+                          required
+                          placeholder="Portion name (e.g. Half, Full)"
+                          value={v.name}
+                          onChange={(e) => updateVariation(vi, "name", e.target.value)}
+                        />
+                        <div className="custom-option-price">
+                          <span>₹</span>
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            required
+                            placeholder="Price"
+                            value={v.price_paise || ""}
+                            onChange={(e) => updateVariation(vi, "price_paise", e.target.value)}
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          className="icon-button danger-icon"
+                          onClick={() => removeVariation(vi)}
+                          title="Remove portion"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    ))}
+                    <small style={{ color: "#c54d2f", fontWeight: 500 }}>
+                      Lowest portion price will automatically be the base display price: ₹
+                      {Math.min(...form.variations.map((v) => Number(v.price_paise) || 0))}
+                    </small>
+                  </div>
+                )}
               </div>
               <div className="field-label">
                 Menu images{" "}
@@ -2033,19 +2157,20 @@ function MenuManagement() {
               <div className="modal-two-col">
                 <label className="field-label">
                   Category
-                  <select
+                  <RoundedSelect
                     value={customForm.category}
-                    onChange={(e) =>
-                      setCustomForm((f) => ({ ...f, category: e.target.value }))
+                    onChange={(val) =>
+                      setCustomForm((f) => ({ ...f, category: val }))
                     }
-                  >
-                    <option value="">No category</option>
-                    {menuCategories.map((cat) => (
-                      <option key={cat.name} value={cat.name}>
-                        {cat.name}
-                      </option>
-                    ))}
-                  </select>
+                    placeholder="No category"
+                    options={[
+                      { value: "", label: "No category" },
+                      ...menuCategories.map((cat) => ({
+                        value: cat.name,
+                        label: cat.name,
+                      })),
+                    ]}
+                  />
                 </label>
                 <label className="field-label">
                   Base price · INR
@@ -2364,7 +2489,7 @@ function BadgeTag() {
 }
 
 function Reports() {
-  const [period, setPeriod] = useState("week");
+  const [period, setPeriod] = usePreference<string>("admin_reports_period", "week");
   const [periodOpen, setPeriodOpen] = useState(false);
   const [report, setReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(true);
@@ -2575,6 +2700,152 @@ function RestaurantLocationMap({ latitude, longitude, onSave, onClose }: { latit
   return <div className="address-map-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="address-map-dialog" role="dialog" aria-modal="true" aria-labelledby="restaurant-location-title"><div className="address-map-heading"><span><small>RESTAURANT LOCATION</small><h2 id="restaurant-location-title">Pin your restaurant</h2></span><button className="icon-button" type="button" onClick={onClose} aria-label="Close map"><X size={18} /></button></div><div className="address-map-toolbar"><p className="address-map-help">The map opens on Amtala, South 24 Parganas. Click or drag the pin to your restaurant’s exact entrance.</p></div><div className="address-map-wrap"><div className="address-map-canvas address-google-map" ref={container} /></div>{error ? <Notice>{error}</Notice> : <div className="address-map-status">Selected: {point.lat.toFixed(6)}, {point.lng.toFixed(6)}</div>}<div className="address-map-actions"><Button type="button" variant="secondary" onClick={onClose}>Cancel</Button><Button type="button" disabled={!ready} onClick={() => { onSave(point.lat, point.lng); onClose(); }}><Check size={15} /> Use this pin</Button></div></section></div>;
 }
 
+interface CustomSchedule {
+  id: string;
+  start_time: string;
+  end_time: string;
+  days: string[];
+}
+
+const SCHEDULE_DAYS = [
+  { id: "monday", label: "Monday", short: "Mon" },
+  { id: "tuesday", label: "Tuesday", short: "Tue" },
+  { id: "wednesday", label: "Wednesday", short: "Wed" },
+  { id: "thursday", label: "Thursday", short: "Thu" },
+  { id: "friday", label: "Friday", short: "Fri" },
+  { id: "saturday", label: "Saturday", short: "Sat" },
+  { id: "sunday", label: "Sunday", short: "Sun" },
+] as const;
+
+function timeToMinutes(t: string): number {
+  if (!t) return 0;
+  const [h, m] = t.split(":").map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+function formatTime12(t: string): string {
+  if (!t) return "";
+  const [hStr, mStr] = t.split(":");
+  const h = parseInt(hStr, 10);
+  const m = parseInt(mStr, 10);
+  const period = h >= 12 ? "PM" : "AM";
+  const displayH = h % 12 === 0 ? 12 : h % 12;
+  const displayM = m < 10 ? `0${m}` : m;
+  return `${displayH}:${displayM} ${period}`;
+}
+
+function parseSchedulesFromWeekly(scheduleObj: any): CustomSchedule[] {
+  if (!scheduleObj) return [];
+  if (Array.isArray(scheduleObj.custom_schedules) && scheduleObj.custom_schedules.length > 0) {
+    return scheduleObj.custom_schedules;
+  }
+  const groups: Record<string, string[]> = {};
+  for (const day of ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]) {
+    const d = scheduleObj[day];
+    if (d && d.open) {
+      const opens = d.opens || "10:00";
+      const closes = d.closes || "22:00";
+      const key = `${opens}_${closes}`;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(day);
+    }
+  }
+  return Object.entries(groups).map(([key, days], index) => {
+    const [start_time, end_time] = key.split("_");
+    return {
+      id: `sched_${index + 1}`,
+      start_time,
+      end_time,
+      days,
+    };
+  });
+}
+
+function buildWeeklySchedule(schedules: CustomSchedule[]): Record<string, any> {
+  const allDays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+  const res: Record<string, any> = {
+    custom_schedules: schedules,
+  };
+  for (const day of allDays) {
+    const matching = schedules.filter((s) => s.days.includes(day));
+    if (matching.length > 0) {
+      res[day] = {
+        open: true,
+        opens: matching[0].start_time,
+        closes: matching[0].end_time,
+        slots: matching.map((s) => ({ opens: s.start_time, closes: s.end_time })),
+      };
+    } else {
+      res[day] = {
+        open: false,
+        opens: "10:00",
+        closes: "22:00",
+        slots: [],
+      };
+    }
+  }
+  return res;
+}
+
+function checkClash(
+  newSched: { start_time: string; end_time: string; days: string[] },
+  existingSchedules: CustomSchedule[],
+  ignoreId?: string,
+): string | null {
+  if (!newSched.start_time || !newSched.end_time) {
+    return "Please specify both start and end times.";
+  }
+  const newStart = timeToMinutes(newSched.start_time);
+  const newEnd = timeToMinutes(newSched.end_time);
+  if (newEnd <= newStart) {
+    return "End time must be after start time.";
+  }
+  if (!newSched.days || newSched.days.length === 0) {
+    return "Please select at least one day.";
+  }
+
+  for (const ex of existingSchedules) {
+    if (ignoreId && ex.id === ignoreId) continue;
+    const commonDays = newSched.days.filter((d) => ex.days.includes(d));
+    if (commonDays.length > 0) {
+      const exStart = timeToMinutes(ex.start_time);
+      const exEnd = timeToMinutes(ex.end_time);
+      if (newStart < exEnd && exStart < newEnd) {
+        const dayNames = commonDays
+          .map((d) => d.charAt(0).toUpperCase() + d.slice(1))
+          .join(", ");
+        return `Schedule clashes with an existing schedule on ${dayNames} (${ex.start_time} - ${ex.end_time}).`;
+      }
+    }
+  }
+  return null;
+}
+
+function isCurrentlyOpenBySchedule(schedules: CustomSchedule[]): boolean {
+  if (!schedules || schedules.length === 0) return false;
+  const now = new Date();
+  const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+  const currentDay = dayNames[now.getDay()];
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+  for (const s of schedules) {
+    if (s.days.includes(currentDay)) {
+      const startMin = timeToMinutes(s.start_time);
+      const endMin = timeToMinutes(s.end_time);
+      if (startMin <= endMin) {
+        if (currentMinutes >= startMin && currentMinutes <= endMin) {
+          return true;
+        }
+      } else {
+        if (currentMinutes >= startMin || currentMinutes <= endMin) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
 function SettingsPage() {
   const [form, setForm] = useState<Restaurant | null>(null);
   const [loading, setLoading] = useState(true);
@@ -2582,16 +2853,63 @@ function SettingsPage() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [locationPickerOpen, setLocationPickerOpen] = useState(false);
+  const [isLocationHovered, setIsLocationHovered] = useState(false);
+
+  const [schedules, setSchedules] = useState<CustomSchedule[]>([]);
+  const [addScheduleOpen, setAddScheduleOpen] = useState(false);
+  const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
+  const [newStartTime, setNewStartTime] = useState("10:00");
+  const [newEndTime, setNewEndTime] = useState("22:00");
+  const [newSelectedDays, setNewSelectedDays] = useState<string[]>([
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+  ]);
+  const [scheduleError, setScheduleError] = useState("");
+
+  const [phoneNumbers, setPhoneNumbers] = useState<string[]>([""]);
+  const [savedToastOpen, setSavedToastOpen] = useState(false);
+  const initialSnapshot = useRef<string>("");
+
+  const [overrideWarningOpen, setOverrideWarningOpen] = useState(false);
+  const [pendingToggleValue, setPendingToggleValue] = useState<boolean | null>(null);
+
   useEffect(() => {
     api<Restaurant>("/admin/settings")
-      .then((settings) =>
-        setForm({
+      .then((settings) => {
+        const parsedScheds = parseSchedulesFromWeekly(settings.weekly_schedule);
+        setSchedules(parsedScheds);
+        const scheduledOpen = isCurrentlyOpenBySchedule(parsedScheds);
+        const phonesList = (settings.phones && settings.phones.length > 0)
+          ? settings.phones
+          : settings.phone
+            ? settings.phone.split(",").map((p: string) => p.trim()).filter(Boolean)
+            : [""];
+        const finalPhones = phonesList.length > 0 ? phonesList : [""];
+        setPhoneNumbers(finalPhones);
+
+        const formData: Restaurant = {
           ...settings,
           weekly_schedule: settings.weekly_schedule || {},
           delivery_fee_per_km_paise: settings.delivery_fee_per_km_paise / 100,
           minimum_order_paise: settings.minimum_order_paise / 100,
-        }),
-      )
+          accepting_orders: settings.accepting_orders !== undefined ? settings.accepting_orders : scheduledOpen,
+          distance_calculation_mode: settings.distance_calculation_mode || "AUTO",
+          haversine_routing_factor: settings.haversine_routing_factor ?? 1.3,
+          enforce_driver_geofence: Boolean(settings.enforce_driver_geofence),
+          driver_geofence_meters: settings.driver_geofence_meters || 500,
+        };
+        setForm(formData);
+        initialSnapshot.current = JSON.stringify({
+          form: formData,
+          schedules: parsedScheds,
+          phoneNumbers: finalPhones,
+        });
+      })
       .catch((err) =>
         setError(
           err instanceof Error ? err.message : "Could not load settings.",
@@ -2599,29 +2917,220 @@ function SettingsPage() {
       )
       .finally(() => setLoading(false));
   }, []);
-  async function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+
+  const isDirty = useMemo(() => {
+    if (!form || !initialSnapshot.current) return false;
+    const current = JSON.stringify({
+      form,
+      schedules,
+      phoneNumbers,
+    });
+    return current !== initialSnapshot.current;
+  }, [form, schedules, phoneNumbers]);
+
+  async function persistAcceptingOrders(nextVal: boolean) {
     if (!form) return;
+    const cleanPhones = phoneNumbers.map((p) => p.trim()).filter(Boolean);
+    const phoneStr = cleanPhones.join(", ");
+    const weekly = buildWeeklySchedule(schedules);
+    const scheduledOpen = isCurrentlyOpenBySchedule(schedules);
+    const adminOverride = !scheduledOpen && nextVal;
+
     setBusy(true);
-    setError("");
-    setNotice("");
     try {
       const updated = await api<Restaurant>("/admin/settings", {
         method: "PUT",
         body: JSON.stringify({
           ...form,
-          weekly_schedule: form.weekly_schedule,
+          accepting_orders: nextVal,
+          admin_override_open: adminOverride,
+          phone: phoneStr,
+          phones: cleanPhones,
+          weekly_schedule: weekly,
           delivery_fee_per_km_paise: Math.round(form.delivery_fee_per_km_paise * 100),
           minimum_order_paise: Math.round(form.minimum_order_paise * 100),
+          distance_calculation_mode: form.distance_calculation_mode || "AUTO",
+          haversine_routing_factor: Number(form.haversine_routing_factor) || 1.3,
+          enforce_driver_geofence: Boolean(form.enforce_driver_geofence),
+          driver_geofence_meters: Number(form.driver_geofence_meters) || 500,
         }),
       });
-      setForm({
+
+      const parsedScheds = parseSchedulesFromWeekly(updated.weekly_schedule);
+      setSchedules(parsedScheds);
+      const phonesList = (updated.phones && updated.phones.length > 0)
+        ? updated.phones
+        : updated.phone
+          ? updated.phone.split(",").map((p: string) => p.trim()).filter(Boolean)
+          : [""];
+      const finalPhones = phonesList.length > 0 ? phonesList : [""];
+      setPhoneNumbers(finalPhones);
+
+      const formData: Restaurant = {
         ...updated,
         weekly_schedule: updated.weekly_schedule || {},
         delivery_fee_per_km_paise: updated.delivery_fee_per_km_paise / 100,
         minimum_order_paise: updated.minimum_order_paise / 100,
+        distance_calculation_mode: updated.distance_calculation_mode || "AUTO",
+        haversine_routing_factor: updated.haversine_routing_factor ?? 1.3,
+        enforce_driver_geofence: Boolean(updated.enforce_driver_geofence),
+        driver_geofence_meters: updated.driver_geofence_meters || 500,
+      };
+      setForm(formData);
+      initialSnapshot.current = JSON.stringify({
+        form: formData,
+        schedules: parsedScheds,
+        phoneNumbers: finalPhones,
+      });
+
+      setNotice(nextVal ? (adminOverride ? "Admin override active: Open for orders." : "Restaurant is open for orders.") : "Restaurant orders paused & delivery riders turned off-duty.");
+      setSavedToastOpen(true);
+      setTimeout(() => setSavedToastOpen(false), 2600);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update order status.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function handleToggleAcceptingOrders() {
+    if (!form || busy) return;
+    const nextVal = !form.accepting_orders;
+    const scheduledOpen = isCurrentlyOpenBySchedule(schedules);
+    if (nextVal !== scheduledOpen) {
+      setPendingToggleValue(nextVal);
+      setOverrideWarningOpen(true);
+    } else {
+      void persistAcceptingOrders(nextVal);
+    }
+  }
+
+  function handleOpenAddSchedule() {
+    setEditingScheduleId(null);
+    setNewStartTime("10:00");
+    setNewEndTime("22:00");
+    setNewSelectedDays([
+      "monday",
+      "tuesday",
+      "wednesday",
+      "thursday",
+      "friday",
+      "saturday",
+      "sunday",
+    ]);
+    setScheduleError("");
+    setAddScheduleOpen(true);
+  }
+
+  function handleOpenEditSchedule(s: CustomSchedule) {
+    setEditingScheduleId(s.id);
+    setNewStartTime(s.start_time);
+    setNewEndTime(s.end_time);
+    setNewSelectedDays([...s.days]);
+    setScheduleError("");
+    setAddScheduleOpen(true);
+  }
+
+  function handleSaveSchedule() {
+    const clash = checkClash(
+      { start_time: newStartTime, end_time: newEndTime, days: newSelectedDays },
+      schedules,
+      editingScheduleId || undefined,
+    );
+    if (clash) {
+      setScheduleError(clash);
+      return;
+    }
+    let updated: CustomSchedule[];
+    if (editingScheduleId) {
+      updated = schedules.map((s) =>
+        s.id === editingScheduleId
+          ? {
+              ...s,
+              start_time: newStartTime,
+              end_time: newEndTime,
+              days: newSelectedDays,
+            }
+          : s,
+      );
+    } else {
+      const newSched: CustomSchedule = {
+        id: `sched_${Date.now()}`,
+        start_time: newStartTime,
+        end_time: newEndTime,
+        days: newSelectedDays,
+      };
+      updated = [...schedules, newSched];
+    }
+    setSchedules(updated);
+    const newWeekly = buildWeeklySchedule(updated);
+    change("weekly_schedule", newWeekly);
+    setAddScheduleOpen(false);
+    setEditingScheduleId(null);
+    setScheduleError("");
+  }
+
+  function handleRemoveSchedule(id: string) {
+    const updated = schedules.filter((s) => s.id !== id);
+    setSchedules(updated);
+    const newWeekly = buildWeeklySchedule(updated);
+    change("weekly_schedule", newWeekly);
+  }
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!form || !isDirty) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const weekly = buildWeeklySchedule(schedules);
+      const cleanPhones = phoneNumbers.map((p) => p.trim()).filter(Boolean);
+      const phoneStr = cleanPhones.join(", ");
+      const updated = await api<Restaurant>("/admin/settings", {
+        method: "PUT",
+        body: JSON.stringify({
+          ...form,
+          phone: phoneStr,
+          phones: cleanPhones,
+          weekly_schedule: weekly,
+          delivery_fee_per_km_paise: Math.round(form.delivery_fee_per_km_paise * 100),
+          minimum_order_paise: Math.round(form.minimum_order_paise * 100),
+          distance_calculation_mode: form.distance_calculation_mode || "AUTO",
+          haversine_routing_factor: Number(form.haversine_routing_factor) || 1.3,
+          enforce_driver_geofence: Boolean(form.enforce_driver_geofence),
+          driver_geofence_meters: Number(form.driver_geofence_meters) || 500,
+        }),
+      });
+      const parsedScheds = parseSchedulesFromWeekly(updated.weekly_schedule);
+      setSchedules(parsedScheds);
+      const phonesList = (updated.phones && updated.phones.length > 0)
+        ? updated.phones
+        : updated.phone
+          ? updated.phone.split(",").map((p: string) => p.trim()).filter(Boolean)
+          : [""];
+      const finalPhones = phonesList.length > 0 ? phonesList : [""];
+      setPhoneNumbers(finalPhones);
+
+      const formData: Restaurant = {
+        ...updated,
+        weekly_schedule: updated.weekly_schedule || {},
+        delivery_fee_per_km_paise: updated.delivery_fee_per_km_paise / 100,
+        minimum_order_paise: updated.minimum_order_paise / 100,
+        distance_calculation_mode: updated.distance_calculation_mode || "AUTO",
+        haversine_routing_factor: updated.haversine_routing_factor ?? 1.3,
+        enforce_driver_geofence: Boolean(updated.enforce_driver_geofence),
+        driver_geofence_meters: updated.driver_geofence_meters || 500,
+      };
+      setForm(formData);
+      initialSnapshot.current = JSON.stringify({
+        form: formData,
+        schedules: parsedScheds,
+        phoneNumbers: finalPhones,
       });
       setNotice("Restaurant details saved.");
+      setSavedToastOpen(true);
+      setTimeout(() => setSavedToastOpen(false), 2600);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Could not save these settings.",
@@ -2630,14 +3139,17 @@ function SettingsPage() {
       setBusy(false);
     }
   }
+
   if (loading) return <Loading label="Opening the settings book…" />;
   if (!form)
     return (
       <Notice>{error || "Restaurant settings could not be loaded."}</Notice>
     );
+
   function change<K extends keyof Restaurant>(key: K, value: Restaurant[K]) {
     setForm((old) => (old ? { ...old, [key]: value } : old));
   }
+
   return (
     <>
       <PageTitle
@@ -2672,15 +3184,69 @@ function SettingsPage() {
                     onChange={(event) => change("tagline", event.target.value)}
                   />
                 </label>
-                <label className="field-label">
-                  Phone
-                  <input
-                    required
-                    maxLength={32}
-                    value={form.phone}
-                    onChange={(event) => change("phone", event.target.value)}
-                  />
-                </label>
+                <div className="field-label" style={{ gridColumn: "span 2" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      marginBottom: "0.25rem",
+                    }}
+                  >
+                    <span>Mobile numbers</span>
+                    <button
+                      type="button"
+                      className="link-subtle"
+                      style={{
+                        fontSize: "0.82rem",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "4px",
+                        color: "var(--accent)",
+                        cursor: "pointer",
+                        border: "none",
+                        background: "transparent",
+                        padding: "2px 6px",
+                      }}
+                      onClick={() => setPhoneNumbers((prev) => [...prev, ""])}
+                    >
+                      <Plus size={14} /> Add mobile number
+                    </button>
+                  </div>
+                  <div className="restaurant-phones-grid">
+                    {phoneNumbers.map((phone, idx) => (
+                      <div key={idx} className="restaurant-phone-item">
+                        <input
+                          required={idx === 0}
+                          maxLength={32}
+                          placeholder={idx === 0 ? "Primary mobile number" : `Mobile number ${idx + 1}`}
+                          value={phone}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setPhoneNumbers((prev) => {
+                              const next = [...prev];
+                              next[idx] = val;
+                              return next;
+                            });
+                          }}
+                          style={{ flex: 1 }}
+                        />
+                        {phoneNumbers.length > 1 && (
+                          <button
+                            type="button"
+                            className="phone-remove-btn"
+                            title="Remove number"
+                            onClick={() => {
+                              setPhoneNumbers((prev) => prev.filter((_, i) => i !== idx));
+                            }}
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
                 <label className="field-label">
                   Address
                   <input
@@ -2692,75 +3258,209 @@ function SettingsPage() {
                 </label>
                 <div className="field-label restaurant-location-control">
                   <span>Exact restaurant location</span>
-                  <small>{form.latitude != null && form.longitude != null ? `${form.latitude.toFixed(6)}, ${form.longitude.toFixed(6)}` : "Not pinned yet"}</small>
-                  <Button type="button" variant="secondary" onClick={() => setLocationPickerOpen(true)}>Set on map</Button>
+                  {(() => {
+                    const lat = form.latitude;
+                    const lng = form.longitude;
+                    const hasLocation = lat != null && lng != null;
+                    const defaultText = hasLocation
+                      ? `${lat.toFixed(6)}, ${lng.toFixed(6)}`
+                      : "Edit";
+                    const displayText = isLocationHovered ? "Edit" : defaultText;
+                    return (
+                      <span
+                        onMouseEnter={() => setIsLocationHovered(true)}
+                        onMouseLeave={() => setIsLocationHovered(false)}
+                        style={{ display: "block", width: "100%" }}
+                      >
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() => setLocationPickerOpen(true)}
+                        >
+                          {displayText}
+                        </Button>
+                      </span>
+                    );
+                  })()}
                 </div>
               </div>
-              <div className="settings-schedule">
-                <h3>Opening days and hours</h3>
-                {(
-                  [
-                    "monday",
-                    "tuesday",
-                    "wednesday",
-                    "thursday",
-                    "friday",
-                    "saturday",
-                    "sunday",
-                  ] as const
-                ).map((day) => {
-                  const hours = form.weekly_schedule?.[day] || {
-                    open: false,
-                    opens: "10:00",
-                    closes: "22:00",
-                  };
-                  return (
-                    <div className="weekday-row" key={day}>
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={hours.open}
-                          onChange={(event) =>
-                            change("weekly_schedule", {
-                              ...form.weekly_schedule,
-                              [day]: { ...hours, open: event.target.checked },
-                            })
-                          }
-                        />{" "}
-                        {formatStatus(day)}
-                      </label>
+
+              <div
+                className="settings-schedule"
+                style={{
+                  marginTop: "1.75rem",
+                  paddingTop: "1.25rem",
+                  borderTop: "1px solid var(--border)",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    marginBottom: "1.25rem",
+                    flexWrap: "wrap",
+                    gap: "0.75rem",
+                  }}
+                >
+                  <h3 style={{ margin: 0, fontSize: "1.1rem" }}>
+                    Opening days and hours
+                  </h3>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.75rem",
+                    }}
+                  >
+                    <span style={{ fontSize: "0.92rem", fontWeight: 600 }}>
+                      Open for Orders
+                    </span>
+                    {form.accepting_orders && !isCurrentlyOpenBySchedule(schedules) && (
+                      <span
+                        style={{
+                          fontSize: "0.75rem",
+                          fontWeight: 700,
+                          padding: "2px 8px",
+                          borderRadius: "6px",
+                          background: "#fef3c7",
+                          color: "#92400e",
+                          border: "1px solid #fde68a",
+                        }}
+                      >
+                        OVERRIDE ACTIVE
+                      </span>
+                    )}
+                    <label className="toggle-switch">
                       <input
-                        aria-label={`${day} opens`}
-                        type="time"
-                        value={hours.opens}
-                        onChange={(event) =>
-                          change("weekly_schedule", {
-                            ...form.weekly_schedule,
-                            [day]: { ...hours, opens: event.target.value },
-                          })
-                        }
+                        type="checkbox"
+                        checked={form.accepting_orders}
+                        disabled={busy}
+                        onChange={handleToggleAcceptingOrders}
                       />
-                      <input
-                        aria-label={`${day} closes`}
-                        type="time"
-                        value={hours.closes}
-                        onChange={(event) =>
-                          change("weekly_schedule", {
-                            ...form.weekly_schedule,
-                            [day]: { ...hours, closes: event.target.value },
-                          })
-                        }
-                      />
-                    </div>
-                  );
-                })}
+                      <span />
+                    </label>
+                  </div>
+                </div>
+
+                {schedules.length === 0 ? (
+                  <div
+                    style={{
+                      padding: "1.25rem",
+                      border: "1px dashed var(--border)",
+                      borderRadius: "8px",
+                      textAlign: "center",
+                      color: "var(--muted)",
+                      marginBottom: "1rem",
+                    }}
+                  >
+                    No operating schedules added yet. Click &ldquo;+ Add custom schedule&rdquo; below to set opening hours.
+                  </div>
+                ) : (
+                  <div className="schedule-list">
+                    {schedules.map((s) => (
+                      <div className="schedule-item-card" key={s.id}>
+                        <div className="schedule-item-info">
+                          <div className="schedule-item-time">
+                            <Clock size={16} />
+                            <strong>
+                              {formatTime12(s.start_time)} – {formatTime12(s.end_time)}
+                            </strong>
+                            <span
+                              style={{
+                                color: "var(--muted)",
+                                fontSize: "0.82rem",
+                              }}
+                            >
+                              ({s.start_time} - {s.end_time})
+                            </span>
+                          </div>
+                          <div className="schedule-item-days">
+                            {SCHEDULE_DAYS.map((d) => (
+                              <span
+                                key={d.id}
+                                className={`schedule-day-badge ${
+                                  s.days.includes(d.id) ? "active" : "inactive"
+                                }`}
+                              >
+                                {d.short}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}>
+                          <button
+                            type="button"
+                            className="icon-button"
+                            title="Edit this schedule"
+                            onClick={() => handleOpenEditSchedule(s)}
+                          >
+                            <Edit3 size={15} />
+                          </button>
+                          <button
+                            type="button"
+                            className="icon-button"
+                            title="Delete this schedule"
+                            onClick={() => handleRemoveSchedule(s.id)}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ marginTop: "1rem" }}>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={handleOpenAddSchedule}
+                  >
+                    <Plus size={16} /> Add custom schedule
+                  </Button>
+                </div>
               </div>
             </section>
+
             <section className="admin-panel settings-card">
               <h2>Checkout & delivery</h2>
               <div className="settings-fields">
                 <label className="field-label">
-                  Minimum order · INR
+                  Distance Calculation Mode
+                  <RoundedSelect
+                    value={form.distance_calculation_mode || "AUTO"}
+                    onChange={(val) =>
+                      change(
+                        "distance_calculation_mode",
+                        val as "AUTO" | "GOOGLE_MAPS" | "HAVERSINE",
+                      )
+                    }
+                    options={[
+                      { value: "AUTO", label: "Auto" },
+                      { value: "GOOGLE_MAPS", label: "Google's API" },
+                      { value: "HAVERSINE", label: "Haversine" },
+                    ]}
+                  />
+                </label>
+                <label className="field-label">
+                  Routing Factor for Haversine
+                  <input
+                    type="number"
+                    min="1"
+                    max="4"
+                    step="any"
+                    value={form.haversine_routing_factor ?? 1.3}
+                    onChange={(event) =>
+                      change(
+                        "haversine_routing_factor",
+                        Number(event.target.value),
+                      )
+                    }
+                  />
+                </label>
+                <label className="field-label">
+                  Minimum Order Amount
                   <input
                     type="number"
                     min="0"
@@ -2772,12 +3472,12 @@ function SettingsPage() {
                   />
                 </label>
                 <label className="field-label">
-                  Delivery radius · km
+                  Maximum Delivery Distance (in km)
                   <input
                     type="number"
                     min="0.1"
                     max="500"
-                    step="0.1"
+                    step="any"
                     value={form.delivery_radius_km}
                     onChange={(event) =>
                       change("delivery_radius_km", Number(event.target.value))
@@ -2785,68 +3485,439 @@ function SettingsPage() {
                   />
                 </label>
                 <label className="field-label">
-                  Free delivery radius · km
+                  Free Delivery Radius (in km)
                   <input
                     type="number"
                     min="0"
                     max="500"
-                    step="0.1"
+                    step="any"
                     value={form.free_delivery_radius_km}
                     onChange={(event) =>
-                      change("free_delivery_radius_km", Number(event.target.value))
+                      change(
+                        "free_delivery_radius_km",
+                        Number(event.target.value),
+                      )
                     }
                   />
                 </label>
                 <label className="field-label">
-                  Delivery fee per km · INR
+                  Delivery Fee Amount per km
                   <input
                     type="number"
                     min="0"
-                    step="1"
+                    step="any"
                     value={form.delivery_fee_per_km_paise}
                     onChange={(event) =>
-                      change("delivery_fee_per_km_paise", Number(event.target.value))
+                      change(
+                        "delivery_fee_per_km_paise",
+                        Number(event.target.value),
+                      )
                     }
                   />
                 </label>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "12px 16px",
+                    minHeight: "56px",
+                    border: "1px solid #e8e5dd",
+                    borderRadius: "12px",
+                    background: "#fff",
+                    boxSizing: "border-box",
+                    margin: 0,
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: "0.95rem",
+                      fontWeight: 600,
+                      color: "#29332f",
+                      textAlign: "left",
+                    }}
+                  >
+                    Delivery Driver Geofence
+                  </span>
+                  <label className="toggle-switch" style={{ margin: 0, flexShrink: 0 }}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(form.enforce_driver_geofence)}
+                      onChange={(event) =>
+                        change("enforce_driver_geofence", event.target.checked)
+                      }
+                    />
+                    <span />
+                  </label>
+                </div>
+                {form.enforce_driver_geofence ? (
+                  <label className="field-label" style={{ margin: 0, textAlign: "left" }}>
+                    Allowed Distance from Shop (in m)
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={form.driver_geofence_meters || 500}
+                      onChange={(event) =>
+                        change(
+                          "driver_geofence_meters",
+                          Number(event.target.value),
+                        )
+                      }
+                    />
+                  </label>
+                ) : (
+                  <div />
+                )}
               </div>
             </section>
           </div>
-          <aside className="settings-aside">
-            <section className="admin-panel accept-orders-card">
-              <strong>
-                {form.accepting_orders
-                  ? "Open for orders"
-                  : "Taking a breather"}
-              </strong>
-              <label className="toggle-switch">
-                <input
-                  type="checkbox"
-                  checked={form.accepting_orders}
-                  onChange={(event) =>
-                    change("accepting_orders", event.target.checked)
-                  }
-                />
-                <span />
-              </label>
-            </section>
+        </div>
+
+        <div className="settings-pinned-bar">
+          <div className="settings-pinned-bar-content">
             <Button
               type="submit"
-              disabled={busy}
-              className="full-width settings-save"
+              disabled={busy || !isDirty}
+              className={`settings-save-button ${isDirty ? "is-dirty" : "is-pristine"}`}
             >
-              {busy ? (
-                "Saving…"
-              ) : (
-                <>
-                  Save restaurant settings <Check size={16} />
-                </>
-              )}
+              {busy ? "Saving…" : "Save restaurant settings"}
             </Button>
-          </aside>
+          </div>
         </div>
       </form>
-      {locationPickerOpen && <RestaurantLocationMap latitude={form.latitude} longitude={form.longitude} onClose={() => setLocationPickerOpen(false)} onSave={(latitude, longitude) => { change("latitude", latitude); change("longitude", longitude); }} />}
+
+      {savedToastOpen && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 99999,
+            pointerEvents: "none",
+          }}
+        >
+          <div
+            style={{
+              background: "#1e2420",
+              color: "#ffffff",
+              padding: "16px 28px",
+              borderRadius: "14px",
+              boxShadow: "0 16px 40px rgba(0,0,0,0.45)",
+              display: "flex",
+              alignItems: "center",
+              gap: "12px",
+              fontSize: "1.05rem",
+              fontWeight: 600,
+              pointerEvents: "auto",
+            }}
+          >
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: "#22c55e",
+                borderRadius: "50%",
+                width: 28,
+                height: 28,
+              }}
+            >
+              <Check size={18} color="#fff" strokeWidth={3} />
+            </span>
+            Restaurant settings saved
+          </div>
+        </div>
+      )}
+
+      {addScheduleOpen && (
+        <div
+          className="address-map-backdrop"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) {
+              setAddScheduleOpen(false);
+              setEditingScheduleId(null);
+              setScheduleError("");
+            }
+          }}
+        >
+          <section
+            className="admin-panel"
+            role="dialog"
+            aria-modal="true"
+            style={{
+              maxWidth: "480px",
+              width: "95%",
+              padding: "1.75rem",
+              borderRadius: "12px",
+              boxShadow: "0 12px 32px rgba(0, 0, 0, 0.4)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: "1.25rem",
+              }}
+            >
+              <h3 style={{ margin: 0, fontSize: "1.15rem" }}>
+                {editingScheduleId ? "Edit custom schedule" : "Add custom schedule"}
+              </h3>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => {
+                  setAddScheduleOpen(false);
+                  setEditingScheduleId(null);
+                  setScheduleError("");
+                }}
+                aria-label="Close dialog"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "1rem",
+                marginBottom: "1.25rem",
+              }}
+            >
+              <label className="field-label">
+                Start time
+                <RoundedTimePicker
+                  value={newStartTime}
+                  onChange={(timeVal) => {
+                    setNewStartTime(timeVal);
+                    setScheduleError("");
+                  }}
+                  ariaLabel="Schedule start time"
+                  placeholder="--:--"
+                />
+              </label>
+              <label className="field-label">
+                End time
+                <RoundedTimePicker
+                  value={newEndTime}
+                  onChange={(timeVal) => {
+                    setNewEndTime(timeVal);
+                    setScheduleError("");
+                  }}
+                  ariaLabel="Schedule end time"
+                  placeholder="--:--"
+                />
+              </label>
+            </div>
+
+            <div style={{ marginBottom: "1.5rem" }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: "0.6rem",
+                }}
+              >
+                <span style={{ fontSize: "0.88rem", fontWeight: 600 }}>
+                  Select days
+                </span>
+                <div style={{ display: "flex", gap: "0.5rem" }}>
+                  <button
+                    type="button"
+                    className="link-subtle"
+                    style={{ fontSize: "0.78rem" }}
+                    onClick={() => {
+                      setNewSelectedDays(SCHEDULE_DAYS.map((d) => d.id));
+                      setScheduleError("");
+                    }}
+                  >
+                    All days
+                  </button>
+                  <span style={{ color: "var(--muted)" }}>·</span>
+                  <button
+                    type="button"
+                    className="link-subtle"
+                    style={{ fontSize: "0.78rem" }}
+                    onClick={() => {
+                      setNewSelectedDays([
+                        "monday",
+                        "tuesday",
+                        "wednesday",
+                        "thursday",
+                        "friday",
+                      ]);
+                      setScheduleError("");
+                    }}
+                  >
+                    Weekdays
+                  </button>
+                  <span style={{ color: "var(--muted)" }}>·</span>
+                  <button
+                    type="button"
+                    className="link-subtle"
+                    style={{ fontSize: "0.78rem" }}
+                    onClick={() => {
+                      setNewSelectedDays(["saturday", "sunday"]);
+                      setScheduleError("");
+                    }}
+                  >
+                    Weekends
+                  </button>
+                </div>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+                {SCHEDULE_DAYS.map((d) => {
+                  const isSelected = newSelectedDays.includes(d.id);
+                  return (
+                    <button
+                      key={d.id}
+                      type="button"
+                      onClick={() => {
+                        setNewSelectedDays((prev) =>
+                          prev.includes(d.id)
+                            ? prev.filter((x) => x !== d.id)
+                            : [...prev, d.id],
+                        );
+                        setScheduleError("");
+                      }}
+                      className={`schedule-day-chip ${isSelected ? "selected" : ""}`}
+                    >
+                      {d.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {scheduleError && (
+              <div style={{ marginBottom: "1.25rem" }}>
+                <Notice tone="error">{scheduleError}</Notice>
+              </div>
+            )}
+
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: "0.75rem",
+              }}
+            >
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setAddScheduleOpen(false);
+                  setEditingScheduleId(null);
+                  setScheduleError("");
+                }}
+              >
+                Cancel
+              </Button>
+              <Button type="button" onClick={handleSaveSchedule}>
+                <Check size={16} /> {editingScheduleId ? "Save changes" : "Add schedule"}
+              </Button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {overrideWarningOpen && (
+        <div
+          className="address-map-backdrop"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+          }}
+        >
+          <div
+            className="admin-panel"
+            role="dialog"
+            aria-modal="true"
+            style={{
+              maxWidth: "460px",
+              width: "90%",
+              padding: "1.75rem",
+              borderRadius: "12px",
+              boxShadow: "0 12px 32px rgba(0, 0, 0, 0.4)",
+              textAlign: "center",
+            }}
+          >
+            <h3
+              style={{
+                margin: "0 0 1rem 0",
+                fontSize: "1.2rem",
+                fontWeight: 600,
+              }}
+            >
+              Are you sure you want to override current schedule?
+            </h3>
+            <p
+              style={{
+                margin: "0 0 1.5rem 0",
+                color: "var(--muted)",
+                fontSize: "0.92rem",
+                lineHeight: 1.45,
+              }}
+            >
+              {pendingToggleValue
+                ? "The restaurant is currently outside scheduled operating hours. Turning this on will allow customers to place orders right now."
+                : "The restaurant is currently within scheduled operating hours. Turning this off will pause incoming orders immediately."}
+            </p>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "center",
+                gap: "1rem",
+              }}
+            >
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setOverrideWarningOpen(false);
+                  setPendingToggleValue(null);
+                }}
+              >
+                No
+              </Button>
+              <Button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  const val = pendingToggleValue;
+                  setOverrideWarningOpen(false);
+                  setPendingToggleValue(null);
+                  if (val !== null) {
+                    void persistAcceptingOrders(val);
+                  }
+                }}
+              >
+                Yes
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {locationPickerOpen && (
+        <RestaurantLocationMap
+          latitude={form.latitude}
+          longitude={form.longitude}
+          onClose={() => setLocationPickerOpen(false)}
+          onSave={(latitude, longitude) => {
+            change("latitude", latitude);
+            change("longitude", longitude);
+          }}
+        />
+      )}
     </>
   );
 }
@@ -2862,7 +3933,7 @@ function ActivityCenter() {
   >([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
-  const [sort, setSort] = useState("newest");
+  const [sort, setSort] = usePreference<string>("admin_activity_sort", "newest");
   useEffect(() => {
     api<typeof events>("/admin/events?limit=250")
       .then(setEvents)
@@ -2914,7 +3985,7 @@ function ActivityCenter() {
 }
 
 function Offers() {
-  const [audience, setAudience] = useState("ALL");
+  const [audience, setAudience] = usePreference<string>("admin_offers_audience", "ALL");
   const [channels, setChannels] = useState<string[]>(["EMAIL"]);
   const [subject, setSubject] = useState("A little something from KebabZilla");
   const [message, setMessage] = useState("");
@@ -2938,7 +4009,7 @@ function Offers() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [editingPreview, setEditingPreview] = useState(false);
   const [logQuery, setLogQuery] = useState("");
-  const [logSort, setLogSort] = useState("newest");
+  const [logSort, setLogSort] = usePreference<string>("admin_offers_log_sort", "newest");
   const [selectedLog, setSelectedLog] = useState<(typeof logs)[number] | null>(null);
   const refresh = useCallback(
     () => api<typeof logs>("/admin/offers").then(setLogs),
@@ -3069,7 +4140,25 @@ function Offers() {
   );
 }
 
-type MenuDiscountRow = { id: number; campaign_name: string | null; menu_item_ids: number[]; menu_item_names: string[]; discount_percent: number; starts_at: string; ends_at: string; created_at: string };
+type MenuDiscountRow = {
+  id: number;
+  campaign_name: string | null;
+  menu_item_ids: number[];
+  custom_menu_item_ids?: number[];
+  menu_item_names: string[];
+  discount_percent: number;
+  starts_at: string;
+  ends_at: string;
+  created_at: string;
+};
+
+type SelectableItem = {
+  key: string;
+  id: number;
+  isCustom: boolean;
+  name: string;
+  price_paise: number;
+};
 
 function localDateTimeValue(value: Date) {
   return new Date(value.getTime() - value.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
@@ -3079,11 +4168,11 @@ function localTimePart(value: Date) { return localDateTimeValue(value).slice(11,
 function combineLocalDateTime(date: string, time: string) { return new Date(`${date}T${time}`); }
 
 function Discounts() {
-  const [menu, setMenu] = useState<MenuItem[]>([]);
+  const [itemsList, setItemsList] = useState<SelectableItem[]>([]);
   const [discounts, setDiscounts] = useState<MenuDiscountRow[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCampaignId, setEditingCampaignId] = useState<number | null>(null);
-  const [selectedMenuItemIds, setSelectedMenuItemIds] = useState<number[]>([]);
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
   const [itemSearch, setItemSearch] = useState("");
   const [menuPickerOpen, setMenuPickerOpen] = useState(false);
   const [campaignName, setCampaignName] = useState("");
@@ -3095,94 +4184,410 @@ function Discounts() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+
   const refresh = useCallback(async () => {
-    const [availableMenu, scheduled] = await Promise.all([api<MenuItem[]>("/menu/manage"), api<MenuDiscountRow[]>("/admin/discounts")]);
-    setMenu(availableMenu);
+    const [availableMenu, customMenu, scheduled] = await Promise.all([
+      api<MenuItem[]>("/menu/manage"),
+      api<CustomMenuItem[]>("/custom-menu/manage"),
+      api<MenuDiscountRow[]>("/admin/discounts"),
+    ]);
+    const unified: SelectableItem[] = [
+      ...availableMenu.map((m) => ({
+        key: `std-${m.id}`,
+        id: m.id,
+        isCustom: false,
+        name: m.name,
+        price_paise: m.price_paise,
+      })),
+      ...customMenu.map((c) => ({
+        key: `cust-${c.id}`,
+        id: c.id,
+        isCustom: true,
+        name: `[Custom] ${c.name}`,
+        price_paise: c.base_price_paise,
+      })),
+    ];
+    setItemsList(unified);
     setDiscounts(scheduled);
   }, []);
-  useEffect(() => { void refresh().catch((err) => setError(err instanceof Error ? err.message : "Could not load discounts.")).finally(() => setLoading(false)); }, [refresh]);
+
+  useEffect(() => {
+    void refresh()
+      .catch((err) => setError(err instanceof Error ? err.message : "Could not load discounts."))
+      .finally(() => setLoading(false));
+  }, [refresh]);
 
   async function createDiscount(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setError("");
+    const stdIds = selectedKeys.filter((k) => k.startsWith("std-")).map((k) => Number(k.replace("std-", "")));
+    const custIds = selectedKeys.filter((k) => k.startsWith("cust-")).map((k) => Number(k.replace("cust-", "")));
     try {
-      await api<MenuDiscountRow>(editingCampaignId ? `/admin/discounts/${editingCampaignId}` : "/admin/discounts", { method: editingCampaignId ? "PUT" : "POST", body: JSON.stringify({ campaign_name: campaignName.trim() || null, menu_item_ids: selectedMenuItemIds, discount_percent: Number(percent), starts_at: combineLocalDateTime(startsDate, startsTime).toISOString(), ends_at: combineLocalDateTime(endsDate, endsTime).toISOString() }) });
+      await api<MenuDiscountRow>(
+        editingCampaignId ? `/admin/discounts/${editingCampaignId}` : "/admin/discounts",
+        {
+          method: editingCampaignId ? "PUT" : "POST",
+          body: JSON.stringify({
+            campaign_name: campaignName.trim() || null,
+            menu_item_ids: stdIds,
+            custom_menu_item_ids: custIds,
+            discount_percent: Number(percent),
+            starts_at: combineLocalDateTime(startsDate, startsTime).toISOString(),
+            ends_at: combineLocalDateTime(endsDate, endsTime).toISOString(),
+          }),
+        },
+      );
       setModalOpen(false);
       setEditingCampaignId(null);
       setCampaignName("");
-      setSelectedMenuItemIds([]);
+      setSelectedKeys([]);
       setItemSearch("");
       setMenuPickerOpen(false);
       await refresh();
-    } catch (err) { setError(err instanceof Error ? err.message : "Could not create this discount."); }
-    finally { setBusy(false); }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save this discount.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function removeDiscount(id: number) {
-    try { await api(`/admin/discounts/${id}`, { method: "DELETE" }); setDiscounts((rows) => rows.filter((row) => row.id !== id)); }
-    catch (err) { setError(err instanceof Error ? err.message : "Could not remove this discount."); }
+    try {
+      await api(`/admin/discounts/${id}`, { method: "DELETE" });
+      setDiscounts((rows) => rows.filter((row) => row.id !== id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not remove this discount.");
+    }
   }
 
   const startsAt = combineLocalDateTime(startsDate, startsTime);
   const endsAt = combineLocalDateTime(endsDate, endsTime);
-  const occupiedMenuItemIds = new Set(discounts.filter((discount) => discount.id !== editingCampaignId && new Date(discount.starts_at) < endsAt && new Date(discount.ends_at) > startsAt).flatMap((discount) => discount.menu_item_ids));
-  const selectableMenu = menu.filter((item) => !occupiedMenuItemIds.has(item.id) || selectedMenuItemIds.includes(item.id));
-  const filteredMenu = selectableMenu.filter((item) => item.name.toLowerCase().includes(itemSearch.trim().toLowerCase()));
-  const allMenuSelected = selectableMenu.length > 0 && selectableMenu.every((item) => selectedMenuItemIds.includes(item.id));
-  const hiddenDiscountedMenuCount = menu.filter((item) => occupiedMenuItemIds.has(item.id) && !selectedMenuItemIds.includes(item.id)).length;
+  const occupiedKeys = new Set(
+    discounts
+      .filter((discount) => discount.id !== editingCampaignId && new Date(discount.starts_at) < endsAt && new Date(discount.ends_at) > startsAt)
+      .flatMap((discount) => [
+        ...(discount.menu_item_ids || []).map((id) => `std-${id}`),
+        ...(discount.custom_menu_item_ids || []).map((id) => `cust-${id}`),
+      ]),
+  );
+
+  const selectableItems = itemsList.filter((item) => !occupiedKeys.has(item.key) || selectedKeys.includes(item.key));
+  const filteredItems = selectableItems.filter((item) => item.name.toLowerCase().includes(itemSearch.trim().toLowerCase()));
+  const allItemsSelected = selectableItems.length > 0 && selectableItems.every((item) => selectedKeys.includes(item.key));
+  const hiddenDiscountedCount = itemsList.filter((item) => occupiedKeys.has(item.key) && !selectedKeys.includes(item.key)).length;
+
   const openCreateModal = () => {
     const now = new Date();
     const later = new Date(Date.now() + 60 * 60 * 1000);
-    setError(""); setEditingCampaignId(null); setCampaignName(""); setPercent("10"); setSelectedMenuItemIds([]); setItemSearch(""); setMenuPickerOpen(false);
-    setStartsDate(localDatePart(now)); setStartsTime(localTimePart(now)); setEndsDate(localDatePart(later)); setEndsTime(localTimePart(later)); setModalOpen(true);
+    setError("");
+    setEditingCampaignId(null);
+    setCampaignName("");
+    setPercent("10");
+    setSelectedKeys([]);
+    setItemSearch("");
+    setMenuPickerOpen(false);
+    setStartsDate(localDatePart(now));
+    setStartsTime(localTimePart(now));
+    setEndsDate(localDatePart(later));
+    setEndsTime(localTimePart(later));
+    setModalOpen(true);
   };
+
   const openEditModal = (discount: MenuDiscountRow) => {
     const startsAt = new Date(discount.starts_at);
     const endsAt = new Date(discount.ends_at);
-    setError(""); setEditingCampaignId(discount.id); setCampaignName(discount.campaign_name || ""); setSelectedMenuItemIds(discount.menu_item_ids); setItemSearch(""); setMenuPickerOpen(false);
-    setPercent(String(discount.discount_percent)); setStartsDate(localDatePart(startsAt)); setStartsTime(localTimePart(startsAt)); setEndsDate(localDatePart(endsAt)); setEndsTime(localTimePart(endsAt)); setModalOpen(true);
+    const currentKeys = [
+      ...(discount.menu_item_ids || []).map((id) => `std-${id}`),
+      ...(discount.custom_menu_item_ids || []).map((id) => `cust-${id}`),
+    ];
+    setError("");
+    setEditingCampaignId(discount.id);
+    setCampaignName(discount.campaign_name || "");
+    setSelectedKeys(currentKeys);
+    setItemSearch("");
+    setMenuPickerOpen(false);
+    setPercent(String(discount.discount_percent));
+    setStartsDate(localDatePart(startsAt));
+    setStartsTime(localTimePart(startsAt));
+    setEndsDate(localDatePart(endsAt));
+    setEndsTime(localTimePart(endsAt));
+    setModalOpen(true);
   };
 
-  return <>
-    <PageTitle eyebrow="A LITTLE SOMETHING OFF THE MENU" title="Discounts" description="Schedule percentage discounts across one or more menu items." action={<Button onClick={openCreateModal}><Plus size={16} /> <span>Create discount</span></Button>} />
-    {error && <Notice onDismiss={() => setError("")}>{error}</Notice>}
-    {loading ? <Loading label="Loading discounts…" /> : discounts.length ? (
-      <section className="admin-panel discount-list-panel">
-        <div className="discount-list-heading"><div><span className="eyebrow">SCHEDULED OFFERS</span><h2>Menu discounts</h2></div><span>{discounts.length} campaign{discounts.length === 1 ? "" : "s"}</span></div>
-        <div className="discount-list">{discounts.map((discount) => {
-          const start = new Date(discount.starts_at);
-          const end = new Date(discount.ends_at);
-          const now = Date.now();
-          const state = now < start.getTime() ? "Upcoming" : now < end.getTime() ? "Active" : "Ended";
-          const names = discount.menu_item_names.join(", ");
-          return <article className="discount-row" key={discount.id}>
-            <div className="discount-percent"><strong>{discount.discount_percent}%</strong></div>
-            <div className="discount-row-main"><strong>{discount.campaign_name || names || "Menu items unavailable"}</strong><small>{discount.campaign_name ? names : `${discount.menu_item_ids.length} menu item${discount.menu_item_ids.length === 1 ? "" : "s"}`}</small></div>
-            <span className={`discount-state ${state.toLowerCase()}`}>{state}</span>
-            <div className="discount-dates"><span>Starts <strong>{friendlyDate(discount.starts_at)}</strong></span><span>Ends <strong>{friendlyDate(discount.ends_at)}</strong></span></div>
-            <div className="discount-row-actions">
-              {state !== "Ended" && <><button type="button" className="icon-button" aria-label={`Edit discount campaign for ${names}`} title="Edit campaign" onClick={() => openEditModal(discount)}><Edit3 size={16} /></button><button type="button" className="icon-button danger-icon" aria-label={`Delete discount for ${names}`} title="Delete discount" onClick={() => void removeDiscount(discount.id)}><Trash2 size={16} /></button></>}
+  return (
+    <>
+      <PageTitle
+        eyebrow="A LITTLE SOMETHING OFF THE MENU"
+        title="Discounts"
+        description="Schedule percentage discounts across standard and custom menu items."
+        action={
+          <Button onClick={openCreateModal}>
+            <Plus size={16} /> <span>Create discount</span>
+          </Button>
+        }
+      />
+      {error && <Notice onDismiss={() => setError("")}>{error}</Notice>}
+      {loading ? (
+        <Loading label="Loading discounts…" />
+      ) : discounts.length ? (
+        <section className="admin-panel discount-list-panel">
+          <div className="discount-list-heading">
+            <div>
+              <span className="eyebrow">SCHEDULED OFFERS</span>
+              <h2>Menu discounts</h2>
             </div>
-          </article>;
-        })}</div>
-      </section>
-    ) : <EmptyState icon={<Percent size={20} />} title="No discounts scheduled" description="Create a percentage offer for selected menu items with custom start and end times." />}
-    {modalOpen && <div className="modal-backdrop discount-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) { setModalOpen(false); setEditingCampaignId(null); } }}>
-      <section className="modal-card discount-modal" role="dialog" aria-modal="true" aria-labelledby="discount-modal-title">
-        <div className="modal-heading"><div><span className="eyebrow">A TIMED MENU OFFER</span><h2 id="discount-modal-title">{editingCampaignId ? "Edit discount campaign" : "Create discount"}</h2></div><button type="button" className="icon-button" aria-label="Close" onClick={() => { setModalOpen(false); setEditingCampaignId(null); }}><X size={18} /></button></div>
-        <form className="modal-form" onSubmit={(event) => void createDiscount(event)}>
-          {error && <Notice>{error}</Notice>}
-          <label className="field-label">Campaign name <span className="field-optional">optional</span><input maxLength={80} placeholder="e.g. Zilla’s Pick" value={campaignName} onChange={(event) => setCampaignName(event.target.value)} /></label>
-          <label className="field-label">Discount · %<input required type="number" min="1" max="99" value={percent} onChange={(event) => setPercent(event.target.value)} /></label>
-          <div className="field-label discount-menu-field"><span>Menu items</span><button className="discount-menu-trigger" type="button" aria-expanded={menuPickerOpen} onClick={() => setMenuPickerOpen((open) => !open)}>{selectedMenuItemIds.length ? `${selectedMenuItemIds.length} item${selectedMenuItemIds.length === 1 ? "" : "s"} selected` : "Choose menu items"}<span>⌄</span></button>{menuPickerOpen && <div className="discount-menu-picker"><label className="admin-search"><Search size={16} /><input autoFocus aria-label="Search menu items" placeholder="Search menu items" value={itemSearch} onChange={(event) => setItemSearch(event.target.value)} /></label><button type="button" className="discount-select-all" onClick={() => setSelectedMenuItemIds(allMenuSelected ? [] : selectableMenu.map((item) => item.id))}><input type="checkbox" readOnly checked={allMenuSelected} />Select all available menu items</button>{hiddenDiscountedMenuCount > 0 && <p className="discount-menu-unavailable">{hiddenDiscountedMenuCount} item{hiddenDiscountedMenuCount === 1 ? " is" : "s are"} hidden because another discount overlaps this schedule.</p>}<div className="discount-menu-options">{filteredMenu.map((item) => <label key={item.id}><input type="checkbox" checked={selectedMenuItemIds.includes(item.id)} onChange={(event) => setSelectedMenuItemIds((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))} /><span>{item.name}</span><small>{formatINR(item.price_paise)}</small></label>)}{!filteredMenu.length && <p>No menu items match that search.</p>}</div></div>}</div>
-          <div className="discount-datetime-grid"><div className="discount-time-group"><span className="field-label">Starts</span><div><label className="sr-only" htmlFor="discount-start-date">Start date</label><input id="discount-start-date" required type="date" value={startsDate} onChange={(event) => setStartsDate(event.target.value)} /><label className="sr-only" htmlFor="discount-start-time">Start time</label><input id="discount-start-time" required type="time" value={startsTime} onChange={(event) => setStartsTime(event.target.value)} /></div></div><div className="discount-time-group"><span className="field-label">Ends</span><div><label className="sr-only" htmlFor="discount-end-date">End date</label><input id="discount-end-date" required type="date" value={endsDate} onChange={(event) => setEndsDate(event.target.value)} /><label className="sr-only" htmlFor="discount-end-time">End time</label><input id="discount-end-time" required type="time" value={endsTime} onChange={(event) => setEndsTime(event.target.value)} /></div></div></div>
-          <div className="modal-actions"><Button type="button" variant="secondary" disabled={busy} onClick={() => { setModalOpen(false); setEditingCampaignId(null); }}>Cancel</Button><Button type="submit" disabled={busy || !selectedMenuItemIds.length || Number(percent) < 1 || endsAt <= startsAt}>{busy ? (editingCampaignId ? "Saving…" : "Creating…") : (editingCampaignId ? "Save changes" : "Create discount")} <ArrowRight size={15} /></Button></div>
-        </form>
-      </section>
-    </div>}
-  </>;
+            <span>
+              {discounts.length} campaign{discounts.length === 1 ? "" : "s"}
+            </span>
+          </div>
+          <div className="discount-list">
+            {discounts.map((discount) => {
+              const start = new Date(discount.starts_at);
+              const end = new Date(discount.ends_at);
+              const now = Date.now();
+              const state = now < start.getTime() ? "Upcoming" : now < end.getTime() ? "Active" : "Ended";
+              const totalItemsCount = (discount.menu_item_ids?.length || 0) + (discount.custom_menu_item_ids?.length || 0);
+              const names = discount.menu_item_names.join(", ");
+              return (
+                <article className="discount-row" key={discount.id}>
+                  <div className="discount-percent">
+                    <strong>{discount.discount_percent}%</strong>
+                  </div>
+                  <div className="discount-row-main">
+                    <strong>{discount.campaign_name || names || "Menu items unavailable"}</strong>
+                    <small>
+                      {discount.campaign_name ? names : `${totalItemsCount} item${totalItemsCount === 1 ? "" : "s"}`}
+                    </small>
+                  </div>
+                  <span className={`discount-state ${state.toLowerCase()}`}>{state}</span>
+                  <div className="discount-dates">
+                    <span>
+                      Starts <strong>{friendlyDate(discount.starts_at)}</strong>
+                    </span>
+                    <span>
+                      Ends <strong>{friendlyDate(discount.ends_at)}</strong>
+                    </span>
+                  </div>
+                  <div className="discount-row-actions">
+                    {state !== "Ended" && (
+                      <>
+                        <button
+                          type="button"
+                          className="icon-button"
+                          aria-label={`Edit discount campaign for ${names}`}
+                          title="Edit campaign"
+                          onClick={() => openEditModal(discount)}
+                        >
+                          <Edit3 size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          className="icon-button danger-icon"
+                          aria-label={`Delete discount for ${names}`}
+                          title="Delete discount"
+                          onClick={() => void removeDiscount(discount.id)}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      ) : (
+        <EmptyState
+          icon={<Percent size={20} />}
+          title="No discounts scheduled"
+          description="Create a percentage offer for standard and custom menu items with custom start and end times."
+        />
+      )}
+      {modalOpen && (
+        <div
+          className="modal-backdrop discount-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !busy) {
+              setModalOpen(false);
+              setEditingCampaignId(null);
+            }
+          }}
+        >
+          <section className="modal-card discount-modal" role="dialog" aria-modal="true" aria-labelledby="discount-modal-title">
+            <div className="modal-heading">
+              <div>
+                <span className="eyebrow">A TIMED MENU OFFER</span>
+                <h2 id="discount-modal-title">{editingCampaignId ? "Edit discount campaign" : "Create discount"}</h2>
+              </div>
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="Close"
+                onClick={() => {
+                  setModalOpen(false);
+                  setEditingCampaignId(null);
+                }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <form className="modal-form" onSubmit={(event) => void createDiscount(event)}>
+              {error && <Notice>{error}</Notice>}
+              <label className="field-label">
+                Campaign name <span className="field-optional">optional</span>
+                <input
+                  maxLength={80}
+                  placeholder="e.g. Zilla’s Pick"
+                  value={campaignName}
+                  onChange={(event) => setCampaignName(event.target.value)}
+                />
+              </label>
+              <label className="field-label">
+                Discount · %
+                <input
+                  required
+                  type="number"
+                  min="1"
+                  max="99"
+                  value={percent}
+                  onChange={(event) => setPercent(event.target.value)}
+                />
+              </label>
+              <div className="field-label discount-menu-field">
+                <span>Menu items (Standard & Custom)</span>
+                <button
+                  className="discount-menu-trigger"
+                  type="button"
+                  aria-expanded={menuPickerOpen}
+                  onClick={() => setMenuPickerOpen((open) => !open)}
+                >
+                  {selectedKeys.length ? `${selectedKeys.length} item${selectedKeys.length === 1 ? "" : "s"} selected` : "Choose menu items"}
+                  <span>⌄</span>
+                </button>
+                {menuPickerOpen && (
+                  <div className="discount-menu-picker">
+                    <label className="admin-search">
+                      <Search size={16} />
+                      <input
+                        autoFocus
+                        aria-label="Search menu items"
+                        placeholder="Search standard or custom items"
+                        value={itemSearch}
+                        onChange={(event) => setItemSearch(event.target.value)}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="discount-select-all"
+                      onClick={() => setSelectedKeys(allItemsSelected ? [] : selectableItems.map((item) => item.key))}
+                    >
+                      <input type="checkbox" readOnly checked={allItemsSelected} />
+                      Select all available menu items
+                    </button>
+                    {hiddenDiscountedCount > 0 && (
+                      <p className="discount-menu-unavailable">
+                        {hiddenDiscountedCount} item{hiddenDiscountedCount === 1 ? " is" : "s are"} hidden because another discount overlaps this schedule.
+                      </p>
+                    )}
+                    <div className="discount-menu-options">
+                      {filteredItems.map((item) => (
+                        <label key={item.key}>
+                          <input
+                            type="checkbox"
+                            checked={selectedKeys.includes(item.key)}
+                            onChange={(event) =>
+                              setSelectedKeys((keys) =>
+                                event.target.checked ? [...keys, item.key] : keys.filter((k) => k !== item.key),
+                              )
+                            }
+                          />
+                          <span>{item.name}</span>
+                          <small>{formatINR(item.price_paise)}</small>
+                        </label>
+                      ))}
+                      {!filteredItems.length && <p>No menu items match that search.</p>}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="discount-datetime-grid">
+                <div className="discount-time-group">
+                  <span className="field-label">Starts</span>
+                  <div>
+                    <label className="sr-only" htmlFor="discount-start-date">
+                      Start date
+                    </label>
+                    <RoundedDatePicker
+                      value={startsDate}
+                      onChange={setStartsDate}
+                      ariaLabel="Discount start date"
+                      placeholder="Start date"
+                    />
+                    <label className="sr-only" htmlFor="discount-start-time">
+                      Start time
+                    </label>
+                    <RoundedTimePicker
+                      value={startsTime}
+                      onChange={setStartsTime}
+                      ariaLabel="Discount start time"
+                      placeholder="Start time"
+                    />
+                  </div>
+                </div>
+                <div className="discount-time-group">
+                  <span className="field-label">Ends</span>
+                  <div>
+                    <label className="sr-only" htmlFor="discount-end-date">
+                      End date
+                    </label>
+                    <RoundedDatePicker
+                      value={endsDate}
+                      onChange={setEndsDate}
+                      ariaLabel="Discount end date"
+                      placeholder="End date"
+                    />
+                    <label className="sr-only" htmlFor="discount-end-time">
+                      End time
+                    </label>
+                    <RoundedTimePicker
+                      value={endsTime}
+                      onChange={setEndsTime}
+                      ariaLabel="Discount end time"
+                      placeholder="End time"
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="modal-actions">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => {
+                    setModalOpen(false);
+                    setEditingCampaignId(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={busy || !selectedKeys.length || Number(percent) < 1 || endsAt <= startsAt}
+                >
+                  {busy ? (editingCampaignId ? "Saving…" : "Creating…") : (editingCampaignId ? "Save changes" : "Create discount")}{" "}
+                  <ArrowRight size={15} />
+                </Button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+    </>
+  );
 }
+
 
 export default function Admin() {
   return (

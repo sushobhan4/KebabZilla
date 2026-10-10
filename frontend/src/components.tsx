@@ -1,21 +1,29 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { ArrowLeft, ArrowRight, Check, ChevronDown, CircleAlert, ImageOff, LoaderCircle, Minus, Plus, Search, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Calendar, Check, ChevronDown, CircleAlert, Clock, ImageOff, LoaderCircle, Minus, Plus, Search, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { API_BASE, formatStatus } from './api'
 
-export function Brand({ compact = false }: { compact?: boolean }) {
-  return <Link className={`brand ${compact ? 'brand-compact' : ''}`} to="/" aria-label="KebabZilla home">
-    <span className="brand-mark"><img src="/kebabzilla-mark.png" alt="" /></span>
-    <span className="brand-word">Kebab<span>Zilla</span></span>
-  </Link>
+import { useRestaurant } from './state'
+
+export function Brand({ compact = false, showTagline = true }: { compact?: boolean; showTagline?: boolean }) {
+  const { restaurant } = useRestaurant()
+  const name = restaurant?.restaurant_name || 'KebabZilla'
+  const tagline = restaurant?.tagline || 'Meat, Fire, Glory'
+
+  return (
+    <Link className={`brand-identity ${compact ? 'brand-compact' : ''}`} to="/" aria-label={`${name} home`}>
+      <span className="brand-name-serif">{name}</span>
+      {showTagline && tagline && <span className="brand-tagline-script">{tagline}</span>}
+    </Link>
+  )
 }
 
 export function PageTitle({ eyebrow, title, description, action }: { eyebrow?: string; title: string; description?: string; action?: ReactNode }) {
   return <div className="page-title-row"><div>{eyebrow && <div className="eyebrow">{eyebrow}</div>}<h1>{title}</h1>{description && <p>{description}</p>}</div>{action && <div className="page-action">{action}</div>}</div>
 }
 
-export function RoundedSelect({ value, options, onChange, className = '', disabled = false, ariaLabel, icon }: {
+export function RoundedSelect({ value, options, onChange, className = '', disabled = false, ariaLabel, icon, placeholder = 'Choose…' }: {
   value: string
   options: { value: string; label: string }[]
   onChange: (value: string) => void
@@ -23,6 +31,7 @@ export function RoundedSelect({ value, options, onChange, className = '', disabl
   disabled?: boolean
   ariaLabel?: string
   icon?: ReactNode
+  placeholder?: string
 }) {
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)
@@ -69,13 +78,212 @@ export function RoundedSelect({ value, options, onChange, className = '', disabl
     return () => document.removeEventListener('pointerdown', close)
   }, [open])
   return <div className={`rounded-select ${className}`} ref={root}>
-    <button ref={trigger} type="button" className={`rounded-select-trigger ${icon ? 'has-icon' : ''}`} aria-label={ariaLabel || selected?.label} aria-haspopup="listbox" aria-expanded={open} disabled={disabled} onClick={() => setOpen((current) => !current)}>
+    <button ref={trigger} type="button" className={`rounded-select-trigger ${icon ? 'has-icon' : ''}`} aria-label={ariaLabel || selected?.label || placeholder} aria-haspopup="listbox" aria-expanded={open} disabled={disabled} onClick={() => setOpen((current) => !current)}>
       {icon && <span className="rounded-select-icon">{icon}</span>}
-      <span className="rounded-select-label">{selected?.label || 'Choose…'}</span>
+      <span className="rounded-select-label">{selected?.label || placeholder}</span>
       <ChevronDown aria-hidden="true" className={`rounded-select-chevron ${open ? 'open' : ''}`} size={14} strokeWidth={1.8} />
     </button>
     {open && createPortal(<div ref={menu} className="rounded-select-menu" style={menuPosition} role="listbox" aria-label={ariaLabel}>{options.map((option) => <button key={option.value} type="button" role="option" aria-selected={option.value === value} className={option.value === value ? 'selected' : ''} onClick={() => { onChange(option.value); setOpen(false) }}>{option.label}</button>)}</div>, document.body)}
   </div>
+}
+
+export function RoundedTimePicker({
+  value,
+  onChange,
+  className = '',
+  disabled = false,
+  ariaLabel = 'Select time',
+  placeholder = 'Select time',
+  minuteStep = 1,
+  allowedHours,
+}: {
+  value: string // 'HH:MM'
+  onChange: (val: string) => void
+  className?: string
+  disabled?: boolean
+  ariaLabel?: string
+  placeholder?: string
+  minuteStep?: number
+  allowedHours?: string[]
+}) {
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement>(null)
+  const trigger = useRef<HTMLButtonElement>(null)
+  const menu = useRef<HTMLDivElement>(null)
+  const [menuPosition, setMenuPosition] = useState<CSSProperties>({ position: 'fixed', top: 0, left: -10000, visibility: 'hidden' })
+
+  const [currentH, currentM] = (value && value.includes(':') ? value.split(':') : ['10', '00']).map((s) => s.padStart(2, '0'))
+
+  useLayoutEffect(() => {
+    if (!open) return
+    const positionPicker = () => {
+      const triggerRect = trigger.current?.getBoundingClientRect()
+      const menuEl = menu.current
+      if (!triggerRect || !menuEl) return
+      const vpPad = 8
+      const availBelow = window.innerHeight - triggerRect.bottom - vpPad * 2
+      const availAbove = triggerRect.top - vpPad * 2
+      const menuH = 260
+      const placeAbove = availBelow < menuH && availAbove > availBelow
+      const top = placeAbove
+        ? Math.max(vpPad, triggerRect.top - 7 - menuH)
+        : Math.min(window.innerHeight - vpPad, triggerRect.bottom + 7)
+      const left = Math.max(vpPad, Math.min(triggerRect.left, window.innerWidth - 140 - vpPad))
+      setMenuPosition({ position: 'fixed', top, left, width: 130, zIndex: 1000, visibility: 'visible' })
+    }
+    positionPicker()
+    window.addEventListener('resize', positionPicker)
+    window.addEventListener('scroll', positionPicker, true)
+    return () => {
+      window.removeEventListener('resize', positionPicker)
+      window.removeEventListener('scroll', positionPicker, true)
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    const close = (e: PointerEvent) => {
+      const target = e.target as Node
+      if (!root.current?.contains(target) && !menu.current?.contains(target)) setOpen(false)
+    }
+    document.addEventListener('pointerdown', close)
+    return () => document.removeEventListener('pointerdown', close)
+  }, [open])
+
+  // Scroll active hour and minute into view when opening
+  useEffect(() => {
+    if (!open || !menu.current) return
+    const hourCol = menu.current.querySelector('.rounded-time-col-hours')
+    const minCol = menu.current.querySelector('.rounded-time-col-minutes')
+    const activeHour = hourCol?.querySelector('.selected') as HTMLElement | null
+    const activeMin = minCol?.querySelector('.selected') as HTMLElement | null
+    if (activeHour && hourCol) hourCol.scrollTop = activeHour.offsetTop - 40
+    if (activeMin && minCol) minCol.scrollTop = activeMin.offsetTop - 40
+  }, [open])
+
+  const allHours = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'))
+  const hours = allowedHours && allowedHours.length > 0 ? allHours.filter((h) => allowedHours.includes(h)) : allHours
+  const minutes = Array.from({ length: Math.ceil(60 / minuteStep) }, (_, i) => String(i * minuteStep).padStart(2, '0'))
+
+  return (
+    <div className={`rounded-select rounded-time-picker-root ${className}`} ref={root}>
+      <button
+        ref={trigger}
+        type="button"
+        className="rounded-select-trigger has-icon"
+        aria-label={ariaLabel}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        disabled={disabled}
+        onClick={() => setOpen((c) => !c)}
+      >
+        <span className="rounded-select-label">{value || placeholder}</span>
+        <Clock size={15} className="rounded-picker-trigger-icon" />
+      </button>
+
+      {open && createPortal(
+        <div ref={menu} className="rounded-time-menu" style={menuPosition}>
+          <div className="rounded-time-header">
+            <span>Hour</span>
+            <span>Minute</span>
+          </div>
+          <div className="rounded-time-columns">
+            <div className="rounded-time-col rounded-time-col-hours">
+              {hours.map((h) => (
+                <button
+                  key={h}
+                  type="button"
+                  className={h === currentH ? 'selected' : ''}
+                  onClick={() => onChange(`${h}:${currentM}`)}
+                >
+                  {h}
+                </button>
+              ))}
+            </div>
+            <div className="rounded-time-col rounded-time-col-minutes">
+              {minutes.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  className={m === currentM ? 'selected' : ''}
+                  onClick={() => onChange(`${currentH}:${m}`)}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="rounded-time-footer">
+            <button type="button" className="rounded-time-done-btn" onClick={() => setOpen(false)}>
+              Done
+            </button>
+          </div>
+        </div>,
+        document.body
+      )}
+    </div>
+  )
+}
+
+export function RoundedDatePicker({
+  value,
+  onChange,
+  className = '',
+  disabled = false,
+  min,
+  max,
+  ariaLabel = 'Select date',
+  placeholder = 'Select date',
+}: {
+  value: string // YYYY-MM-DD
+  onChange: (val: string) => void
+  className?: string
+  disabled?: boolean
+  min?: string
+  max?: string
+  ariaLabel?: string
+  placeholder?: string
+}) {
+  const hiddenInputRef = useRef<HTMLInputElement>(null)
+
+  return (
+    <div className={`rounded-select rounded-date-picker-wrap ${className}`}>
+      <button
+        type="button"
+        className="rounded-select-trigger has-icon"
+        aria-label={ariaLabel}
+        disabled={disabled}
+        onClick={() => {
+          const el = hiddenInputRef.current
+          if (el) {
+            if (typeof (el as any).showPicker === 'function') {
+              try {
+                (el as any).showPicker()
+              } catch {
+                el.focus()
+              }
+            } else {
+              el.focus()
+            }
+          }
+        }}
+      >
+        <span className="rounded-select-label">{value || placeholder}</span>
+        <Calendar size={15} className="rounded-picker-trigger-icon" />
+      </button>
+      <input
+        ref={hiddenInputRef}
+        type="date"
+        aria-label={ariaLabel}
+        value={value}
+        min={min}
+        max={max}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+        className="rounded-date-hidden-input"
+      />
+    </div>
+  )
 }
 
 export function Badge({ children, tone = 'neutral' }: { children: ReactNode; tone?: string }) {
@@ -87,10 +295,10 @@ export function StatusBadge({ status }: { status: string }) {
   return <Badge tone={tone}>{formatStatus(status)}</Badge>
 }
 
-export function Button({ children, variant = 'primary', size = '', className = '', type = 'button', disabled, onClick }: {
-  children: ReactNode; variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'light'; size?: string; className?: string; type?: 'button' | 'submit'; disabled?: boolean; onClick?: () => void
+export function Button({ children, variant = 'primary', size = '', className = '', type = 'button', disabled, onClick, style }: {
+  children: ReactNode; variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'light'; size?: string; className?: string; type?: 'button' | 'submit'; disabled?: boolean; onClick?: () => void; style?: CSSProperties
 }) {
-  return <button className={`button button-${variant} ${size} ${className}`} type={type} disabled={disabled} onClick={onClick}>{children}</button>
+  return <button className={`button button-${variant} ${size} ${className}`} type={type} disabled={disabled} onClick={onClick} style={style}>{children}</button>
 }
 
 export function Loading({ label = 'Loading your table…' }: { label?: string }) {

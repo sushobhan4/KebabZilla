@@ -19,9 +19,13 @@ if not exist "%FRONTEND_DIR%\node_modules" (
   exit /b 1
 )
 
+set "CLOUDFLARED=C:\Program Files (x86)\cloudflared\cloudflared.exe"
+
+if not exist "%CLOUDFLARED%" set "CLOUDFLARED=cloudflared"
+
 start "KebabZilla Backend" cmd /k "cd /d ""%BACKEND_DIR%"" && ""%BACKEND_DIR%\.venv\Scripts\python.exe"" -m alembic upgrade head && ""%BACKEND_DIR%\.venv\Scripts\python.exe"" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 start "KebabZilla Frontend" cmd /k "cd /d ""%FRONTEND_DIR%"" && npm run dev"
-start "KebabZilla Tunnel" cmd /k "echo Tunneling frontend port 5173 to public internet... && echo Your tunnel password / IP: && curl -s https://loca.lt/mytunnelpassword && echo. && echo. && npx localtunnel --port 5173"
+start "KebabZilla Cloudflare Tunnel" cmd /k call "%CLOUDFLARED%" tunnel --url http://localhost:5173
 
 endlocal
 

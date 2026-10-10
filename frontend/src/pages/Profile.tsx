@@ -213,7 +213,7 @@ export default function Profile() {
           <label className="field-label"><span>Area <sup className="field-required">*</sup></span><input required maxLength={160} placeholder="Filled from map pin" value={selectedAddress.area || ''} onChange={(event) => editAddress(selectedAddress.id, { area: event.target.value })} /></label>
           <label className="field-label"><span>City <sup className="field-required">*</sup></span><input required maxLength={120} placeholder="City" value={selectedAddress.city || ''} onChange={(event) => editAddress(selectedAddress.id, { city: event.target.value })} /></label>
           <label className="field-label"><span>PIN code <sup className="field-required">*</sup></span><input required maxLength={20} placeholder="Postal code" value={selectedAddress.pincode || selectedAddress.postal_code || ''} onChange={(event) => editAddress(selectedAddress.id, { pincode: event.target.value, postal_code: undefined })} /></label>
-          <label className="field-label">Landmark <span className="field-optional">optional</span><input maxLength={200} placeholder="Near the park entrance" value={selectedAddress.landmark || ''} onChange={(event) => editAddress(selectedAddress.id, { landmark: event.target.value })} /></label>
+          <label className="field-label"><span>Landmark (optional)</span><input maxLength={200} placeholder="Near the park entrance" value={selectedAddress.landmark || ''} onChange={(event) => editAddress(selectedAddress.id, { landmark: event.target.value })} /></label>
         </div>
         </div>
         </div>

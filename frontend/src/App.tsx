@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, Navigate, NavLink, Route, Routes, useNavigate } from 'react-router-dom'
-import { Activity, ArrowLeft, BarChart3, ClipboardList, CookingPot, LayoutDashboard, LogIn, LogOut, MapPinned, Menu as MenuIcon, PackageCheck, Plus, Settings, ShoppingBag, Users, X, Send, Percent, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react'
-import { useAuth } from './state'
+import { Activity, ArrowLeft, BarChart3, ClipboardList, CookingPot, LayoutDashboard, LogIn, LogOut, Menu as MenuIcon, PackageCheck, Plus, Settings, Users, X, Send, Percent, ChevronDown, ChevronLeft, ChevronRight, Phone, MapPin } from 'lucide-react'
+import { useAuth, useRestaurant } from './state'
 import type { Role } from './api'
 import { Brand, Button, Notice } from './components'
 import Storefront from './pages/Storefront'
@@ -13,20 +13,21 @@ import Admin from './pages/Admin'
 import AuthPage from './pages/AuthPage'
 import Profile from './pages/Profile'
 import ForcedPasswordChange from './pages/ForcedPasswordChange'
+import { getPreference, setPreference } from './cookies'
+import { CookieConsentBanner, CookiePolicyModal, CookiePreferencesModal } from './components/CookieConsent'
 
 type NavItem = { to: string; label: string; icon: ReactNode; end?: boolean; tone?: 'employee' | 'delivery' }
 
 function defaultQuickPaths(role: Role): string[] {
   if (role === 'ADMIN') return ['/admin', '/admin/orders', '/admin/menu']
-  if (role === 'EMPLOYEE') return ['/ops', '/ops/menu', '/ops/billing']
-  if (role === 'DELIVERY') return ['/delivery', '/delivery/routes']
+  if (role === 'EMPLOYEE') return ['/ops', '/ops/menu']
+  if (role === 'DELIVERY') return ['/delivery']
   return []
 }
 
 function savedQuickPaths(role: Role): string[] {
-  const saved = localStorage.getItem(`kz_quick_${role}`)
-  if (saved === null) return defaultQuickPaths(role)
-  try { return (JSON.parse(saved) as string[]).filter((path) => path !== '/admin/preview' && path !== '/admin/takeover' && path !== '/ops/drafts') } catch { return defaultQuickPaths(role) }
+  const saved = getPreference<string[]>(`kz_quick_${role}`, defaultQuickPaths(role))
+  return (saved || []).filter((path) => path !== '/admin/preview' && path !== '/admin/takeover' && path !== '/ops/drafts')
 }
 
 function homeFor(role: Role) {
@@ -47,20 +48,16 @@ function navFor(role: Role): NavItem[] {
     { to: '/admin/discounts', label: 'Discounts', icon: <Percent size={17} /> },
     { to: '/ops', label: 'Order queue', icon: <ClipboardList size={17} />, end: true, tone: 'employee' },
     { to: '/ops/menu', label: 'Menu availability', icon: <CookingPot size={17} />, tone: 'employee' },
-    { to: '/ops/billing', label: 'Walk-in billing', icon: <ShoppingBag size={17} />, tone: 'employee' },
     { to: '/delivery', label: 'Delivery queue', icon: <PackageCheck size={17} />, end: true, tone: 'delivery' },
-    { to: '/delivery/routes', label: 'Route batches', icon: <MapPinned size={17} />, tone: 'delivery' },
     { to: '/admin/reports', label: 'Sales reports', icon: <BarChart3 size={17} /> },
     { to: '/admin/settings', label: 'Restaurant settings', icon: <Settings size={17} /> },
   ]
   if (role === 'EMPLOYEE') return [
     { to: '/ops', label: 'Order queue', icon: <ClipboardList size={17} />, end: true },
     { to: '/ops/menu', label: 'Menu availability', icon: <CookingPot size={17} /> },
-    { to: '/ops/billing', label: 'Walk-in billing', icon: <ShoppingBag size={17} /> },
   ]
   if (role === 'DELIVERY') return [
-    { to: '/delivery', label: 'My delivery queue', icon: <PackageCheck size={17} />, end: true },
-    { to: '/delivery/routes', label: 'Route batches', icon: <MapPinned size={17} /> },
+    { to: '/delivery', label: 'Deliveries', icon: <PackageCheck size={17} />, end: true },
   ]
   return []
 }
@@ -164,21 +161,194 @@ function AppHeader() {
   function saveQuick(path: string) {
     const next = quickItems.includes(path) ? quickItems.filter((item) => item !== path) : [...quickItems, path]
     setQuickItems(next)
-    if (account) localStorage.setItem(`kz_quick_${account.role}`, JSON.stringify(next))
+    if (account) {
+      setPreference(`kz_quick_${account.role}`, next)
+    }
   }
+
+  const showTopTabs = account?.role === 'ADMIN' ? items.length > 0 : account?.role === 'EMPLOYEE' ? (!isMobile && items.length > 0) : false
+  const showSidebarDrawer = account?.role === 'ADMIN' ? items.length > 0 : account?.role === 'EMPLOYEE' ? (isMobile && items.length > 0) : false
+  const showQuickSettings = account?.role === 'ADMIN'
+
   return <>
   <header className="app-header">
     <div className="header-inner" ref={headerInnerRef}>
-      <div className="header-brand" ref={headerBrandRef}>{account && items.length > 0 ? <><button className="workspace-drawer-trigger" aria-label="Open workspace menu" onClick={() => { setQuickExpanded(false); setMobileOpen(true) }}><MenuIcon size={19} /></button><Brand /></> : <Brand />}</div>
+      <div className="header-brand" ref={headerBrandRef}>
+        {showSidebarDrawer ? (
+          <>
+            <button className="workspace-drawer-trigger" aria-label="Open workspace menu" onClick={() => { setQuickExpanded(false); setMobileOpen(true) }}>
+              <MenuIcon size={19} />
+            </button>
+            <Brand />
+          </>
+        ) : (
+          <Brand />
+        )}
+      </div>
       <div className="header-center" style={{ maxWidth: maxCenterWidth ? `${maxCenterWidth}px` : undefined }}>
-        {account && items.length > 0 ? <div className={`top-nav-shell${tabsOverflow ? ' has-overflow' : ''}`}>{tabsOverflow && <button className="top-nav-arrow top-nav-arrow-left" type="button" disabled={!canScrollLeft} style={{ opacity: canScrollLeft ? 1 : 0.2, pointerEvents: canScrollLeft ? 'auto' : 'none' }} onClick={() => scrollTabs(-1)} aria-label="Scroll tabs left"><ChevronLeft size={16} /></button>}<nav ref={topNavRef} className="top-nav" onScroll={updateScrollIndicators} onDragStart={(event) => event.preventDefault()} onClickCapture={(event) => { if (tabWasDragged.current) { event.preventDefault(); event.stopPropagation(); tabWasDragged.current = false } }} onPointerDown={(event) => { if (event.button !== 0) return; tabWasDragged.current = false; tabDrag.current = { pointerId: event.pointerId, startX: event.clientX, startScroll: event.currentTarget.scrollLeft } }} onPointerMove={(event) => { const drag = tabDrag.current; if (!drag || drag.pointerId !== event.pointerId) return; const distance = event.clientX - drag.startX; if (Math.abs(distance) > 4) tabWasDragged.current = true; event.currentTarget.scrollLeft = drag.startScroll - distance; updateScrollIndicators() }} onPointerUp={(event) => { if (tabDrag.current?.pointerId === event.pointerId) tabDrag.current = null }} onPointerCancel={() => { tabDrag.current = null }}>{selected.map((item) => <NavLink key={item.to} end={item.end} to={item.to} className={({ isActive }) => `${isActive ? 'top-nav-link active' : 'top-nav-link'}${item.tone ? ` staff-nav-${item.tone}` : ''}`}>{item.label}</NavLink>)}</nav>{tabsOverflow && <button className="top-nav-arrow top-nav-arrow-right" type="button" disabled={!canScrollRight} style={{ opacity: canScrollRight ? 1 : 0.2, pointerEvents: canScrollRight ? 'auto' : 'none' }} onClick={() => scrollTabs(1)} aria-label="Scroll tabs right"><ChevronRight size={16} /></button>}</div> : null}
+        {showTopTabs ? (
+          <div className={`top-nav-shell${tabsOverflow ? ' has-overflow' : ''}`}>
+            {tabsOverflow && (
+              <button
+                className="top-nav-arrow top-nav-arrow-left"
+                type="button"
+                disabled={!canScrollLeft}
+                style={{ opacity: canScrollLeft ? 1 : 0.2, pointerEvents: canScrollLeft ? 'auto' : 'none' }}
+                onClick={() => scrollTabs(-1)}
+                aria-label="Scroll tabs left"
+              >
+                <ChevronLeft size={16} />
+              </button>
+            )}
+            <nav
+              ref={topNavRef}
+              className="top-nav"
+              onScroll={updateScrollIndicators}
+              onDragStart={(event) => event.preventDefault()}
+              onClickCapture={(event) => {
+                if (tabWasDragged.current) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  tabWasDragged.current = false
+                }
+              }}
+              onPointerDown={(event) => {
+                if (event.button !== 0) return
+                tabWasDragged.current = false
+                tabDrag.current = { pointerId: event.pointerId, startX: event.clientX, startScroll: event.currentTarget.scrollLeft }
+              }}
+              onPointerMove={(event) => {
+                const drag = tabDrag.current
+                if (!drag || drag.pointerId !== event.pointerId) return
+                const distance = event.clientX - drag.startX
+                if (Math.abs(distance) > 4) tabWasDragged.current = true
+                event.currentTarget.scrollLeft = drag.startScroll - distance
+                updateScrollIndicators()
+              }}
+              onPointerUp={(event) => {
+                if (tabDrag.current?.pointerId === event.pointerId) tabDrag.current = null
+              }}
+              onPointerCancel={() => {
+                tabDrag.current = null
+              }}
+            >
+              {(account?.role === 'EMPLOYEE' ? items : selected).map((item) => (
+                <NavLink
+                  key={item.to}
+                  end={item.end}
+                  to={item.to}
+                  className={({ isActive }) => `${isActive ? 'top-nav-link active' : 'top-nav-link'}${item.tone ? ` staff-nav-${item.tone}` : ''}`}
+                >
+                  {item.label}
+                </NavLink>
+              ))}
+            </nav>
+            {tabsOverflow && (
+              <button
+                className="top-nav-arrow top-nav-arrow-right"
+                type="button"
+                disabled={!canScrollRight}
+                style={{ opacity: canScrollRight ? 1 : 0.2, pointerEvents: canScrollRight ? 'auto' : 'none' }}
+                onClick={() => scrollTabs(1)}
+                aria-label="Scroll tabs right"
+              >
+                <ChevronRight size={16} />
+              </button>
+            )}
+          </div>
+        ) : null}
       </div>
       <div className="header-account" ref={headerAccountRef}>
-        {account ? <><div className="profile-menu-wrap"><button className="account-chip" aria-expanded={profileOpen} onClick={() => setProfileOpen((open) => !open)}><span className="avatar">{account.name.slice(0, 1).toUpperCase()}</span><span className="account-name">{account.name.split(' ')[0]}</span><span className="role-dot" title={account.role} /></button>{profileOpen && <div className="profile-dropdown">{account.role === 'USER' && <Link to="/orders" onClick={() => setProfileOpen(false)}><ClipboardList size={16} /> Track orders</Link>}<Link to="/profile" onClick={() => setProfileOpen(false)}><Users size={16} /> Edit profile</Link></div>}</div><button className="icon-button" title="Sign out" onClick={() => { signOut(); navigate('/') }}><LogOut size={18} /></button></> : <><NavLink className="header-login" to="/login"><LogIn size={16} /> <span>Sign in</span></NavLink><NavLink className="header-join" to="/register">Sign up <Plus size={15} /></NavLink></>}
+        {account ? (
+          <>
+            <div className="profile-menu-wrap">
+              <button className="account-chip" aria-expanded={profileOpen} onClick={() => setProfileOpen((open) => !open)}>
+                <span className="avatar">{account.name.slice(0, 1).toUpperCase()}</span>
+                <span className="account-name">{account.name.split(' ')[0]}</span>
+                <span className="role-dot" title={account.role} />
+              </button>
+              {profileOpen && (
+                <div className="profile-dropdown">
+                  {account.role === 'USER' && (
+                    <Link to="/orders" onClick={() => setProfileOpen(false)}>
+                      <ClipboardList size={16} /> Track orders
+                    </Link>
+                  )}
+                  <Link to="/profile" onClick={() => setProfileOpen(false)}>
+                    <Users size={16} /> Edit profile
+                  </Link>
+                </div>
+              )}
+            </div>
+            <button className="icon-button" title="Sign out" onClick={() => { signOut(); navigate('/') }}>
+              <LogOut size={18} />
+            </button>
+          </>
+        ) : (
+          <>
+            <NavLink className="header-login" to="/login">
+              <LogIn size={16} /> <span>Sign in</span>
+            </NavLink>
+            <NavLink className="header-join" to="/register">
+              Sign up <Plus size={15} />
+            </NavLink>
+          </>
+        )}
       </div>
     </div>
   </header>
-  {mobileOpen && account?.role !== 'USER' && createPortal(<div className="workspace-drawer-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setMobileOpen(false) }}><aside className="workspace-drawer"><div className="workspace-drawer-head"><div><small>{account?.role || 'GUEST'} WORKSPACE</small><strong>Navigation</strong></div><button className="icon-button" onClick={() => setMobileOpen(false)} aria-label="Close menu"><X size={18} /></button></div>{!isMobile && <section className="drawer-quick-settings"><button className="drawer-quick-toggle" aria-expanded={quickExpanded} onClick={() => setQuickExpanded((expanded) => !expanded)}><span><strong>Quick access</strong><small>Choose any tabs to keep at the top.</small></span><ChevronDown className={quickExpanded ? 'expanded' : ''} size={18} /></button>{quickExpanded && <div className="drawer-quick-options">{items.map((item) => <label className={item.tone ? `staff-nav-${item.tone}` : ''} key={item.to}><input type="checkbox" checked={quickItems.includes(item.to)} onChange={() => saveQuick(item.to)} />{item.icon}{item.label}</label>)}</div>}</section>}<nav className="drawer-all-links">{(isMobile ? items : items.filter((item) => !quickItems.includes(item.to))).map((item) => <NavLink key={item.to} end={item.end} to={item.to} onClick={() => setMobileOpen(false)} className={({ isActive }) => `${isActive ? 'sidebar-link active' : 'sidebar-link'}${item.tone ? ` staff-nav-${item.tone}` : ''}`}>{item.icon}<span>{item.label}</span></NavLink>)}</nav></aside></div>, document.body)}
+  {mobileOpen && showSidebarDrawer && createPortal(
+    <div className="workspace-drawer-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setMobileOpen(false) }}>
+      <aside className="workspace-drawer">
+        <div className="workspace-drawer-head">
+          <div>
+            <small>{account?.role || 'GUEST'} WORKSPACE</small>
+            <strong>Navigation</strong>
+          </div>
+          <button className="icon-button" onClick={() => setMobileOpen(false)} aria-label="Close menu">
+            <X size={18} />
+          </button>
+        </div>
+        {showQuickSettings && !isMobile && (
+          <section className="drawer-quick-settings">
+            <button className="drawer-quick-toggle" aria-expanded={quickExpanded} onClick={() => setQuickExpanded((expanded) => !expanded)}>
+              <span>
+                <strong>Quick access</strong>
+                <small>Choose any tabs to keep at the top.</small>
+              </span>
+              <ChevronDown className={quickExpanded ? 'expanded' : ''} size={18} />
+            </button>
+            {quickExpanded && (
+              <div className="drawer-quick-options">
+                {items.map((item) => (
+                  <label className={item.tone ? `staff-nav-${item.tone}` : ''} key={item.to}>
+                    <input type="checkbox" checked={quickItems.includes(item.to)} onChange={() => saveQuick(item.to)} />
+                    {item.icon}
+                    {item.label}
+                  </label>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+        <nav className="drawer-all-links">
+          {(isMobile || !showQuickSettings ? items : items.filter((item) => !quickItems.includes(item.to))).map((item) => (
+            <NavLink
+              key={item.to}
+              end={item.end}
+              to={item.to}
+              onClick={() => setMobileOpen(false)}
+              className={({ isActive }) => `${isActive ? 'sidebar-link active' : 'sidebar-link'}${item.tone ? ` staff-nav-${item.tone}` : ''}`}
+            >
+              {item.icon}
+              <span>{item.label}</span>
+            </NavLink>
+          ))}
+        </nav>
+      </aside>
+    </div>,
+    document.body
+  )}
   </>
 }
 
@@ -206,7 +376,23 @@ function NotFound() {
 
 export default function App() {
   const { account } = useAuth()
+  const { restaurant } = useRestaurant()
   const [notice, setNotice] = useState<string | null>(null)
+  const [cookiePolicyOpen, setCookiePolicyOpen] = useState(false)
+  const [cookiePreferencesOpen, setCookiePreferencesOpen] = useState(false)
+
+  const phoneList = (restaurant?.phones && restaurant.phones.length > 0)
+    ? restaurant.phones
+    : restaurant?.phone
+      ? restaurant.phone.split(',').map((p) => p.trim()).filter(Boolean)
+      : []
+
+  const googleMapsUrl = restaurant?.latitude != null && restaurant?.longitude != null
+    ? `https://www.google.com/maps/search/?api=1&query=${restaurant.latitude},${restaurant.longitude}`
+    : restaurant?.address
+      ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(restaurant.address)}`
+      : null
+
   if (account?.must_change_password) return <div className="app-shell"><AppHeader /><div className="app-main"><Routes><Route path="/change-password" element={<ForcedPasswordChange />} /><Route path="*" element={<Navigate to="/change-password" replace />} /></Routes></div></div>
   return <div className="app-shell">
     <AppHeader />
@@ -224,7 +410,74 @@ export default function App() {
       <Route path="/admin/*" element={<RoleGuard roles={['ADMIN']}><WorkspaceLayout><Admin /></WorkspaceLayout></RoleGuard>} />
       <Route path="*" element={<NotFound />} />
     </Routes></div>
-    <footer className="app-footer"><Brand compact /><div className="footer-copy">© {new Date().getFullYear()} KebabZilla.</div></footer>
+    <footer className="app-footer">
+      <div className="footer-identity-col">
+        <Brand compact showTagline={false} />
+        <div className="footer-copy">© {new Date().getFullYear()} {restaurant?.restaurant_name || 'KebabZilla'}. All rights reserved.</div>
+        <div className="footer-cookie-links">
+          <button type="button" className="footer-cookie-link" onClick={() => setCookiePolicyOpen(true)}>
+            Cookie Policy
+          </button>
+          <span>·</span>
+          <button
+            type="button"
+            className="footer-cookie-link"
+            onClick={() => setCookiePreferencesOpen(true)}
+          >
+            Cookie Preferences
+          </button>
+        </div>
+      </div>
+      <div className="footer-contact-col">
+        {phoneList.length > 0 && (
+          <div className="footer-phone-list">
+            <Phone size={14} className="footer-icon" />
+            <div className="footer-phones">
+              {phoneList.map((num, idx) => (
+                <a key={idx} href={`tel:${num}`} className="footer-phone-link">
+                  {num}
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
+        {restaurant?.address && (
+          googleMapsUrl ? (
+            <a
+              href={googleMapsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="footer-address-link"
+              title="Open location on Google Maps"
+            >
+              <MapPin size={14} className="footer-icon" />
+              <span>{restaurant.address}</span>
+            </a>
+          ) : (
+            <div className="footer-address-text">
+              <MapPin size={14} className="footer-icon" />
+              <span>{restaurant.address}</span>
+            </div>
+          )
+        )}
+      </div>
+    </footer>
+    <CookieConsentBanner
+      onOpenPolicy={() => setCookiePolicyOpen(true)}
+      onOpenCustomize={() => setCookiePreferencesOpen(true)}
+    />
+    <CookiePreferencesModal
+      open={cookiePreferencesOpen}
+      onClose={() => setCookiePreferencesOpen(false)}
+    />
+    <CookiePolicyModal
+      open={cookiePolicyOpen}
+      onClose={() => setCookiePolicyOpen(false)}
+      onOpenSettings={() => {
+        setCookiePolicyOpen(false);
+        setCookiePreferencesOpen(true);
+      }}
+    />
   </div>
 }
 

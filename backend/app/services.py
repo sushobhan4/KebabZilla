@@ -1,13 +1,17 @@
 import base64
 import hashlib
+import logging
 import math
 import string
 import secrets
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+import httpx
 from fastapi import HTTPException
 from cryptography.fernet import Fernet, InvalidToken
+
+logger = logging.getLogger(__name__)
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
@@ -15,6 +19,7 @@ from app.config import settings
 from app.integrations import razorpay
 from app.models import (
     Account,
+    CustomMenuItem,
     MenuItem,
     Order,
     OrderItem,
@@ -73,12 +78,27 @@ def assemble_order(
     if not config.accepting_orders:
         raise HTTPException(status_code=409, detail="The restaurant is not accepting orders right now")
 
-    menu_ids = {line.menu_item_id for line in lines}
+    std_menu_ids = {line.menu_item_id for line in lines if line.menu_item_id is not None}
+    custom_menu_ids = {line.custom_menu_item_id for line in lines if getattr(line, "custom_menu_item_id", None) is not None}
     now = datetime.now(timezone.utc)
-    menu = db.scalars(select(MenuItem).where(MenuItem.id.in_(menu_ids), MenuItem.is_available.is_(True))).all()
-    unavailable_ids = set(db.scalars(select(MenuItem.id).where(MenuItem.id.in_(menu_ids), MenuItem.paused_by_id.is_not(None))).all())
-    menu_by_id = {item.id: item for item in menu}
-    if len(menu_by_id) != len(menu_ids) or unavailable_ids:
+
+    std_items = db.scalars(select(MenuItem).where(MenuItem.id.in_(std_menu_ids), MenuItem.is_available.is_(True))).all() if std_menu_ids else []
+    std_by_id = {item.id: item for item in std_items}
+
+    # If an ID wasn't in std_items, check if it's a custom_menu_item_id
+    remaining_ids = std_menu_ids - set(std_by_id.keys())
+    all_custom_ids = custom_menu_ids | remaining_ids
+    custom_items = db.scalars(select(CustomMenuItem).where(CustomMenuItem.id.in_(all_custom_ids), CustomMenuItem.is_available.is_(True))).all() if all_custom_ids else []
+    custom_by_id = {item.id: item for item in custom_items}
+
+    unavailable_std_ids = set(db.scalars(select(MenuItem.id).where(MenuItem.id.in_(std_by_id.keys()), MenuItem.paused_by_id.is_not(None))).all())
+    unavailable_custom_ids = set(db.scalars(select(CustomMenuItem.id).where(CustomMenuItem.id.in_(custom_by_id.keys()), CustomMenuItem.paused_by_id.is_not(None))).all())
+    for line in lines:
+        mid = line.menu_item_id
+        cid = getattr(line, "custom_menu_item_id", None)
+        if mid not in std_by_id and mid not in custom_by_id and cid not in custom_by_id:
+            raise HTTPException(status_code=400, detail="One or more menu items are unavailable")
+    if unavailable_std_ids or unavailable_custom_ids:
         raise HTTPException(status_code=400, detail="One or more menu items are unavailable")
 
     if scheduled_for is not None:
@@ -94,27 +114,51 @@ def assemble_order(
     price_at = scheduled_for or now
     discounts = db.scalars(select(MenuDiscount)).all()
     active_discounts: dict[int, int] = {}
+    active_custom_discounts: dict[int, int] = {}
     for discount in discounts:
         starts_at = discount.starts_at if discount.starts_at.tzinfo else discount.starts_at.replace(tzinfo=timezone.utc)
         ends_at = discount.ends_at if discount.ends_at.tzinfo else discount.ends_at.replace(tzinfo=timezone.utc)
         if starts_at <= price_at < ends_at:
             for link in discount.items:
-                menu_item_id = link.menu_item_id
-                if menu_item_id in menu_ids:
-                    active_discounts[menu_item_id] = discount.discount_percent
+                if link.menu_item_id is not None:
+                    active_discounts[link.menu_item_id] = discount.discount_percent
+                if link.custom_menu_item_id is not None:
+                    active_custom_discounts[link.custom_menu_item_id] = discount.discount_percent
 
-    def price(item: MenuItem) -> int:
+    def line_unit_price(line) -> int:
+        mid = line.menu_item_id
+        cid = getattr(line, "custom_menu_item_id", None)
+        if cid in custom_by_id or (mid not in std_by_id and mid in custom_by_id):
+            c_item = custom_by_id.get(cid) or custom_by_id[mid]
+            base = c_item.base_price_paise
+            extra = sum(opt.get("extra_paise", 0) for opt in (getattr(line, "customizations", None) or []))
+            raw_total = base + extra
+            percent = active_custom_discounts.get(c_item.id)
+            if percent is not None:
+                return max(1, round(raw_total * (100 - percent) / 100))
+            return raw_total
+
+        item = std_by_id[mid]
+        var_name = getattr(line, "variation_name", None)
+        if not var_name and getattr(line, "customizations", None):
+            for c in line.customizations:
+                if any(v.get("name", "").lower() == c.get("name", "").lower() for v in (item.variations or [])):
+                    var_name = c.get("name")
+                    break
+
+        if var_name and item.variations:
+            matched_var = next((v for v in item.variations if v.get("name", "").lower() == var_name.lower()), None)
+            base = matched_var["price_paise"] if matched_var else item.price_paise
+        else:
+            base = item.price_paise
+
         percent = active_discounts.get(item.id)
         if percent is not None:
-            return max(1, (item.price_paise * (100 - percent) + 50) // 100)
-        return _effective_price(item)
-
-    def line_unit_price(line, item: MenuItem) -> int:
-        base = price(item)
-        extra = sum(opt.get("extra_paise", 0) for opt in (getattr(line, "customizations", None) or []))
+            base = max(1, round(base * (100 - percent) / 100))
+        extra = sum(opt.get("extra_paise", 0) for opt in (getattr(line, "customizations", None) or []) if opt.get("name") != var_name)
         return base + extra
 
-    subtotal = sum(line_unit_price(line, menu_by_id[line.menu_item_id]) * line.quantity for line in lines)
+    subtotal = sum(line_unit_price(line) * line.quantity for line in lines)
     if check_minimum and subtotal < config.minimum_order_paise:
         raise HTTPException(status_code=400, detail=f"Minimum order is ₹{config.minimum_order_paise / 100:.0f}")
     tax = 0
@@ -128,6 +172,32 @@ def assemble_order(
         from sqlalchemy import text
         db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": prefix})
     order_id = _next_order_id(db, prefix)
+
+    order_items = []
+    for line in lines:
+        mid = line.menu_item_id
+        cid = getattr(line, "custom_menu_item_id", None)
+        is_custom = cid in custom_by_id or (mid not in std_by_id and mid in custom_by_id)
+        actual_cid = cid if cid in custom_by_id else (mid if is_custom else None)
+        actual_mid = mid if mid in std_by_id else None
+
+        var_name = getattr(line, "variation_name", None)
+        if not var_name and not is_custom and actual_mid and getattr(line, "customizations", None):
+            for c in line.customizations:
+                if any(v.get("name", "").lower() == c.get("name", "").lower() for v in (std_by_id[actual_mid].variations or [])):
+                    var_name = c.get("name")
+                    break
+
+        order_items.append(
+            OrderItem(
+                menu_item_id=actual_mid,
+                custom_menu_item_id=actual_cid,
+                variation_name=var_name,
+                quantity=line.quantity,
+                customizations=getattr(line, "customizations", None) or [],
+            )
+        )
+
     order = Order(
         order_id=order_id,
         customer_id=customer.id if customer else None,
@@ -139,15 +209,7 @@ def assemble_order(
         notes=notes,
         customer_name=customer_name or (customer.name if customer else "Walk-in"),
         customer_phone=customer_phone if customer_phone is not None else (customer.phone if customer else None),
-        items=[
-            OrderItem(
-                menu_item_id=menu_by_id[line.menu_item_id].id,
-                quantity=line.quantity,
-                customizations=getattr(line, "customizations", None) or [],
-                unit_price_paise=line_unit_price(line, menu_by_id[line.menu_item_id]),
-            )
-            for line in lines
-        ],
+        items=order_items,
     )
     db.add(order)
     db.flush()
@@ -167,6 +229,75 @@ def _effective_price(item: MenuItem) -> int:
     return item.price_paise
 
 
+def _google_routes_distance_km(
+    origin_lat: float, origin_lng: float, dest_lat: float, dest_lng: float
+) -> float | None:
+    api_key = settings.google_maps_api_key
+    if not api_key:
+        return None
+    url = "https://routes.googleapis.com/directions/v2:computeRoutes"
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": api_key,
+        "X-Goog-FieldMask": "routes.distanceMeters,routes.duration",
+    }
+    payload = {
+        "origin": {"location": {"latLng": {"latitude": origin_lat, "longitude": origin_lng}}},
+        "destination": {"location": {"latLng": {"latitude": dest_lat, "longitude": dest_lng}}},
+        "travelMode": "DRIVE",
+    }
+    try:
+        with httpx.Client(timeout=6.0) as client:
+            resp = client.post(url, headers=headers, json=payload)
+            if resp.status_code == 200:
+                data = resp.json()
+                routes = data.get("routes") or []
+                if routes and "distanceMeters" in routes[0]:
+                    meters = float(routes[0]["distanceMeters"])
+                    return meters / 1000.0
+            else:
+                logger.warning("Google Routes API returned %d: %s", resp.status_code, resp.text)
+    except Exception as exc:
+        logger.warning("Google Routes API request failed: %s", exc)
+    return None
+
+
+def calculate_delivery_distance(
+    config: RestaurantSettings,
+    latitude: float,
+    longitude: float,
+) -> tuple[float, str]:
+    """Calculates delivery distance according to configured mode: AUTO, GOOGLE_MAPS, or HAVERSINE.
+    Returns (distance_km, method_used).
+    """
+    if config.latitude is None or config.longitude is None:
+        raise HTTPException(status_code=503, detail="The restaurant delivery location is not configured")
+
+    mode = (getattr(config, "distance_calculation_mode", None) or "AUTO").upper()
+    factor = float(getattr(config, "haversine_routing_factor", None) or 1.3)
+
+    if mode == "HAVERSINE":
+        dist = _distance_km(config.latitude, config.longitude, latitude, longitude) * factor
+        return round(dist, 2), "HAVERSINE"
+
+    if mode == "GOOGLE_MAPS":
+        google_dist = _google_routes_distance_km(config.latitude, config.longitude, latitude, longitude)
+        if google_dist is not None:
+            return round(google_dist, 2), "GOOGLE_MAPS"
+        raise HTTPException(
+            status_code=502,
+            detail="Google Maps Routes API is unreachable or returned an error. Please try again or switch distance calculation mode."
+        )
+
+    # AUTO mode: Try Google Maps first, fall back to Haversine if broken or unconfigured
+    google_dist = _google_routes_distance_km(config.latitude, config.longitude, latitude, longitude)
+    if google_dist is not None:
+        return round(google_dist, 2), "GOOGLE_MAPS"
+
+    dist = _distance_km(config.latitude, config.longitude, latitude, longitude) * factor
+    return round(dist, 2), "HAVERSINE"
+
+
 def _delivery_fee_paise(
     config: RestaurantSettings,
     latitude: float | None,
@@ -177,11 +308,24 @@ def _delivery_fee_paise(
     if config.latitude is None or config.longitude is None:
         raise HTTPException(status_code=503, detail="The restaurant delivery location is not configured")
 
-    distance_km = _distance_km(config.latitude, config.longitude, latitude, longitude)
+    distance_km, _ = calculate_delivery_distance(config, latitude, longitude)
+
+    # Check maximum allowed delivery distance from the shop
+    if distance_km > config.delivery_radius_km:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Delivery location is {distance_km:.1f} km away, which exceeds our maximum delivery radius of {config.delivery_radius_km:.1f} km."
+        )
+
+    # First x km is free
     if distance_km <= config.free_delivery_radius_km:
         return 0
-    billable_km = math.ceil(distance_km - config.free_delivery_radius_km)
-    return billable_km * config.delivery_fee_per_km_paise
+
+    # Beyond free radius, priced per km proportionally
+    billable_km = distance_km - config.free_delivery_radius_km
+    raw_fee_inr = billable_km * (config.delivery_fee_per_km_paise / 100.0)
+    rounded_fee_inr = math.ceil(raw_fee_inr)
+    return int(rounded_fee_inr * 100)
 
 
 def _distance_km(latitude_a: float, longitude_a: float, latitude_b: float, longitude_b: float) -> float:
@@ -197,27 +341,74 @@ def _distance_km(latitude_a: float, longitude_a: float, latitude_b: float, longi
     return earth_radius_km * 2 * math.atan2(math.sqrt(haversine), math.sqrt(1 - haversine))
 
 
-def _validate_opening_time(config: RestaurantSettings, value: datetime) -> None:
+def is_scheduled_open(config: RestaurantSettings, value: datetime | None = None) -> tuple[bool, str]:
     schedule = config.weekly_schedule or {}
     if not schedule:
-        return
+        return True, "Open"
+    if value is None:
+        value = datetime.now(timezone.utc)
     local = value.astimezone(ZoneInfo(settings.business_timezone))
     day = local.strftime("%A").lower()
+
+    custom_schedules = schedule.get("custom_schedules")
+    if isinstance(custom_schedules, list):
+        if not custom_schedules:
+            return True, "Open"
+        moment = local.time().replace(tzinfo=None)
+        day_matches = [s for s in custom_schedules if day in (s.get("days") or [])]
+        if not day_matches:
+            return False, "Closed today"
+        for s in day_matches:
+            try:
+                opens = datetime.strptime(str(s["start_time"]), "%H:%M").time()
+                closes = datetime.strptime(str(s["end_time"]), "%H:%M").time()
+                if opens <= closes:
+                    inside = opens <= moment <= closes
+                else:
+                    inside = moment >= opens or moment <= closes
+                if inside:
+                    return True, f"Open until {closes.strftime('%I:%M %p')}"
+            except (KeyError, ValueError, TypeError):
+                continue
+        return False, "Closed"
+
     hours = schedule.get(day)
     if not hours or not hours.get("open"):
-        raise HTTPException(status_code=409, detail="The restaurant is closed at that time")
+        return False, "Closed today"
     try:
         opens = datetime.strptime(str(hours["opens"]), "%H:%M").time()
         closes = datetime.strptime(str(hours["closes"]), "%H:%M").time()
     except (KeyError, ValueError, TypeError):
-        raise HTTPException(status_code=409, detail="The restaurant opening schedule is incomplete")
+        return True, "Open"
     moment = local.time().replace(tzinfo=None)
     if opens <= closes:
         inside = opens <= moment <= closes
     else:
         inside = moment >= opens or moment <= closes
-    if not inside:
-        raise HTTPException(status_code=409, detail="The restaurant is closed at that time")
+    if inside:
+        return True, f"Open until {closes.strftime('%I:%M %p')}"
+    return False, f"Closed (Opens at {opens.strftime('%I:%M %p')})"
+
+
+def is_restaurant_open(config: RestaurantSettings, value: datetime | None = None) -> tuple[bool, str]:
+    if not getattr(config, "accepting_orders", True):
+        return False, "Not accepting orders"
+
+    sched_open, sched_reason = is_scheduled_open(config, value)
+    if sched_open:
+        return True, sched_reason
+
+    # If outside operating hours, check if admin explicitly activated an override
+    if getattr(config, "admin_override_open", False) is True:
+        return True, "Open (Admin override)"
+
+    return False, sched_reason
+
+
+def _validate_opening_time(config: RestaurantSettings, value: datetime) -> None:
+    is_open, reason = is_restaurant_open(config, value)
+    if not is_open:
+        raise HTTPException(status_code=409, detail=f"The restaurant is closed at that time ({reason})")
 
 
 def order_payload(order: Order, *, include_delivery_otp: bool = False) -> dict:
@@ -226,20 +417,43 @@ def order_payload(order: Order, *, include_delivery_otp: bool = False) -> dict:
     payment = order.payment
     items = []
     for line in order.items:
-        unit_price = line.unit_price_paise if line.unit_price_paise is not None else (line.menu_item.price_paise if line.menu_item else 0)
-        customs = line.customizations or []
-        custom_parts = [opt.get("name") for opt in customs if isinstance(opt, dict) and opt.get("name")]
-        custom_summary = ", ".join(custom_parts)
-        if custom_summary and line.menu_item:
-            item_name = f"{line.menu_item.name} ({custom_summary})"
+        if line.custom_menu_item:
+            base_item = line.custom_menu_item
+            base_name = base_item.name
+            base_price = base_item.base_price_paise
+            img_urls = base_item.image_urls or []
         elif line.menu_item:
-            item_name = line.menu_item.name
+            base_item = line.menu_item
+            base_name = base_item.name
+            img_urls = base_item.image_urls or []
+            if line.variation_name and base_item.variations:
+                matched_v = next((v for v in base_item.variations if v.get("name", "").lower() == line.variation_name.lower()), None)
+                base_price = matched_v["price_paise"] if matched_v else base_item.price_paise
+            else:
+                base_price = base_item.price_paise
         else:
-            item_name = "Unavailable item"
+            base_name = "Unavailable item"
+            base_price = 0
+            img_urls = []
+
+        customs = line.customizations or []
+        extra = sum(opt.get("extra_paise", 0) for opt in customs if isinstance(opt, dict) and opt.get("name") != line.variation_name)
+        unit_price = base_price + extra
+
+        if line.variation_name:
+            item_name = f"{base_name} ({line.variation_name})"
+        elif customs:
+            custom_parts = [opt.get("name") for opt in customs if isinstance(opt, dict) and opt.get("name")]
+            custom_summary = ", ".join(custom_parts)
+            item_name = f"{base_name} ({custom_summary})" if custom_summary else base_name
+        else:
+            item_name = base_name
 
         items.append({
             "id": line.id,
             "menu_item_id": line.menu_item_id,
+            "custom_menu_item_id": line.custom_menu_item_id,
+            "variation_name": line.variation_name,
             "name": item_name,
             "quantity": line.quantity,
             "unit_price_paise": unit_price,
@@ -247,10 +461,24 @@ def order_payload(order: Order, *, include_delivery_otp: bool = False) -> dict:
             "tax_percent": 0,
             "tax_paise": 0,
             "customizations": customs,
-            "image_url": (line.menu_item.image_urls or [None])[0] if line.menu_item else None,
-            "image_urls": line.menu_item.image_urls if line.menu_item else [],
+            "image_url": (img_urls or [None])[0],
+            "image_urls": img_urls,
         })
     subtotal = sum(line["line_total_paise"] for line in items)
+    chosen_addr = next((a for a in customer.addresses if a.is_default), customer.addresses[0]) if customer and customer.addresses else None
+    addr_str = (
+        ", ".join(
+            p for p in [
+                chosen_addr.house_number,
+                chosen_addr.road,
+                chosen_addr.area,
+                chosen_addr.landmark,
+                chosen_addr.city,
+                chosen_addr.pincode,
+            ] if p
+        ) or chosen_addr.label
+    ) if chosen_addr else ""
+
     return {
         "order_id": order.order_id,
         "customer_id": order.customer_id,
@@ -265,20 +493,9 @@ def order_payload(order: Order, *, include_delivery_otp: bool = False) -> dict:
         "tax_paise": 0,
         "delivery_fee_paise": order.delivery_fee_paise,
         "total_paise": subtotal + order.delivery_fee_paise,
-        "address": (
-            ", ".join(
-                p for p in [
-                    chosen.house_number,
-                    chosen.road,
-                    chosen.area,
-                    chosen.landmark,
-                    chosen.city,
-                    chosen.pincode,
-                ] if p
-            ) or chosen.label
-        ) if customer and customer.addresses and (chosen := next((a for a in customer.addresses if a.is_default), customer.addresses[0])) else "",
-        "latitude": next((a.latitude for a in customer.addresses if a.is_default), customer.addresses[0].latitude) if customer and customer.addresses else None,
-        "longitude": next((a.longitude for a in customer.addresses if a.is_default), customer.addresses[0].longitude) if customer and customer.addresses else None,
+        "address": addr_str,
+        "latitude": chosen_addr.latitude if chosen_addr else None,
+        "longitude": chosen_addr.longitude if chosen_addr else None,
         "scheduled_for": order.scheduled_for,
         "notes": order.notes,
         "assigned_delivery_id": order.assigned_delivery_id,

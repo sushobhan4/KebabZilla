@@ -46,6 +46,7 @@ export type Account = {
   addresses: SavedAddress[]
   role: Role
   must_change_password: boolean
+  is_accepting_deliveries?: boolean
   created_at: string
 }
 
@@ -57,6 +58,10 @@ export type SavedAddress = {
   id: string; label: string; house_number?: string; area?: string; road?: string
   landmark?: string; city?: string; pincode?: string; postal_code?: string; latitude?: number | null; longitude?: number | null; is_default?: boolean
 }
+export type MenuItemVariation = {
+  name: string
+  price_paise: number
+}
 export type MenuItem = {
   id: number
   name: string
@@ -64,6 +69,7 @@ export type MenuItem = {
   category: string
   category_id: number | null
   price_paise: number
+  base_price_paise?: number
   discount_percent: number
   discounted_price_paise: number | null
   image_url: string | null
@@ -71,7 +77,9 @@ export type MenuItem = {
   is_vegetarian: boolean
   is_available: boolean
   is_featured: boolean
+  variations?: MenuItemVariation[]
   is_custom?: boolean
+  custom_menu_item_id?: number
   custom_sections?: CustomMenuSection[]
   discount_campaign_name: string | null
   popularity_count: number
@@ -94,12 +102,34 @@ export type CustomMenuItem = {
   category: string
   category_id: number | null
   base_price_paise: number
+  lowest_price_paise?: number
   image_url: string | null
   image_urls: string[]
   is_vegetarian: boolean
   is_available: boolean
   is_featured: boolean
   sections: CustomMenuSection[]
+}
+
+export function getCustomItemLowestPrice(item: CustomMenuItem): number {
+  if (item.lowest_price_paise != null && item.lowest_price_paise > 0) {
+    return item.lowest_price_paise
+  }
+  let total = item.base_price_paise
+  for (const sec of item.sections || []) {
+    if (sec.required !== false && sec.options && sec.options.length > 0) {
+      const minExtra = Math.min(...sec.options.map((o) => o.extra_paise || 0))
+      total += minExtra
+    }
+  }
+  return total
+}
+
+export function getMenuItemLowestPrice(item: MenuItem): number {
+  if (item.variations && item.variations.length > 0) {
+    return Math.min(...item.variations.map((v) => v.price_paise))
+  }
+  return item.price_paise
 }
 export type SavedCartItem = {
   menu_item_id: number
@@ -134,21 +164,62 @@ export type Restaurant = {
   restaurant_name: string
   tagline: string
   phone: string
+  phones?: string[]
   address: string
   latitude: number | null
   longitude: number | null
-  weekly_schedule: Record<string, { open: boolean; opens: string; closes: string }>
-  tax_percent: number
+  weekly_schedule: Record<string, any>
   minimum_order_paise: number
   delivery_radius_km: number
   free_delivery_radius_km: number
   delivery_fee_per_km_paise: number
   accepting_orders: boolean
+  admin_override_open?: boolean
+  distance_calculation_mode?: 'AUTO' | 'GOOGLE_MAPS' | 'HAVERSINE'
+  enforce_driver_geofence?: boolean
+  driver_geofence_meters?: number
+  haversine_routing_factor?: number
 }
 
-export const formatINR = (paise: number) => new Intl.NumberFormat('en-IN', {
-  style: 'currency', currency: 'INR', maximumFractionDigits: 0,
-}).format((paise || 0) / 100)
+export type DriverDutyStatus = {
+  is_accepting_deliveries: boolean
+  is_restaurant_open: boolean
+  schedule_status: string
+  enforce_geofence: boolean
+  geofence_meters: number
+  restaurant_latitude: number | null
+  restaurant_longitude: number | null
+  active_riders: number
+}
+
+export type RecommendedBatchesResponse = {
+  is_accepting_deliveries: boolean
+  active_riders: number
+  is_restaurant_open: boolean
+  schedule_status: string
+  single_order: boolean
+  order: (Order & { round_trip_km?: number }) | null
+  round_trip_km?: number
+  clusters: {
+    id: string
+    route_label: string
+    orders: Order[]
+    round_trip_km?: number
+  }[]
+  restaurant_latitude: number | null
+  restaurant_longitude: number | null
+}
+
+export const formatINR = (paise: number) => {
+  const inr = (paise || 0) / 100
+  const hasDecimals = Math.abs(inr - Math.round(inr)) > 0.001
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    minimumFractionDigits: hasDecimals ? 2 : 0,
+    maximumFractionDigits: hasDecimals ? 2 : 0,
+  }).format(inr)
+}
 
 export function formatSavedAddress(saved: SavedAddress) {
   const parts = [saved.house_number, saved.road, saved.area, saved.city, saved.pincode || saved.postal_code].map((part) => part?.trim()).filter(Boolean)
