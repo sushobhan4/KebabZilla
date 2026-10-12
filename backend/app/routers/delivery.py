@@ -10,7 +10,7 @@ from app.models import (
     Account,
     DeliveryBatch,
     DeliveryBatchOrder,
-    DeliveryDuty,
+    StaffInfo,
     Order,
     AdminEvent,
     OrderStatus,
@@ -146,11 +146,11 @@ def compute_round_trip_km(restaurant, orders: list[Order]) -> float:
 
 def _count_active_riders(db: DbSession) -> int:
     return db.scalar(
-        select(func.count(DeliveryDuty.account_id))
-        .join(Account, Account.id == DeliveryDuty.account_id)
+        select(func.count(StaffInfo.account_id))
+        .join(Account, Account.id == StaffInfo.account_id)
         .where(
             Account.role.in_([Role.DELIVERY, Role.ADMIN]),
-            DeliveryDuty.is_accepting_deliveries == True,
+            StaffInfo.is_accepting_deliveries == True,
         )
     ) or 0
 
@@ -164,8 +164,8 @@ def get_duty_status(account: CurrentAccount, db: DbSession):
         if account.is_accepting_deliveries:
             account.is_accepting_deliveries = False
         db.execute(
-            update(DeliveryDuty)
-            .where(DeliveryDuty.is_accepting_deliveries == True)
+            update(StaffInfo)
+            .where(StaffInfo.is_accepting_deliveries == True)
             .values(is_accepting_deliveries=False)
         )
         db.commit()
@@ -264,8 +264,8 @@ def recommended_batches(account: CurrentAccount, db: DbSession):
         if account.is_accepting_deliveries:
             account.is_accepting_deliveries = False
         db.execute(
-            update(DeliveryDuty)
-            .where(DeliveryDuty.is_accepting_deliveries == True)
+            update(StaffInfo)
+            .where(StaffInfo.is_accepting_deliveries == True)
             .values(is_accepting_deliveries=False)
         )
         db.commit()

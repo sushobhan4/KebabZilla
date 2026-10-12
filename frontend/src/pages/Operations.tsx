@@ -71,8 +71,12 @@ function Queue() {
   </>
 }
 
-function getCategoryName(category: unknown): string {
+function getCategoryName(category: unknown, item?: MenuItem): string {
+  if (item && item.categories && item.categories.length > 0) {
+    return item.categories.join(' · ')
+  }
   if (!category) return 'Menu item'
+  if (Array.isArray(category)) return category.join(' · ')
   if (typeof category === 'string') return category
   if (typeof category === 'object' && 'name' in (category as Record<string, unknown>)) {
     return String((category as Record<string, unknown>).name) || 'Menu item'
@@ -94,12 +98,17 @@ function MenuAvailability() {
     ])
     const mappedCustom: MenuItem[] = (customItems || []).map((ci) => {
       const lowestPaise = getCustomItemLowestPrice(ci)
+      const itemCats = ci.categories && ci.categories.length > 0
+        ? ci.categories
+        : (ci.category ? [ci.category] : ['Specialty Rolls'])
       return {
         id: ci.id,
         name: ci.name,
         description: ci.description,
-        category: ci.category || 'Specialty Rolls',
+        category: itemCats[0] || 'Specialty Rolls',
+        categories: itemCats,
         category_id: ci.category_id || null,
+        category_ids: ci.category_ids || (ci.category_id ? [ci.category_id] : []),
         price_paise: lowestPaise,
         base_price_paise: ci.base_price_paise,
         discount_percent: 0,
@@ -131,8 +140,152 @@ function MenuAvailability() {
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not update this menu item.') }
     finally { setBusy(null) }
   }
+  const [pendingPauseItem, setPendingPauseItem] = useState<MenuItem | null>(null)
   const visibleMenu = menu.filter((item) => `${item.name} ${getCategoryName(item.category)} ${item.description}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()))
-  return <><PageTitle eyebrow="WHAT'S ON THE MENU" title="Menu availability" description="Turn an item off until the next working day, then turn it back on any time." />{error && <Notice>{error}</Notice>}<section className="admin-panel employee-menu-panel"><label className="menu-search employee-menu-search"><Search size={17} /><input type="search" aria-label="Search menu availability" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search menu items" /></label><div className="employee-menu-list">{visibleMenu.map((item) => { const itemKey = item.is_custom ? `custom-${item.id}` : item.id; const pausedItem = paused[itemKey]; return <article className="employee-menu-row" key={itemKey}><div className="employee-menu-info"><strong>{item.name} {item.is_custom && <Badge tone="amber">Custom</Badge>}</strong><small>{getCategoryName(item.category)} · {item.is_custom ? `Base ${formatINR(item.price_paise)} · ` : ''}{pausedItem ? `Off until the next working day · paused by ${pausedItem.employee_name}` : 'Available to order'}</small></div><label className="availability-switch"><input type="checkbox" checked={!pausedItem} disabled={busy === itemKey} onChange={() => void setItem(item, pausedItem ? undefined : 'today')} /><span aria-hidden="true" /><b>{pausedItem ? 'Off' : 'On'}</b></label></article>})}</div>{!visibleMenu.length && <EmptyState icon={<Search size={20} />} title="No menu item found" description="Try a different menu item name or category." />}</section></>
+  return (
+    <>
+      <PageTitle
+        eyebrow="WHAT'S ON THE MENU"
+        title="Menu availability"
+        description="Turn an item off until the next working day, then turn it back on any time."
+      />
+      {error && <Notice>{error}</Notice>}
+      <section className="admin-panel employee-menu-panel">
+        <label className="menu-search employee-menu-search">
+          <Search size={17} />
+          <input
+            type="search"
+            aria-label="Search menu availability"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search menu items"
+          />
+        </label>
+        <div className="employee-menu-list">
+          {visibleMenu.map((item) => {
+            const itemKey = item.is_custom ? `custom-${item.id}` : item.id
+            const pausedItem = paused[itemKey]
+            return (
+              <article className="employee-menu-row" key={itemKey}>
+                <div className="employee-menu-info">
+                  <strong>
+                    {item.name} {item.is_custom && <Badge tone="amber">Custom</Badge>}
+                  </strong>
+                  <small>
+                    {getCategoryName(item.category)} ·{" "}
+                    {item.is_custom ? `Base ${formatINR(item.price_paise)} · ` : ""}
+                    {pausedItem
+                      ? `Off until the next working day · paused by ${pausedItem.employee_name}`
+                      : "Available to order"}
+                  </small>
+                </div>
+                <label className="availability-switch">
+                  <input
+                    type="checkbox"
+                    checked={!pausedItem}
+                    disabled={busy === itemKey}
+                    onChange={() => {
+                      if (!pausedItem) {
+                        // Turning off -> show warning modal
+                        setPendingPauseItem(item)
+                      } else {
+                        // Turning back on
+                        void setItem(item, undefined)
+                      }
+                    }}
+                  />
+                  <span aria-hidden="true" />
+                  <b>{pausedItem ? "Off" : "On"}</b>
+                </label>
+              </article>
+            )
+          })}
+        </div>
+        {!visibleMenu.length && (
+          <EmptyState
+            icon={<Search size={20} />}
+            title="No menu item found"
+            description="Try a different menu item name or category."
+          />
+        )}
+      </section>
+
+      {pendingPauseItem && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setPendingPauseItem(null)
+          }}
+        >
+          <section
+            className="modal-card"
+            style={{ maxWidth: "460px" }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="pause-warning-title"
+          >
+            <div className="modal-heading">
+              <div>
+                <span className="eyebrow" style={{ color: "#c54d2f" }}>
+                  MENU AVAILABILITY WARNING
+                </span>
+                <h2 id="pause-warning-title">Turn off {pendingPauseItem.name}?</h2>
+              </div>
+              <button
+                className="icon-button"
+                type="button"
+                onClick={() => setPendingPauseItem(null)}
+                aria-label="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="modal-form" style={{ padding: "18px 24px" }}>
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: "0.92rem",
+                  lineHeight: 1.5,
+                  color: "#354039",
+                }}
+              >
+                Are you sure you want to turn off{" "}
+                <strong>{pendingPauseItem.name}</strong>?
+              </p>
+              <Notice tone="info">
+                This will grey out the item on the customer menu and mark it as{" "}
+                <strong>currently unavailable</strong> until the next working day.
+              </Notice>
+              <div className="modal-actions" style={{ marginTop: "12px" }}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setPendingPauseItem(null)}
+                >
+                  Keep available
+                </Button>
+                <Button
+                  type="button"
+                  style={{
+                    background: "#c54d2f",
+                    borderColor: "#c54d2f",
+                    color: "#ffffff",
+                  }}
+                  onClick={() => {
+                    const target = pendingPauseItem
+                    setPendingPauseItem(null)
+                    void setItem(target, "today")
+                  }}
+                >
+                  Turn off menu item
+                </Button>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+    </>
+  )
 }
 
 type BillingCartLine = {
@@ -175,12 +328,17 @@ function Billing() {
         const lowestPaise = getCustomItemLowestPrice(ci)
         const discPercent = (ci as any).discount_percent || 0
         const discPricePaise = (ci as any).discounted_base_price_paise || null
+        const itemCats = ci.categories && ci.categories.length > 0
+          ? ci.categories
+          : (ci.category ? [ci.category] : ['Specialty Rolls'])
         return {
           id: ci.id,
           name: ci.name,
           description: ci.description,
-          category: ci.category || 'Specialty Rolls',
+          category: itemCats[0] || 'Specialty Rolls',
+          categories: itemCats,
           category_id: ci.category_id || null,
+          category_ids: ci.category_ids || (ci.category_id ? [ci.category_id] : []),
           price_paise: lowestPaise,
           base_price_paise: ci.base_price_paise,
           discount_percent: discPercent,
@@ -324,7 +482,7 @@ function Billing() {
   }
 
 
-  const itemCountFor = (itemId: number) => cart.filter((line) => line.item.id === itemId).reduce((sum, line) => sum + line.quantity, 0)
+  const itemCountFor = (itemId: number, isCustom = false) => cart.filter((line) => line.item.id === itemId && Boolean(line.item.is_custom) === isCustom).reduce((sum, line) => sum + line.quantity, 0)
 
   async function saveDraft() {
     setError('')
@@ -368,7 +526,7 @@ function Billing() {
 
   return <><PageTitle eyebrow="AT THE COUNTER" title="Walk-in billing" description="Close out a dine-in bill when your guest is ready to leave." />
     {error && <Notice tone={error.startsWith('Draft saved') ? 'success' : 'error'} onDismiss={() => setError('')} >{error}</Notice>}
-    <form onSubmit={submit} className="billing-layout"><section className="billing-menu"><div className="section-header"><div><h2>Menu</h2><span>Tap an item to add it</span></div><span className="menu-count">{menu.length} items</span></div><label className="menu-search billing-menu-search"><Search size={17} /><input type="search" aria-label="Search walk-in menu" value={menuSearch} onChange={(event) => setMenuSearch(event.target.value)} placeholder="Search menu items" /></label><div className="billing-item-grid">{menu.filter((item) => `${item.name} ${getCategoryName(item.category)} ${item.description}`.toLocaleLowerCase().includes(menuSearch.trim().toLocaleLowerCase())).map((item) => { const count = itemCountFor(item.id); const hasVariations = Boolean(item.variations && item.variations.length > 0); return <div role="button" tabIndex={0} aria-pressed={count > 0} className={`billing-item ${count ? 'in-cart' : ''}`} key={`${item.is_custom ? 'c-' : 'm-'}${item.id}`} onClick={() => handleItemClick(item)} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); handleItemClick(item) } }}>{item.image_urls?.length || item.image_url ? <span className="billing-item-icon billing-item-photo"><MenuImageCarousel images={item.image_urls?.length ? item.image_urls : item.image_url ? [item.image_url] : []} alt={item.name} className="menu-gallery-billing" /></span> : <span className="billing-item-icon">{item.is_vegetarian ? '🥬' : '🍢'}</span>}<span><strong>{item.name} {item.is_custom ? <Badge tone="amber">Custom</Badge> : hasVariations ? <Badge tone="soft">Options</Badge> : null}</strong><small>{getCategoryName(item.category)} · {item.is_custom || hasVariations ? `From ${formatINR(item.price_paise)}` : formatINR(item.price_paise)}</small></span>{count > 0 ? <Badge tone="soft">×{count}</Badge> : item.is_custom || hasVariations ? <Sparkles size={15} /> : <Plus size={16} />}</div>})}</div></section>
+    <form onSubmit={submit} className="billing-layout"><section className="billing-menu"><div className="section-header"><div><h2>Menu</h2><span>Tap an item to add it</span></div><span className="menu-count">{menu.length} items</span></div><label className="menu-search billing-menu-search"><Search size={17} /><input type="search" aria-label="Search walk-in menu" value={menuSearch} onChange={(event) => setMenuSearch(event.target.value)} placeholder="Search menu items" /></label><div className="billing-item-grid">{menu.filter((item) => `${item.name} ${getCategoryName(item.category)} ${item.description}`.toLocaleLowerCase().includes(menuSearch.trim().toLocaleLowerCase())).map((item) => { const count = itemCountFor(item.id, Boolean(item.is_custom)); const hasVariations = Boolean(item.variations && item.variations.length > 0); return <div role="button" tabIndex={0} aria-pressed={count > 0} className={`billing-item ${count ? 'in-cart' : ''}`} key={`${item.is_custom ? 'c-' : 'm-'}${item.id}`} onClick={() => handleItemClick(item)} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); handleItemClick(item) } }}>{item.image_urls?.length || item.image_url ? <span className="billing-item-icon billing-item-photo"><MenuImageCarousel images={item.image_urls?.length ? item.image_urls : item.image_url ? [item.image_url] : []} alt={item.name} className="menu-gallery-billing" /></span> : <span className="billing-item-icon">{item.is_vegetarian ? '🥬' : '🍢'}</span>}<span><strong>{item.name} {item.is_custom ? <Badge tone="amber">Custom</Badge> : hasVariations ? <Badge tone="soft">Options</Badge> : null}</strong><small>{getCategoryName(item.category)} · {item.is_custom || hasVariations ? `From ${formatINR(item.price_paise)}` : formatINR(item.price_paise)}</small></span>{count > 0 ? <Badge tone="soft">×{count}</Badge> : item.is_custom || hasVariations ? <Sparkles size={15} /> : <Plus size={16} />}</div>})}</div></section>
       <aside className="billing-ticket">
         <div className="ticket-heading">
           <span><ReceiptText size={17} /></span>

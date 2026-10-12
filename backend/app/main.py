@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.routers import admin, auth, cart, custom_menu, delivery, menu, orders, payments, staff
-from app.services import is_restaurant_open, restaurant_settings
+from app.services import get_next_schedule_refresh, is_restaurant_open, restaurant_settings
 from app.dependencies import CurrentAccount, DbSession
 from app.models import Account, Role
 from sqlalchemy import select
@@ -29,13 +29,14 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 app.add_middleware(SecurityHeadersMiddleware)
+is_dev = settings.environment.casefold() != "production"
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    allow_origin_regex=r"^https://.*\.trycloudflare\.com$",
+    allow_origin_regex=r"^https://.*\.trycloudflare\.com$" if is_dev else None,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Razorpay-Signature"],
+    allow_headers=["Authorization", "Content-Type", "X-Razorpay-Signature", "X-CSRF-Token"],
 )
 
 for route_module in (auth, menu, cart, orders, staff, delivery, admin, payments, custom_menu):
@@ -61,6 +62,7 @@ def public_restaurant(db: DbSession):
         "accepting_orders": is_open,
         "is_restaurant_open": is_open,
         "schedule_status": sched_status,
+        "next_schedule_refresh": get_next_schedule_refresh(config),
         "weekly_schedule": config.weekly_schedule or {},
         "distance_calculation_mode": getattr(config, "distance_calculation_mode", "AUTO") or "AUTO",
         "enforce_driver_geofence": getattr(config, "enforce_driver_geofence", False) or False,

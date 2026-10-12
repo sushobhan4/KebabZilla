@@ -17,13 +17,17 @@ from app.schemas import AccountCreate, AccountOut, AccountProfileUpdate, GoogleL
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 from app.security import (
+    CSRF_COOKIE_NAME,
     SESSION_COOKIE_NAME,
     SESSION_LIFETIME_DAYS,
     compute_device_fingerprint,
+    delete_csrf_cookie,
     delete_session_cookie,
+    generate_csrf_token,
     generate_session_token,
     hash_password,
     hash_session_token,
+    set_csrf_cookie,
     set_session_cookie,
     verify_password,
 )
@@ -55,6 +59,7 @@ def issue_session(account: Account, request: Request, response: Response, db: Se
     db.commit()
 
     set_session_cookie(response, raw_token)
+    set_csrf_cookie(response, generate_csrf_token())
 
     return TokenOut(
         access_token=raw_token,
@@ -114,12 +119,16 @@ def clear_failed_logins(key: str) -> None:
 @router.post("/login", response_model=TokenOut)
 def login(data: LoginRequest, request: Request, response: Response, db: DbSession):
     email = data.email.lower().strip()
-    check_login_rate_limit(email)
+    ip_address = request.client.host if request.client else "unknown"
+    user_agent = request.headers.get("user-agent", "")
+    device_fingerprint = compute_device_fingerprint(user_agent)
+    rate_limit_key = f"{ip_address}:{device_fingerprint}:{email}"
+    check_login_rate_limit(rate_limit_key)
     account = db.scalar(select(Account).where(Account.email == email))
     if not account or not verify_password(data.password, account.password_hash):
-        record_failed_login(email)
+        record_failed_login(rate_limit_key)
         raise HTTPException(status_code=401, detail="Email or password is incorrect")
-    clear_failed_logins(email)
+    clear_failed_logins(rate_limit_key)
     return issue_session(account, request, response, db)
 
 
@@ -195,6 +204,9 @@ def google_login(
         db.add(account)
         db.commit()
         db.refresh(account)
+    elif account.must_change_password:
+        account.must_change_password = False
+        db.commit()
 
     return issue_session(account, request, response, db)
 
@@ -278,6 +290,8 @@ def me(account: PasswordChangeAccount, request: Request, response: Response):
     token = request.cookies.get(SESSION_COOKIE_NAME)
     if token:
         set_session_cookie(response, token)
+    if not request.cookies.get(CSRF_COOKIE_NAME):
+        set_csrf_cookie(response, generate_csrf_token())
     return account
 
 
@@ -330,8 +344,9 @@ def update_profile(data: AccountProfileUpdate, account: CurrentAccount, db: DbSe
 
 @router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)
 def change_password(data: PasswordUpdate, account: PasswordChangeAccount, request: Request, db: DbSession):
-    if not verify_password(data.current_password, account.password_hash):
-        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    if not account.must_change_password:
+        if not data.current_password or not verify_password(data.current_password, account.password_hash):
+            raise HTTPException(status_code=400, detail="Current password is incorrect")
     if verify_password(data.new_password, account.password_hash):
         raise HTTPException(status_code=400, detail="Choose a new password you have not used before")
     account.password_hash = hash_password(data.new_password)
@@ -367,4 +382,5 @@ def logout(
         db.commit()
 
     delete_session_cookie(response)
+    delete_csrf_cookie(response)
 

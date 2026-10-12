@@ -1,4 +1,4 @@
-import { API_BASE } from './api'
+import { api } from './api'
 
 type Checkout = {
   gateway_order_id: string
@@ -59,17 +59,12 @@ export async function launchCheckout(checkout: Checkout, handlers: {
 }
 
 export async function verifyRazorpayPayment(payment: RazorpayResult) {
-  const response = await fetch(`${API_BASE}/payments/razorpay/verify`, {
+  return await api<{ status: string; order_id: string }>('/payments/razorpay/verify', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionStorage.getItem('kz_access_token') || ''}` },
     body: JSON.stringify({
       gateway_order_id: payment.razorpay_order_id,
       gateway_payment_id: payment.razorpay_payment_id,
       signature: payment.razorpay_signature,
     }),
   })
-  if (!response.ok) {
-    const problem = await response.json().catch(() => null) as { detail?: string } | null
-    throw new Error(problem?.detail || 'Payment could not be verified yet. Contact the restaurant with your order number.')
-  }
 }

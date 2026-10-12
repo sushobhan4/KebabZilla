@@ -16,7 +16,8 @@ depends_on = None
 
 def upgrade() -> None:
     bind = op.get_bind()
-    cols = [x[1] for x in bind.execute(sa.text("PRAGMA table_info(restaurant_settings)")).fetchall()]
+    insp = sa.inspect(bind)
+    cols = [c["name"] for c in insp.get_columns("restaurant_settings")]
     if "admin_override_open" not in cols:
         with op.batch_alter_table("restaurant_settings") as batch:
             batch.add_column(

@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=(".env", "backend/.env"), env_file_encoding="utf-8", extra="ignore")
 
     app_name: str = "KebabZilla API"
     environment: str = "development"
@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     smtp_password: str | None = None
     smtp_from_email: str = "support@kebabzilla.in"
     smtp_from_name: str = "KebabZilla"
+    gcs_bucket_name: str = "kebabzilla_cloud_storage"
+    gcs_project_id: str = "kebabzilla"
+    gcs_menu_images_folder: str = "menuImages"
 
     @field_validator("cors_origins", mode="before")
     @classmethod

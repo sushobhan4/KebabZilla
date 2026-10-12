@@ -1,3 +1,4 @@
+import secrets
 from datetime import timedelta
 from typing import Annotated
 
@@ -10,6 +11,7 @@ from app.config import settings
 from app.db import get_db
 from app.models import Account, Role, UserSession, utcnow
 from app.security import (
+    CSRF_COOKIE_NAME,
     SESSION_COOKIE_NAME,
     SESSION_LIFETIME_DAYS,
     compute_device_fingerprint,
@@ -33,12 +35,23 @@ def current_account_base(
     )
 
     # 1. Check HttpOnly cookie first, then fall back to Authorization header
-    token = request.cookies.get(SESSION_COOKIE_NAME)
+    cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
+    token = cookie_token
     if not token and credentials and credentials.scheme.casefold() == "bearer":
         token = credentials.credentials
 
     if not token:
         raise unauthorized
+
+    # CSRF protection: If authenticated via cookie on a state-changing method, verify double-submit CSRF token
+    if cookie_token and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        csrf_cookie = request.cookies.get(CSRF_COOKIE_NAME)
+        csrf_header = request.headers.get("x-csrf-token")
+        if not csrf_cookie or not csrf_header or not secrets.compare_digest(csrf_header, csrf_cookie):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="CSRF token missing or invalid",
+            )
 
     now = utcnow()
 

@@ -2,7 +2,7 @@ from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.dependencies import CurrentAccount, DbSession, require_roles
 from app.models import (
@@ -130,7 +130,13 @@ def staff_resume_custom_menu_item(item_id: int, actor: CurrentAccount, db: DbSes
 
 @router.get("/orders")
 def staff_orders(db: DbSession, status_filter: OrderStatus | None = None):
-    query = select(Order).order_by(Order.created_at.desc()).limit(200)
+    query = (
+        select(Order)
+        .outerjoin(Payment, Order.order_id == Payment.order_id)
+        .where(or_(Payment.method == PaymentMethod.CASH, Payment.status == PaymentStatus.PAID))
+        .order_by(Order.created_at.desc())
+        .limit(200)
+    )
     if status_filter:
         query = query.where(Order.status == status_filter)
     return [order_payload(order) for order in db.scalars(query).all()]

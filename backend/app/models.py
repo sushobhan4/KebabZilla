@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from enum import StrEnum
 
-from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, Enum, Float, ForeignKey, Integer, JSON, String, Table, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -51,36 +51,63 @@ class Account(Base):
     phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[Role] = mapped_column(Enum(Role, native_enum=False, length=16), default=Role.USER, index=True)
-    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     addresses: Mapped[list["AccountAddress"]] = relationship(cascade="all, delete-orphan", lazy="selectin")
     sessions: Mapped[list["UserSession"]] = relationship("UserSession", back_populates="account", cascade="all, delete-orphan", lazy="selectin")
-    delivery_duty: Mapped["DeliveryDuty | None"] = relationship(back_populates="account", uselist=False, cascade="all, delete-orphan", lazy="joined")
+    staff_info: Mapped["StaffInfo | None"] = relationship(back_populates="account", uselist=False, cascade="all, delete-orphan", lazy="joined")
+
+    @property
+    def delivery_duty(self) -> "StaffInfo | None":
+        return self.staff_info
+
+    @delivery_duty.setter
+    def delivery_duty(self, value: "StaffInfo | None") -> None:
+        self.staff_info = value
 
     @property
     def is_accepting_deliveries(self) -> bool:
         if self.role not in (Role.ADMIN, Role.DELIVERY):
             return False
-        return bool(self.delivery_duty and self.delivery_duty.is_accepting_deliveries)
+        return bool(self.staff_info and self.staff_info.is_accepting_deliveries)
 
     @is_accepting_deliveries.setter
     def is_accepting_deliveries(self, value: bool) -> None:
         if self.role not in (Role.ADMIN, Role.DELIVERY):
             return
-        if self.delivery_duty is None:
-            self.delivery_duty = DeliveryDuty(account_id=self.id, is_accepting_deliveries=bool(value))
+        if self.staff_info is None:
+            self.staff_info = StaffInfo(account_id=self.id, is_accepting_deliveries=bool(value), must_change_password=False)
         else:
-            self.delivery_duty.is_accepting_deliveries = bool(value)
+            self.staff_info.is_accepting_deliveries = bool(value)
+
+    @property
+    def must_change_password(self) -> bool:
+        if self.role == Role.USER:
+            return False
+        return bool(self.staff_info and self.staff_info.must_change_password)
+
+    @must_change_password.setter
+    def must_change_password(self, value: bool) -> None:
+        if self.role == Role.USER:
+            return
+        if self.staff_info is None:
+            self.staff_info = StaffInfo(account_id=self.id, is_accepting_deliveries=False, must_change_password=bool(value))
+        else:
+            self.staff_info.must_change_password = bool(value)
 
 
-class DeliveryDuty(Base):
-    __tablename__ = "delivery_duty"
+class StaffInfo(Base):
+    __tablename__ = "staff_info"
 
     account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True)
     is_accepting_deliveries: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0", nullable=False)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0", nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
-    account: Mapped["Account"] = relationship(back_populates="delivery_duty")
+    account: Mapped["Account"] = relationship(back_populates="staff_info")
+
+
+# Backward compatibility alias
+DeliveryDuty = StaffInfo
 
 
 class AccountAddress(Base):
@@ -134,6 +161,14 @@ class UserSession(Base):
     account: Mapped[Account] = relationship("Account", back_populates="sessions", lazy="joined")
 
 
+menu_item_categories = Table(
+    "menu_item_categories",
+    Base.metadata,
+    Column("menu_item_id", Integer, primary_key=True),
+    Column("category_id", Integer, ForeignKey("menu_categories.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
 class MenuItem(Base):
     __tablename__ = "menu_items"
 
@@ -149,7 +184,14 @@ class MenuItem(Base):
     is_featured: Mapped[bool] = mapped_column(Boolean, default=False)
     variations: Mapped[list[dict]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    category: Mapped["MenuCategory | None"] = relationship(lazy="joined")
+    category: Mapped["MenuCategory | None"] = relationship(foreign_keys=[category_id], lazy="joined")
+    categories: Mapped[list["MenuCategory"]] = relationship(
+        secondary=menu_item_categories,
+        primaryjoin="MenuItem.id == menu_item_categories.c.menu_item_id",
+        secondaryjoin="MenuCategory.id == menu_item_categories.c.category_id",
+        lazy="selectin",
+        overlaps="categories",
+    )
 
 
 class CustomMenuItem(Base):
@@ -166,7 +208,14 @@ class CustomMenuItem(Base):
     paused_by_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True, index=True)
     is_featured: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    category: Mapped["MenuCategory | None"] = relationship(lazy="joined")
+    category: Mapped["MenuCategory | None"] = relationship(foreign_keys=[category_id], lazy="joined")
+    categories: Mapped[list["MenuCategory"]] = relationship(
+        secondary=menu_item_categories,
+        primaryjoin="CustomMenuItem.id == menu_item_categories.c.menu_item_id",
+        secondaryjoin="MenuCategory.id == menu_item_categories.c.category_id",
+        lazy="selectin",
+        overlaps="categories",
+    )
     sections: Mapped[list["CustomMenuSection"]] = relationship(cascade="all, delete-orphan", order_by="CustomMenuSection.position", lazy="selectin")
 
 
@@ -229,6 +278,8 @@ class RestaurantSettings(Base):
     delivery_fee_per_km_paise: Mapped[int] = mapped_column(Integer, default=1000, server_default="1000")
     accepting_orders: Mapped[bool] = mapped_column(Boolean, default=True)
     admin_override_open: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    admin_override_state: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
+    admin_override_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
     distance_calculation_mode: Mapped[str] = mapped_column(String(20), default="AUTO", server_default="AUTO")
     enforce_driver_geofence: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     driver_geofence_meters: Mapped[int] = mapped_column(Integer, default=500, server_default="500")
@@ -248,6 +299,9 @@ class Order(Base):
     delivery_fee_paise: Mapped[int] = mapped_column(Integer, default=0)
     scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     notes: Mapped[str] = mapped_column(String(500), default="")
+    address: Mapped[str] = mapped_column(Text, default="", server_default="")
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     customer_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     customer_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
     delivery_otp_ciphertext: Mapped[str | None] = mapped_column(String(500), nullable=True)
@@ -273,6 +327,7 @@ class OrderItem(Base):
     custom_menu_item: Mapped[CustomMenuItem | None] = relationship(lazy="joined")
     variation_name: Mapped[str | None] = mapped_column(String(60), nullable=True)
     quantity: Mapped[int] = mapped_column(Integer)
+    unit_price_paise: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     customizations: Mapped[list[dict]] = mapped_column(JSON, default=list)
 
 

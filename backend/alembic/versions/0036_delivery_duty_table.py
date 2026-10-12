@@ -22,7 +22,8 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
     )
     bind = op.get_bind()
-    cols = [x[1] for x in bind.execute(sa.text("PRAGMA table_info(accounts)")).fetchall()]
+    insp = sa.inspect(bind)
+    cols = [c["name"] for c in insp.get_columns("accounts")]
     if "is_accepting_deliveries" in cols:
         op.execute(
             sa.text(

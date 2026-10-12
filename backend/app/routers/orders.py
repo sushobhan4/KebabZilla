@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.dependencies import CurrentAccount, DbSession
 from app.integrations import razorpay
@@ -32,7 +32,8 @@ async def create_order(data: OrderCreate, account: CurrentAccount, db: DbSession
     )
     payment = Payment(order_id=order.order_id, method=data.payment_method, status=PaymentStatus.PENDING, amount_paise=order_total_paise(order))
     db.add(payment)
-    db.query(CartItem).filter(CartItem.customer_id == account.id).delete(synchronize_session=False)
+    if data.payment_method == PaymentMethod.CASH:
+        db.query(CartItem).filter(CartItem.customer_id == account.id).delete(synchronize_session=False)
     db.commit()
     db.refresh(order)
     payload = order_payload(order)
@@ -61,9 +62,45 @@ def razorpay_key_id() -> str:
 @router.get("")
 def my_orders(account: CurrentAccount, db: DbSession):
     orders = db.scalars(
-        select(Order).where(Order.customer_id == account.id).order_by(Order.created_at.desc()).limit(100)
+        select(Order)
+        .outerjoin(Payment, Order.order_id == Payment.order_id)
+        .where(
+            Order.customer_id == account.id,
+            or_(Payment.method == PaymentMethod.CASH, Payment.status == PaymentStatus.PAID),
+        )
+        .order_by(Order.created_at.desc())
+        .limit(100)
     ).all()
     return [order_payload(order, include_delivery_otp=True) for order in orders]
+
+
+@router.post("/{order_id}/switch-to-cash")
+def switch_to_cash(order_id: str, account: CurrentAccount, db: DbSession):
+    order = db.scalar(select(Order).where(Order.order_id == order_id, Order.customer_id == account.id))
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    payment = db.get(Payment, order.order_id)
+    if not payment or payment.status == PaymentStatus.PAID:
+        raise HTTPException(status_code=400, detail="Cannot switch payment method for a paid order")
+    payment.method = PaymentMethod.CASH
+    payment.status = PaymentStatus.PENDING
+    payment.gateway_order_id = None
+    payment.gateway_payment_id = None
+    db.query(CartItem).filter(CartItem.customer_id == account.id).delete(synchronize_session=False)
+    db.commit()
+    db.refresh(order)
+    return order_payload(order)
+
+
+@router.post("/{order_id}/abandon")
+def abandon_order(order_id: str, account: CurrentAccount, db: DbSession):
+    order = db.scalar(select(Order).where(Order.order_id == order_id, Order.customer_id == account.id))
+    if order:
+        payment = db.get(Payment, order.order_id)
+        if payment and payment.status != PaymentStatus.PAID:
+            transition_order(order, OrderStatus.CANCELLED)
+            db.commit()
+    return {"ok": True}
 
 
 @router.get("/{order_id}")

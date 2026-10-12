@@ -11,12 +11,12 @@ import { usePreference } from "../cookies";
 import { importLibrary, setOptions } from "@googlemaps/js-api-loader";
 import {
   Activity,
+  AlertTriangle,
   ArrowRight,
   ArrowUpDown,
   ArrowUpRight,
   BarChart3,
   Check,
-  ChevronDown,
   CircleDollarSign,
   Clock,
   CookingPot,
@@ -27,14 +27,21 @@ import {
   Plus,
   Percent,
   RefreshCw,
+  RotateCw,
   Search,
   Settings,
   ShieldCheck,
   ShoppingBag,
   Trash2,
   Truck,
+  UploadCloud,
+  Image as ImageIcon,
   Users,
   X,
+  ZoomIn,
+  ZoomOut,
+  Crop,
+  Star,
 } from "lucide-react";
 import { Link, Route, Routes } from "react-router-dom";
 import {
@@ -42,8 +49,11 @@ import {
   formatINR,
   formatStatus,
   friendlyDate,
+  deleteMenuImage,
   getCustomItemLowestPrice,
   getMenuItemLowestPrice,
+  resolveImageUrl,
+  uploadMenuImage,
   type Account,
   type CustomMenuItem,
   type CustomMenuSection,
@@ -538,9 +548,9 @@ function AdminOrders() {
       setBusyId(null);
     }
   }
-  async function refund(order: Order) {
-    const message = `Issue a full Razorpay refund of ${formatINR(order.total_paise)} for order ${order.order_id}?`;
-    if (!window.confirm(message)) return;
+
+  const [refundOrder, setRefundOrder] = useState<Order | null>(null);
+  async function executeRefund(order: Order) {
     setBusyId(order.order_id);
     setError("");
     try {
@@ -736,7 +746,7 @@ function AdminOrders() {
                           variant="danger"
                           size="button-sm"
                           disabled={busyId === order.order_id}
-                          onClick={() => void refund(order)}
+                          onClick={() => setRefundOrder(order)}
                         >
                           Refund payment <ArrowRight size={13} />
                         </Button>
@@ -766,6 +776,76 @@ function AdminOrders() {
           }}
         />
       </section>
+
+      {refundOrder && (
+        <div
+          className="address-map-backdrop"
+          style={{
+            zIndex: 10005,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setRefundOrder(null);
+          }}
+        >
+          <div
+            className="address-map-card"
+            style={{
+              maxWidth: 440,
+              padding: "1.75rem",
+              textAlign: "center",
+              borderRadius: "16px",
+              boxShadow: "0 20px 45px rgba(0,0,0,0.22)",
+            }}
+          >
+            <div
+              style={{
+                width: 52,
+                height: 52,
+                borderRadius: "50%",
+                background: "#fef2f2",
+                color: "#dc2626",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                margin: "0 auto 1.1rem",
+              }}
+            >
+              <AlertTriangle size={26} />
+            </div>
+            <h3 style={{ margin: "0 0 0.5rem 0", fontSize: "1.2rem", color: "#1f2937", fontWeight: 700 }}>
+              Issue Razorpay refund?
+            </h3>
+            <p style={{ margin: "0 0 1.5rem 0", color: "var(--muted)", fontSize: "0.92rem", lineHeight: 1.45 }}>
+              Issue a full refund of <strong>{formatINR(refundOrder.total_paise)}</strong> for order{" "}
+              <strong>#{refundOrder.order_id}</strong>?
+            </p>
+            <div style={{ display: "flex", justifyContent: "center", gap: "0.85rem" }}>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setRefundOrder(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="danger"
+                disabled={busyId === refundOrder.order_id}
+                onClick={async () => {
+                  const target = refundOrder;
+                  setRefundOrder(null);
+                  if (target) await executeRefund(target);
+                }}
+              >
+                Confirm refund
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -790,6 +870,29 @@ function Team() {
     phone: "",
     role: "EMPLOYEE" as Role,
   });
+  const [expiryPreset, setExpiryPreset] = useState("30");
+  const [customExpiryValue, setCustomExpiryValue] = useState(30);
+  const [customExpiryUnit, setCustomExpiryUnit] = useState<"minutes" | "hours">("minutes");
+
+  const effectiveExpiryMinutes = useMemo(() => {
+    if (expiryPreset !== "custom") {
+      return parseInt(expiryPreset, 10) || 30;
+    }
+    const val = Number(customExpiryValue) || 30;
+    if (customExpiryUnit === "hours") {
+      return Math.max(30, Math.round(val * 60));
+    }
+    return Math.max(30, Math.round(val));
+  }, [expiryPreset, customExpiryValue, customExpiryUnit]);
+
+  const durationDescription = useMemo(() => {
+    if (effectiveExpiryMinutes % 60 === 0) {
+      const h = effectiveExpiryMinutes / 60;
+      return h === 1 ? "1 hour" : `${h} hours`;
+    }
+    return `${effectiveExpiryMinutes} minutes`;
+  }, [effectiveExpiryMinutes]);
+
   const [provisioned, setProvisioned] = useState<ProvisionedAccount | null>(null);
   const refresh = useCallback(
     () =>
@@ -834,7 +937,10 @@ function Team() {
     try {
       const created = await api<ProvisionedAccount>("/admin/accounts", {
         method: "POST",
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          ...form,
+          invite_expiry_minutes: effectiveExpiryMinutes,
+        }),
       });
       setCreating(false);
       setProvisioned(created);
@@ -844,6 +950,9 @@ function Team() {
         phone: "",
         role: "EMPLOYEE",
       });
+      setExpiryPreset("30");
+      setCustomExpiryValue(30);
+      setCustomExpiryUnit("minutes");
       setQ("");
       setRole("ALL");
       setPage(0);
@@ -888,7 +997,11 @@ function Team() {
       />
       {error && <Notice onDismiss={() => setError("")}>{error}</Notice>}
       {provisioned && <Notice tone="info" onDismiss={() => setProvisioned(null)}>
-        {provisioned.notification_status === "EMAIL_SENT" ? <><strong>{provisioned.name}'s account is ready.</strong> Their temporary password was sent to <strong>{provisioned.email}</strong>. SMS is not configured yet. They must change it on first sign-in.</> : <><strong>{provisioned.name}'s account is ready.</strong> Email could not be sent and SMS is not configured. Share this temporary password securely: <strong>{provisioned.temporary_password}</strong>. They must change it on first sign-in.</>}
+        {provisioned.notification_status === "EMAIL_SENT" ? (
+          <><strong>{provisioned.name}&apos;s account is ready.</strong> A secure activation link was sent to <strong>{provisioned.email}</strong>. The link is active for the requested duration. They can set their password or sign in with Google.</>
+        ) : (
+          <><strong>{provisioned.name}&apos;s account was created.</strong> However, the activation email could not be sent (SMTP not configured or delivery error). For security reasons, the activation link was expired immediately. You can re-invite them or reset their password once email delivery is active.</>
+        )}
       </Notice>}
       <div className="team-metrics">
         <div>
@@ -1105,9 +1218,60 @@ function Team() {
                   Role
                   <RoundedSelect value={form.role} onChange={(next) => setForm({ ...form, role: next as Role })} options={provisionableRoles.map((r) => ({ value: r, label: formatStatus(r) }))} />
                 </label>
+                <label className="field-label">
+                  Link active duration
+                  <RoundedSelect
+                    value={expiryPreset}
+                    onChange={(next) => setExpiryPreset(next)}
+                    options={[
+                      { value: "30", label: "30 minutes (Default / Lowest)" },
+                      { value: "60", label: "1 hour" },
+                      { value: "120", label: "2 hours" },
+                      { value: "360", label: "6 hours" },
+                      { value: "1440", label: "24 hours (1 day)" },
+                      { value: "2880", label: "48 hours (2 days)" },
+                      { value: "custom", label: "Custom duration…" },
+                    ]}
+                  />
+                </label>
               </div>
+              {expiryPreset === "custom" && (
+                <div className="modal-two-col">
+                  <label className="field-label">
+                    Custom duration
+                    <input
+                      type="number"
+                      required
+                      min={customExpiryUnit === "minutes" ? 30 : 1}
+                      step={customExpiryUnit === "minutes" ? 1 : 0.5}
+                      value={customExpiryValue}
+                      onChange={(e) => setCustomExpiryValue(Math.max(1, Number(e.target.value)))}
+                      placeholder={customExpiryUnit === "minutes" ? "Min 30" : "Min 1"}
+                    />
+                  </label>
+                  <label className="field-label">
+                    Unit
+                    <RoundedSelect
+                      value={customExpiryUnit}
+                      onChange={(next) => {
+                        const unit = next as "minutes" | "hours";
+                        setCustomExpiryUnit(unit);
+                        if (unit === "minutes" && customExpiryValue < 30) {
+                          setCustomExpiryValue(30);
+                        } else if (unit === "hours" && customExpiryValue < 1) {
+                          setCustomExpiryValue(1);
+                        }
+                      }}
+                      options={[
+                        { value: "minutes", label: "Minutes (min 30)" },
+                        { value: "hours", label: "Hours" },
+                      ]}
+                    />
+                  </label>
+                </div>
+              )}
               <Notice tone="info">
-                A temporary password will be generated automatically from the person's first name, six random digits, and a symbol. It will be sent to their email. SMS delivery will be added once an SMS provider is configured.
+                A secure account activation link will be sent to the person&apos;s email address. They will be able to set their password or sign in directly with Google. The link will remain active for <strong>{durationDescription}</strong> (minimum 30 minutes).
               </Notice>
               <div className="modal-actions">
                 <Button variant="secondary" onClick={() => setCreating(false)}>
@@ -1126,6 +1290,724 @@ function Team() {
   );
 }
 
+async function exportCroppedBlobUnder1MB(
+  img: HTMLImageElement,
+  sx: number,
+  sy: number,
+  sWidth: number,
+  sHeight: number,
+): Promise<Blob> {
+  const targetSize = 1000;
+  const canvas = document.createElement("canvas");
+  canvas.width = targetSize;
+  canvas.height = targetSize;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas context is unavailable.");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+
+  // White base fill in case source has transparent regions
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, targetSize, targetSize);
+
+  ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, targetSize, targetSize);
+
+  const maxBytes = 1024 * 1024; // 1MB strictly
+  let quality = 0.92;
+  let finalBlob: Blob | null = null;
+
+  while (quality >= 0.4) {
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", quality),
+    );
+    if (blob && blob.size <= maxBytes) {
+      finalBlob = blob;
+      break;
+    }
+    quality -= 0.1;
+  }
+
+  if (!finalBlob) {
+    // Fallback: 800x800 resolution to guarantee under 1MB
+    const smallCanvas = document.createElement("canvas");
+    smallCanvas.width = 800;
+    smallCanvas.height = 800;
+    const sCtx = smallCanvas.getContext("2d");
+    if (sCtx) {
+      sCtx.imageSmoothingEnabled = true;
+      sCtx.imageSmoothingQuality = "high";
+      sCtx.fillStyle = "#ffffff";
+      sCtx.fillRect(0, 0, 800, 800);
+      sCtx.drawImage(canvas, 0, 0, 800, 800);
+      finalBlob = await new Promise<Blob | null>((resolve) =>
+        smallCanvas.toBlob(resolve, "image/jpeg", 0.8),
+      );
+    }
+  }
+
+  if (!finalBlob) {
+    throw new Error("Unable to compress image under 1MB limit.");
+  }
+
+  return finalBlob;
+}
+
+function rotateImage90Degrees(img: HTMLImageElement): Promise<string> {
+  const canvas = document.createElement("canvas");
+  canvas.width = img.naturalHeight;
+  canvas.height = img.naturalWidth;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return Promise.resolve(img.src);
+  ctx.translate(canvas.width / 2, canvas.height / 2);
+  ctx.rotate((90 * Math.PI) / 180);
+  ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
+  return Promise.resolve(canvas.toDataURL("image/jpeg", 0.95));
+}
+
+function OneToOneCropper({
+  imageSrc,
+  fileName,
+  uploading,
+  onCancel,
+  onCropAndUpload,
+}: {
+  imageSrc: string;
+  fileName: string;
+  uploading: boolean;
+  onCancel: () => void;
+  onCropAndUpload: (file: File) => void;
+}) {
+  const VIEWPORT_SIZE = 300;
+  const [zoom, setZoom] = useState(1);
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
+  const [activeSrc, setActiveSrc] = useState(imageSrc);
+  const isDragging = useRef(false);
+  const dragStart = useRef({ x: 0, y: 0, posX: 0, posY: 0 });
+  const imgRef = useRef<HTMLImageElement>(null);
+  const [processing, setProcessing] = useState(false);
+  const [cropError, setCropError] = useState("");
+
+  function handleImageLoad(e: React.SyntheticEvent<HTMLImageElement>) {
+    const img = e.currentTarget;
+    const w = img.naturalWidth;
+    const h = img.naturalHeight;
+    setImageSize({ width: w, height: h });
+    const minScale = Math.max(VIEWPORT_SIZE / w, VIEWPORT_SIZE / h);
+    setZoom(1);
+    setPos({
+      x: (VIEWPORT_SIZE - w * minScale) / 2,
+      y: (VIEWPORT_SIZE - h * minScale) / 2,
+    });
+  }
+
+  const minScale = imageSize
+    ? Math.max(VIEWPORT_SIZE / imageSize.width, VIEWPORT_SIZE / imageSize.height)
+    : 1;
+  const currentScale = minScale * zoom;
+
+  function clampPos(newX: number, newY: number, scale = currentScale) {
+    if (!imageSize) return { x: newX, y: newY };
+    const w = imageSize.width * scale;
+    const h = imageSize.height * scale;
+    const minX = VIEWPORT_SIZE - w;
+    const minY = VIEWPORT_SIZE - h;
+    return {
+      x: Math.min(0, Math.max(minX, newX)),
+      y: Math.min(0, Math.max(minY, newY)),
+    };
+  }
+
+  function handlePointerDown(e: React.PointerEvent) {
+    if (uploading || processing) return;
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    isDragging.current = true;
+    dragStart.current = {
+      x: e.clientX,
+      y: e.clientY,
+      posX: pos.x,
+      posY: pos.y,
+    };
+  }
+
+  function handlePointerMove(e: React.PointerEvent) {
+    if (!isDragging.current) return;
+    const dx = e.clientX - dragStart.current.x;
+    const dy = e.clientY - dragStart.current.y;
+    setPos(clampPos(dragStart.current.posX + dx, dragStart.current.posY + dy));
+  }
+
+  function handlePointerUp(e: React.PointerEvent) {
+    isDragging.current = false;
+    try {
+      (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
+  }
+
+  function handleWheel(e: React.WheelEvent) {
+    e.preventDefault();
+    if (uploading || processing) return;
+    const delta = e.deltaY < 0 ? 0.08 : -0.08;
+    handleZoomChange(Math.min(3, Math.max(1, zoom + delta)));
+  }
+
+  function handleZoomChange(newZoom: number) {
+    if (!imageSize) return;
+    const oldScale = minScale * zoom;
+    const newScale = minScale * newZoom;
+    const centerX = (VIEWPORT_SIZE / 2 - pos.x) / oldScale;
+    const centerY = (VIEWPORT_SIZE / 2 - pos.y) / oldScale;
+    const nextX = VIEWPORT_SIZE / 2 - centerX * newScale;
+    const nextY = VIEWPORT_SIZE / 2 - centerY * newScale;
+    setZoom(newZoom);
+    setPos(clampPos(nextX, nextY, newScale));
+  }
+
+  async function handleRotate() {
+    if (!imgRef.current || !imageSize) return;
+    try {
+      const rotated = await rotateImage90Degrees(imgRef.current);
+      setActiveSrc(rotated);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  function handleReset() {
+    if (!imageSize) return;
+    setZoom(1);
+    setPos({
+      x: (VIEWPORT_SIZE - imageSize.width * minScale) / 2,
+      y: (VIEWPORT_SIZE - imageSize.height * minScale) / 2,
+    });
+  }
+
+  async function handleCropClick() {
+    if (!imgRef.current || !imageSize || uploading || processing) return;
+    setCropError("");
+    setProcessing(true);
+    try {
+      const sx = Math.max(0, -pos.x / currentScale);
+      const sy = Math.max(0, -pos.y / currentScale);
+      const sWidth = Math.min(imageSize.width - sx, VIEWPORT_SIZE / currentScale);
+      const sHeight = Math.min(imageSize.height - sy, VIEWPORT_SIZE / currentScale);
+
+      const blob = await exportCroppedBlobUnder1MB(imgRef.current, sx, sy, sWidth, sHeight);
+      const cleanBase = fileName.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_-]/g, "_");
+      const croppedFile = new File([blob], `${cleanBase}_1x1.jpg`, {
+        type: "image/jpeg",
+      });
+      onCropAndUpload(croppedFile);
+    } catch (err) {
+      setCropError(err instanceof Error ? err.message : "Failed to crop image.");
+      setProcessing(false);
+    }
+  }
+
+  return (
+    <div className="image-cropper-container">
+      <div className="image-cropper-topbar">
+        <span className="image-cropper-badge">
+          <Crop size={13} /> 1:1 Aspect Ratio
+        </span>
+        <span className="image-cropper-limit-pill">
+          Max 1MB limit enforced
+        </span>
+      </div>
+
+      {cropError && <Notice onDismiss={() => setCropError("")}>{cropError}</Notice>}
+
+      <div
+        className="image-cropper-viewport-wrap"
+        style={{ width: VIEWPORT_SIZE, height: VIEWPORT_SIZE }}
+      >
+        <div
+          className="image-cropper-viewport"
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onWheel={handleWheel}
+        >
+          <img
+            ref={imgRef}
+            src={activeSrc}
+            alt="Dish preview to crop"
+            onLoad={handleImageLoad}
+            draggable={false}
+            style={{
+              transform: `translate3d(${pos.x}px, ${pos.y}px, 0px) scale(${currentScale})`,
+              transformOrigin: "0 0",
+              userSelect: "none",
+            }}
+          />
+          <div className="image-cropper-grid" aria-hidden="true">
+            <div className="cropper-grid-line cropper-h1" />
+            <div className="cropper-grid-line cropper-h2" />
+            <div className="cropper-grid-line cropper-v1" />
+            <div className="cropper-grid-line cropper-v2" />
+          </div>
+        </div>
+      </div>
+
+      <p className="image-cropper-hint">
+        Drag image to center dish · Scroll or use slider to zoom
+      </p>
+
+      <div className="image-cropper-controls">
+        <div className="image-cropper-zoom-row">
+          <button
+            type="button"
+            className="icon-button-sm"
+            aria-label="Zoom out"
+            title="Zoom out"
+            onClick={() => handleZoomChange(Math.max(1, zoom - 0.15))}
+            disabled={zoom <= 1 || uploading || processing}
+          >
+            <ZoomOut size={16} />
+          </button>
+          <input
+            type="range"
+            min="1"
+            max="3"
+            step="0.05"
+            value={zoom}
+            aria-label="Zoom level"
+            onChange={(e) => handleZoomChange(Number(e.target.value))}
+            className="image-cropper-slider"
+            disabled={uploading || processing}
+          />
+          <button
+            type="button"
+            className="icon-button-sm"
+            aria-label="Zoom in"
+            title="Zoom in"
+            onClick={() => handleZoomChange(Math.min(3, zoom + 0.15))}
+            disabled={zoom >= 3 || uploading || processing}
+          >
+            <ZoomIn size={16} />
+          </button>
+        </div>
+
+        <div className="image-cropper-btn-row">
+          <button
+            type="button"
+            className="text-button-sm"
+            onClick={handleRotate}
+            disabled={uploading || processing}
+          >
+            <RotateCw size={13} /> Rotate 90°
+          </button>
+          <button
+            type="button"
+            className="text-button-sm"
+            onClick={handleReset}
+            disabled={uploading || processing}
+          >
+            <RefreshCw size={13} /> Reset
+          </button>
+        </div>
+      </div>
+
+      <div className="modal-actions" style={{ marginTop: "16px" }}>
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={onCancel}
+          disabled={uploading || processing}
+        >
+          Cancel
+        </Button>
+        <Button
+          type="button"
+          onClick={handleCropClick}
+          disabled={uploading || processing}
+        >
+          {uploading || processing ? (
+            <>
+              <RefreshCw size={15} className="spin" /> Uploading to GCS…
+            </>
+          ) : (
+            <>
+              <UploadCloud size={15} /> Crop & Upload (≤ 1MB)
+            </>
+          )}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ImageUploadModal({
+  isOpen,
+  title,
+  initialUrl,
+  onSave,
+  onClose,
+}: {
+  isOpen: boolean;
+  title: string;
+  initialUrl: string;
+  onSave: (url: string, file?: File) => void;
+  onClose: () => void;
+}) {
+  const [tab, setTab] = useState<"upload" | "url">("upload");
+  const [urlInput, setUrlInput] = useState(initialUrl);
+  const [uploadedUrl, setUploadedUrl] = useState("");
+  const [stagedFile, setStagedFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [cropperSrc, setCropperSrc] = useState<string | null>(null);
+  const [isCropping, setIsCropping] = useState(false);
+  const [uploadedSize, setUploadedSize] = useState<number | null>(null);
+  const [showDiscardWarning, setShowDiscardWarning] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setTab("upload");
+      setUrlInput(initialUrl || "");
+      setUploadedUrl("");
+      setStagedFile(null);
+      setSelectedFile(null);
+      setUploadedSize(null);
+      setCropperSrc(null);
+      setIsCropping(false);
+      setUploadError("");
+      setUploading(false);
+      setShowDiscardWarning(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }, [isOpen, initialUrl]);
+
+  if (!isOpen) return null;
+
+  function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadError("");
+
+    const allowed = ["image/jpeg", "image/png", "image/webp", "image/gif", "image/avif"];
+    if (!allowed.includes(file.type)) {
+      setUploadError("Please select a valid image (JPEG, PNG, or WebP).");
+      return;
+    }
+
+    if (file.size > 25 * 1024 * 1024) {
+      setUploadError("Original photo is too large to process (maximum 25MB).");
+      return;
+    }
+
+    const objUrl = URL.createObjectURL(file);
+    setCropperSrc(objUrl);
+    setSelectedFile(file);
+    setIsCropping(true);
+  }
+
+  async function handleCropAndUpload(croppedFile: File) {
+    if (croppedFile.size > 1024 * 1024) {
+      setUploadError(
+        `Cropped image size (${(croppedFile.size / 1024 / 1024).toFixed(2)}MB) exceeds 1MB limit.`,
+      );
+      return;
+    }
+
+    setUploadError("");
+    // Staged locally in browser memory without sending to Cloud Storage yet!
+    if (uploadedUrl && uploadedUrl.startsWith("blob:")) {
+      URL.revokeObjectURL(uploadedUrl);
+    }
+    const localUrl = URL.createObjectURL(croppedFile);
+    setUploadedUrl(localUrl);
+    setStagedFile(croppedFile);
+    setUploadedSize(croppedFile.size);
+    setIsCropping(false);
+    if (cropperSrc) {
+      URL.revokeObjectURL(cropperSrc);
+      setCropperSrc(null);
+    }
+  }
+
+  function handleCancelCropping() {
+    setIsCropping(false);
+    if (cropperSrc) {
+      URL.revokeObjectURL(cropperSrc);
+      setCropperSrc(null);
+    }
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function forceCloseModal() {
+    if (uploadedUrl && uploadedUrl.startsWith("blob:")) {
+      URL.revokeObjectURL(uploadedUrl);
+    }
+    handleCancelCropping();
+    setUploadedUrl("");
+    setStagedFile(null);
+    setSelectedFile(null);
+    setUploadedSize(null);
+    setShowDiscardWarning(false);
+    onClose();
+  }
+
+  function handleModalCloseAttempt() {
+    if (stagedFile || isCropping) {
+      setShowDiscardWarning(true);
+      return;
+    }
+    forceCloseModal();
+  }
+
+  function handlePickDifferent() {
+    if (uploadedUrl && uploadedUrl.startsWith("blob:")) {
+      URL.revokeObjectURL(uploadedUrl);
+    }
+    setUploadedUrl("");
+    setStagedFile(null);
+    setSelectedFile(null);
+    setUploadedSize(null);
+    handleCancelCropping();
+    fileInputRef.current?.click();
+  }
+
+  function handleSave() {
+    if (tab === "upload") {
+      if (!uploadedUrl || !stagedFile) {
+        setUploadError("Please select and crop an image first.");
+        return;
+      }
+      onSave(uploadedUrl, stagedFile);
+    } else {
+      const trimmed = urlInput.trim();
+      if (!trimmed) {
+        setUploadError("Please enter an image URL.");
+        return;
+      }
+      onSave(trimmed, undefined);
+    }
+  }
+
+  return (
+    <div
+      className="modal-backdrop"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) handleModalCloseAttempt();
+      }}
+    >
+      <section
+        className="modal-card image-url-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="image-modal-title"
+      >
+        <div className="modal-heading">
+          <div>
+            <span className="eyebrow">GOOGLE CLOUD STORAGE</span>
+            <h2 id="image-modal-title">{title}</h2>
+          </div>
+          <button
+            className="icon-button"
+            type="button"
+            aria-label="Close"
+            onClick={handleModalCloseAttempt}
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="image-modal-tabs">
+          <button
+            type="button"
+            className={`image-modal-tab ${tab === "upload" ? "active" : ""}`}
+            onClick={() => {
+              setTab("upload");
+              setUploadError("");
+            }}
+          >
+            <UploadCloud size={15} /> Upload to Cloud Storage
+          </button>
+          <button
+            type="button"
+            className={`image-modal-tab ${tab === "url" ? "active" : ""}`}
+            onClick={() => {
+              setTab("url");
+              setUploadError("");
+            }}
+          >
+            <ImageIcon size={15} /> Image URL / Link
+          </button>
+        </div>
+
+        <div className="modal-form">
+          {uploadError && (
+            <Notice onDismiss={() => setUploadError("")}>{uploadError}</Notice>
+          )}
+
+          {tab === "upload" ? (
+            <div className="image-upload-section">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
+                style={{ display: "none" }}
+                onChange={handleFileSelected}
+              />
+
+              {isCropping && cropperSrc ? (
+                <OneToOneCropper
+                  imageSrc={cropperSrc}
+                  fileName={selectedFile?.name || "menu_item.jpg"}
+                  uploading={uploading}
+                  onCancel={handleCancelCropping}
+                  onCropAndUpload={handleCropAndUpload}
+                />
+              ) : uploadedUrl ? (
+                <div className="image-upload-preview-wrap">
+                  <div className="image-upload-preview">
+                    <img
+                      src={resolveImageUrl(uploadedUrl)}
+                      alt="Uploaded preview"
+                    />
+                  </div>
+                  <div className="image-upload-meta">
+                    <span className="image-gcs-badge">
+                      <Check size={13} /> Photo ready (saved locally, will upload on Save)
+                    </span>
+                    <span className="image-cropper-badge" style={{ marginTop: 2 }}>
+                      <Crop size={12} /> 1:1 Square · {uploadedSize ? `${(uploadedSize / 1024).toFixed(0)} KB (≤ 1MB)` : "≤ 1MB"}
+                    </span>
+                    {selectedFile && (
+                      <small className="image-upload-filename">
+                        {selectedFile.name}
+                      </small>
+                    )}
+                    <div style={{ display: "flex", gap: "10px", marginTop: "6px" }}>
+                      <button
+                        type="button"
+                        className="text-button"
+                        style={{ fontSize: "12px" }}
+                        onClick={handlePickDifferent}
+                        disabled={uploading}
+                      >
+                        Choose a different photo
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div
+                  className={`image-dropzone ${uploading ? "uploading" : ""}`}
+                  onClick={() => !uploading && fileInputRef.current?.click()}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const file = e.dataTransfer.files?.[0];
+                    if (file) {
+                      const eventObj = { target: { files: [file] } } as unknown as React.ChangeEvent<HTMLInputElement>;
+                      handleFileSelected(eventObj);
+                    }
+                  }}
+                >
+                  <div className="image-dropzone-icon">
+                    <UploadCloud size={30} />
+                  </div>
+                  <strong>Click or drag dish photo to upload</strong>
+                  <small>Crop to 1:1 square · Output strictly under 1MB</small>
+                  <span className="image-dropzone-pill">
+                    Stored in GCS menuImages/
+                  </span>
+                </div>
+              )}
+            </div>
+          ) : (
+            <label className="field-label">
+              Image URL
+              <input
+                autoFocus
+                type="url"
+                required
+                value={urlInput}
+                onChange={(e) => setUrlInput(e.target.value)}
+                placeholder="https://..."
+              />
+            </label>
+          )}
+
+          {!isCropping && (
+            <div className="modal-actions">
+              <Button type="button" variant="secondary" onClick={handleModalCloseAttempt}>
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={handleSave}
+                disabled={
+                  uploading ||
+                  (tab === "upload" && !uploadedUrl) ||
+                  (tab === "url" && !urlInput.trim())
+                }
+              >
+                Use image <ArrowRight size={15} />
+              </Button>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {showDiscardWarning && (
+        <div
+          className="address-map-backdrop"
+          style={{
+            zIndex: 10005,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <div
+            className="admin-panel"
+            role="dialog"
+            aria-modal="true"
+            style={{
+              maxWidth: "420px",
+              width: "90%",
+              padding: "1.6rem",
+              borderRadius: "14px",
+              textAlign: "center",
+              boxShadow: "0 16px 40px rgba(0, 0, 0, 0.45)",
+            }}
+          >
+            <h3 style={{ margin: "0 0 0.75rem 0", fontSize: "1.15rem", fontWeight: 700 }}>
+              Discard this photo?
+            </h3>
+            <p style={{ margin: "0 0 1.5rem 0", color: "var(--muted)", fontSize: "0.92rem", lineHeight: 1.45 }}>
+              Are you sure you want to discard this photo? Any cropping adjustments will not be saved.
+            </p>
+            <div style={{ display: "flex", justifyContent: "center", gap: "0.85rem" }}>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setShowDiscardWarning(false)}
+              >
+                Keep editing
+              </Button>
+              <Button
+                type="button"
+                variant="danger"
+                onClick={forceCloseModal}
+              >
+                Discard photo
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MenuManagement() {
   const [items, setItems] = useState<MenuItem[]>([]);
   const [menuCategories, setMenuCategories] = useState<
@@ -1140,11 +2022,54 @@ function MenuManagement() {
   const [creatingCustom, setCreatingCustom] = useState(false);
   const [editingCustom, setEditingCustom] = useState<CustomMenuItem | null>(null);
   const [customItems, setCustomItems] = useState<CustomMenuItem[]>([]);
+
+  // Pending files staging maps (URL -> File) and snapshot refs
+  const pendingFilesRef = useRef<Map<string, File>>(new Map());
+  const deletedGcsUrlsRef = useRef<Set<string>>(new Set());
+  const initialMenuSnapshot = useRef<string>("");
+  const [discardModalOpen, setDiscardModalOpen] = useState(false);
+  const [archiveTarget, setArchiveTarget] = useState<MenuItem | null>(null);
+
+  const pendingCustomFilesRef = useRef<Map<string, File>>(new Map());
+  const deletedCustomGcsUrlsRef = useRef<Set<string>>(new Set());
+  const initialCustomSnapshot = useRef<string>("");
+  const [discardCustomModalOpen, setDiscardCustomModalOpen] = useState(false);
+  const [archiveCustomTarget, setArchiveCustomTarget] = useState<CustomMenuItem | null>(null);
+
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState("All");
+  const [categoryDeleteTarget, setCategoryDeleteTarget] = useState<{ id: number; name: string } | null>(null);
+  const [menuSearch, setMenuSearch] = useState("");
+  const [menuSort, setMenuSort] = useState("default");
+
+  function itemHasCategory(
+    item: { category?: string; categories?: string[]; category_id?: number | null; category_ids?: number[] },
+    categoryIdentifier: { id: number; name: string } | string,
+  ): boolean {
+    const catName = typeof categoryIdentifier === "string" ? categoryIdentifier : categoryIdentifier.name;
+    const catId = typeof categoryIdentifier === "string" ? undefined : categoryIdentifier.id;
+
+    if (item.categories && item.categories.length > 0) {
+      if (item.categories.includes(catName)) return true;
+    }
+    if (catId != null && item.category_ids && item.category_ids.length > 0) {
+      if (item.category_ids.includes(catId)) return true;
+    }
+    return item.category === catName || (catId != null && item.category_id === catId);
+  }
+
+  function getCategoryMenuCount(cat: { id: number; name: string }): number {
+    const reg = items.filter((i) => itemHasCategory(i, cat)).length;
+    const cus = customItems.filter((ci) => itemHasCategory(ci, cat)).length;
+    return reg + cus;
+  }
+
   const blankCustom = {
     name: "",
     description: "",
     category: "",
+    categories: [] as string[],
     category_id: null as number | null,
+    category_ids: [] as number[],
     base_price_paise: 0,
     image_urls: [] as string[],
     is_vegetarian: false,
@@ -1160,6 +2085,9 @@ function MenuManagement() {
     name: "",
     description: "",
     category: "",
+    categories: [] as string[],
+    category_id: null as number | null,
+    category_ids: [] as number[],
     price_paise: 0,
     image_url: "",
     image_urls: [] as string[],
@@ -1169,6 +2097,91 @@ function MenuManagement() {
     variations: [] as { name: string; price_paise: number }[],
   };
   const [form, setForm] = useState(blank);
+
+  function isNormalDirty(): boolean {
+    if (!creating && !editing) return false;
+    if (pendingFilesRef.current.size > 0) return true;
+    return JSON.stringify(form) !== initialMenuSnapshot.current;
+  }
+
+  function handleRequestCloseNormal() {
+    if (isNormalDirty()) {
+      setDiscardModalOpen(true);
+    } else {
+      forceCloseNormal();
+    }
+  }
+
+  function forceCloseNormal() {
+    for (const url of pendingFilesRef.current.keys()) {
+      if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+    }
+    pendingFilesRef.current.clear();
+    deletedGcsUrlsRef.current.clear();
+    localStorage.removeItem("kz_menu_item_draft");
+    setEditing(null);
+    setCreating(false);
+    setDiscardModalOpen(false);
+  }
+
+  function isCustomDirty(): boolean {
+    if (!creatingCustom && !editingCustom) return false;
+    if (pendingCustomFilesRef.current.size > 0) return true;
+    return JSON.stringify(customForm) !== initialCustomSnapshot.current;
+  }
+
+  function handleRequestCloseCustom() {
+    if (isCustomDirty()) {
+      setDiscardCustomModalOpen(true);
+    } else {
+      forceCloseCustom();
+    }
+  }
+
+  function forceCloseCustom() {
+    for (const url of pendingCustomFilesRef.current.keys()) {
+      if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+    }
+    pendingCustomFilesRef.current.clear();
+    deletedCustomGcsUrlsRef.current.clear();
+    localStorage.removeItem("kz_custom_menu_draft");
+    setCreatingCustom(false);
+    setEditingCustom(null);
+    setDiscardCustomModalOpen(false);
+  }
+
+  // Local storage draft auto-sync while creating
+  useEffect(() => {
+    if (creating) {
+      const sanitized = {
+        ...form,
+        image_urls: form.image_urls.filter((u) => !u.startsWith("blob:")),
+      };
+      localStorage.setItem("kz_menu_item_draft", JSON.stringify(sanitized));
+    }
+  }, [creating, form]);
+
+  useEffect(() => {
+    if (creatingCustom) {
+      const sanitized = {
+        ...customForm,
+        image_urls: customForm.image_urls.filter((u) => !u.startsWith("blob:")),
+      };
+      localStorage.setItem("kz_custom_menu_draft", JSON.stringify(sanitized));
+    }
+  }, [creatingCustom, customForm]);
+
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isNormalDirty() || isCustomDirty()) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  });
+
   const refresh = useCallback(
     () =>
       Promise.all([
@@ -1192,15 +2205,25 @@ function MenuManagement() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
   function openEdit(item: MenuItem) {
+    pendingFilesRef.current.clear();
+    deletedGcsUrlsRef.current.clear();
     setEditing(item);
     const imageUrls = item.image_urls?.length
       ? item.image_urls
       : item.image_url
         ? [item.image_url]
         : [];
-    setForm({
+    const itemCats = item.categories && item.categories.length > 0
+      ? item.categories
+      : (item.category ? [item.category] : []);
+    const formatted = {
       ...item,
+      category: itemCats[0] || "",
+      categories: itemCats,
+      category_id: item.category_id,
+      category_ids: item.category_ids || [],
       price_paise: item.price_paise / 100,
       image_url: imageUrls[0] || "",
       image_urls: imageUrls,
@@ -1208,7 +2231,9 @@ function MenuManagement() {
         name: v.name,
         price_paise: v.price_paise / 100,
       })),
-    });
+    };
+    setForm(formatted);
+    initialMenuSnapshot.current = JSON.stringify(formatted);
     setCreating(false);
   }
   function addVariation() {
@@ -1242,27 +2267,70 @@ function MenuManagement() {
   }
   function openCreateNormal() {
     setShowTypePicker(false);
+    pendingFilesRef.current.clear();
+    deletedGcsUrlsRef.current.clear();
+    const draftRaw = localStorage.getItem("kz_menu_item_draft");
+    let initForm = blank;
+    if (draftRaw) {
+      try {
+        const parsed = JSON.parse(draftRaw);
+        if (parsed && typeof parsed === "object") {
+          initForm = {
+            ...blank,
+            ...parsed,
+            categories: parsed.categories || (parsed.category ? [parsed.category] : []),
+            image_urls: (parsed.image_urls || []).filter((u: string) => !u.startsWith("blob:")),
+          };
+        }
+      } catch {}
+    }
+    setForm(initForm);
+    initialMenuSnapshot.current = JSON.stringify(blank);
     setCreating(true);
     setEditing(null);
-    setForm(blank);
   }
   function openCreateCustom() {
     setShowTypePicker(false);
+    pendingCustomFilesRef.current.clear();
+    deletedCustomGcsUrlsRef.current.clear();
+    const draftRaw = localStorage.getItem("kz_custom_menu_draft");
+    let initCustom = blankCustom;
+    if (draftRaw) {
+      try {
+        const parsed = JSON.parse(draftRaw);
+        if (parsed && typeof parsed === "object") {
+          initCustom = {
+            ...blankCustom,
+            ...parsed,
+            categories: parsed.categories || (parsed.category ? [parsed.category] : []),
+            image_urls: (parsed.image_urls || []).filter((u: string) => !u.startsWith("blob:")),
+          };
+        }
+      } catch {}
+    }
+    setCustomForm(initCustom);
+    initialCustomSnapshot.current = JSON.stringify(blankCustom);
     setCreatingCustom(true);
     setEditingCustom(null);
-    setCustomForm(blankCustom);
   }
   function openEditCustom(item: CustomMenuItem) {
+    pendingCustomFilesRef.current.clear();
+    deletedCustomGcsUrlsRef.current.clear();
     setEditingCustom(item);
     setCreatingCustom(false);
     setShowTypePicker(false);
     setCreating(false);
     setEditing(null);
-    setCustomForm({
+    const itemCats = item.categories && item.categories.length > 0
+      ? item.categories
+      : (item.category ? [item.category] : []);
+    const formatted = {
       name: item.name,
       description: item.description,
-      category: item.category,
+      category: itemCats[0] || "",
+      categories: itemCats,
       category_id: item.category_id,
+      category_ids: item.category_ids || [],
       base_price_paise: item.base_price_paise / 100,
       image_urls: item.image_urls,
       is_vegetarian: item.is_vegetarian,
@@ -1273,30 +2341,59 @@ function MenuManagement() {
         required: s.required !== false,
         options: s.options.map((o) => ({ name: o.name, extra_paise: o.extra_paise / 100 })),
       })),
-    });
+    };
+    setCustomForm(formatted);
+    initialCustomSnapshot.current = JSON.stringify(formatted);
   }
   async function submitCustom(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setError("");
-    const matchedCategory = menuCategories.find((c) => c.name === customForm.category);
-    const payload = {
-      name: customForm.name,
-      description: customForm.description,
-      category: customForm.category || null,
-      category_id: matchedCategory?.id ?? null,
-      base_price_paise: Math.round(Number(customForm.base_price_paise) * 100),
-      image_urls: customForm.image_urls,
-      is_vegetarian: customForm.is_vegetarian,
-      is_available: customForm.is_available,
-      is_featured: customForm.is_featured,
-      sections: customForm.sections.map((s) => ({
-        name: s.name,
-        required: s.required !== false,
-        options: s.options.map((o) => ({ name: o.name, extra_paise: Math.round(Number(o.extra_paise) * 100) })),
-      })),
-    };
+
     try {
+      // Sequentially upload any pending custom images to GCS upon Save
+      const finalImageUrls: string[] = [];
+      for (const url of customForm.image_urls) {
+        const staged = pendingCustomFilesRef.current.get(url);
+        if (staged) {
+          const res = await uploadMenuImage(staged);
+          finalImageUrls.push(res.url);
+          if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+        } else {
+          finalImageUrls.push(url);
+        }
+      }
+
+      // Cleanup any removed GCS photos
+      for (const removedUrl of deletedCustomGcsUrlsRef.current) {
+        if (!finalImageUrls.includes(removedUrl)) {
+          void deleteMenuImage(removedUrl);
+        }
+      }
+      deletedCustomGcsUrlsRef.current.clear();
+      pendingCustomFilesRef.current.clear();
+      localStorage.removeItem("kz_custom_menu_draft");
+
+      const matchedCategories = menuCategories.filter((c) => customForm.categories.includes(c.name));
+      const payload = {
+        name: customForm.name,
+        description: customForm.description,
+        categories: customForm.categories,
+        category_ids: matchedCategories.map((c) => c.id),
+        category: customForm.categories[0] || null,
+        category_id: matchedCategories[0]?.id ?? null,
+        base_price_paise: Math.round(Number(customForm.base_price_paise) * 100),
+        image_urls: finalImageUrls,
+        is_vegetarian: customForm.is_vegetarian,
+        is_available: customForm.is_available,
+        is_featured: customForm.is_featured,
+        sections: customForm.sections.map((s) => ({
+          name: s.name,
+          required: s.required !== false,
+          options: s.options.map((o) => ({ name: o.name, extra_paise: Math.round(Number(o.extra_paise) * 100) })),
+        })),
+      };
+
       await api<CustomMenuItem>(
         editingCustom ? `/custom-menu/${editingCustom.id}` : "/custom-menu",
         { method: editingCustom ? "PATCH" : "POST", body: JSON.stringify(payload) },
@@ -1352,18 +2449,28 @@ function MenuManagement() {
       return { ...f, sections };
     });
   }
-  function saveCustomImage() {
+  function handleSaveCustomImage(url: string, file?: File) {
     if (!customImagePrompt) return;
-    const url = customImagePrompt.value.trim();
-    if (!url) { setError("Please enter an image URL."); return; }
-    let imageUrl: string;
-    try {
-      const parsed = new URL(url);
-      const driveFileId = parsed.hostname === "drive.google.com"
-        ? parsed.pathname.match(/\/file\/d\/([^/]+)/)?.[1] || parsed.searchParams.get("id")
-        : parsed.hostname === "docs.google.com" ? parsed.searchParams.get("id") : null;
-      imageUrl = driveFileId ? `https://drive.google.com/thumbnail?id=${encodeURIComponent(driveFileId)}&sz=w1200` : url;
-    } catch { setError("Please enter a valid image URL."); return; }
+    const trimmed = url.trim();
+    if (!trimmed) { setError("Please enter an image URL."); return; }
+    let imageUrl = trimmed;
+    if (file) {
+      pendingCustomFilesRef.current.set(imageUrl, file);
+    } else {
+      try {
+        if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+          const parsed = new URL(trimmed);
+          const driveFileId = parsed.hostname === "drive.google.com"
+            ? parsed.pathname.match(/\/file\/d\/([^/]+)/)?.[1] || parsed.searchParams.get("id")
+            : parsed.hostname === "docs.google.com" ? parsed.searchParams.get("id") : null;
+          if (driveFileId) {
+            imageUrl = `https://drive.google.com/thumbnail?id=${encodeURIComponent(driveFileId)}&sz=w1200`;
+          }
+        }
+      } catch {
+        // Keep trimmed as-is
+      }
+    }
     const imageUrls = [...customForm.image_urls];
     if (customImagePrompt.index === -1) imageUrls.push(imageUrl);
     else imageUrls[customImagePrompt.index] = imageUrl;
@@ -1372,32 +2479,78 @@ function MenuManagement() {
     setCustomImagePrompt(null);
   }
   function removeCustomImage(index: number) {
+    const targetUrl = customForm.image_urls[index];
+    if (targetUrl) {
+      if (pendingCustomFilesRef.current.has(targetUrl)) {
+        pendingCustomFilesRef.current.delete(targetUrl);
+        if (targetUrl.startsWith("blob:")) URL.revokeObjectURL(targetUrl);
+      } else if (targetUrl.includes("storage.googleapis.com") || targetUrl.includes("menuImages/")) {
+        deletedCustomGcsUrlsRef.current.add(targetUrl);
+      }
+    }
     setCustomForm((f) => ({ ...f, image_urls: f.image_urls.filter((_, i) => i !== index) }));
+  }
+  function setMainCustomImage(index: number) {
+    if (index <= 0 || index >= customForm.image_urls.length) return;
+    const target = customForm.image_urls[index];
+    const remaining = customForm.image_urls.filter((_, i) => i !== index);
+    const updated = [target, ...remaining];
+    setCustomForm((f) => ({ ...f, image_urls: updated }));
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setError("");
-    const variationsPayload = form.variations
-      .filter((v) => v.name.trim())
-      .map((v) => ({
-        name: v.name.trim(),
-        price_paise: Math.round(Number(v.price_paise) * 100),
-      }));
 
-    const calculatedPricePaise = variationsPayload.length > 0
-      ? Math.min(...variationsPayload.map((v) => v.price_paise))
-      : Math.round(Number(form.price_paise) * 100);
-
-    const data = {
-      ...form,
-      price_paise: calculatedPricePaise,
-      variations: variationsPayload,
-      image_urls: form.image_urls,
-      image_url: form.image_urls[0] || null,
-    };
     try {
+      // Sequentially upload any pending files to Cloud Storage upon Save
+      const finalImageUrls: string[] = [];
+      for (const url of form.image_urls) {
+        const staged = pendingFilesRef.current.get(url);
+        if (staged) {
+          const res = await uploadMenuImage(staged);
+          finalImageUrls.push(res.url);
+          if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+        } else {
+          finalImageUrls.push(url);
+        }
+      }
+
+      // Cleanup any removed GCS photos
+      for (const removedUrl of deletedGcsUrlsRef.current) {
+        if (!finalImageUrls.includes(removedUrl)) {
+          void deleteMenuImage(removedUrl);
+        }
+      }
+      deletedGcsUrlsRef.current.clear();
+      pendingFilesRef.current.clear();
+      localStorage.removeItem("kz_menu_item_draft");
+
+      const variationsPayload = form.variations
+        .filter((v) => v.name.trim())
+        .map((v) => ({
+          name: v.name.trim(),
+          price_paise: Math.round(Number(v.price_paise) * 100),
+        }));
+
+      const calculatedPricePaise = variationsPayload.length > 0
+        ? Math.min(...variationsPayload.map((v) => v.price_paise))
+        : Math.round(Number(form.price_paise) * 100);
+
+      const matchedCategories = menuCategories.filter((c) => form.categories.includes(c.name));
+      const data = {
+        ...form,
+        categories: form.categories,
+        category_ids: matchedCategories.map((c) => c.id),
+        category: form.categories[0] || "",
+        category_id: matchedCategories[0]?.id || null,
+        price_paise: calculatedPricePaise,
+        variations: variationsPayload,
+        image_urls: finalImageUrls,
+        image_url: finalImageUrls[0] || null,
+      };
+
       const updated = await api<MenuItem>(
         editing ? `/menu/${editing.id}` : "/menu",
         {
@@ -1457,30 +2610,47 @@ function MenuManagement() {
       );
     }
   }
-  async function deleteCategory(category: { id: number; name: string }) {
+  async function executeDeleteCategory(category: { id: number; name: string }) {
     if (category.id === 0) {
       setError(
         "This category is attached to existing menu data. Run the database migration before editing categories.",
       );
       return;
     }
-    const affected = items.filter(
-      (item) => item.category === category.name,
-    ).length;
-    const warning = affected
-      ? `Delete “${category.name}”? ${affected} ${affected === 1 ? "menu item will" : "menu items will"} have an empty category.`
-      : `Delete “${category.name}”?`;
-    if (!window.confirm(warning)) return;
     try {
       await api(`/menu/categories/${category.id}`, { method: "DELETE" });
       setItems((old) =>
-        old.map((item) =>
-          item.category === category.name ? { ...item, category: "" } : item,
-        ),
+        old.map((item) => {
+          const newCats = (item.categories || []).filter((c) => c !== category.name);
+          const newIds = (item.category_ids || []).filter((id) => id !== category.id);
+          return {
+            ...item,
+            categories: newCats,
+            category_ids: newIds,
+            category: item.category === category.name ? (newCats[0] || "") : item.category,
+            category_id: item.category_id === category.id ? (newIds[0] || null) : item.category_id,
+          };
+        }),
+      );
+      setCustomItems((old) =>
+        old.map((item) => {
+          const newCats = (item.categories || []).filter((c) => c !== category.name);
+          const newIds = (item.category_ids || []).filter((id) => id !== category.id);
+          return {
+            ...item,
+            categories: newCats,
+            category_ids: newIds,
+            category: item.category === category.name ? (newCats[0] || "") : item.category,
+            category_id: item.category_id === category.id ? (newIds[0] || null) : item.category_id,
+          };
+        }),
       );
       setMenuCategories((old) =>
         old.filter((entry) => entry.id !== category.id),
       );
+      if (selectedCategoryFilter === category.name) {
+        setSelectedCategoryFilter("All");
+      }
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Could not delete this category.",
@@ -1490,29 +2660,34 @@ function MenuManagement() {
   function editImage(index: number) {
     setImagePrompt({ index, value: form.image_urls[index] || "" });
   }
-  function saveImage() {
+  function handleSaveImage(url: string, file?: File) {
     if (!imagePrompt) return;
-    const url = imagePrompt.value.trim();
-    if (!url) {
+    const trimmed = url.trim();
+    if (!trimmed) {
       setError("Please enter an image URL.");
       return;
     }
-    let imageUrl: string;
-    try {
-      const parsed = new URL(url);
-      const driveFileId =
-        parsed.hostname === "drive.google.com"
-          ? parsed.pathname.match(/\/file\/d\/([^/]+)/)?.[1] ||
-            parsed.searchParams.get("id")
-          : parsed.hostname === "docs.google.com"
-            ? parsed.searchParams.get("id")
-            : null;
-      imageUrl = driveFileId
-        ? `https://drive.google.com/thumbnail?id=${encodeURIComponent(driveFileId)}&sz=w1200`
-        : url;
-    } catch {
-      setError("Please enter a valid image URL.");
-      return;
+    let imageUrl = trimmed;
+    if (file) {
+      pendingFilesRef.current.set(imageUrl, file);
+    } else {
+      try {
+        if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+          const parsed = new URL(trimmed);
+          const driveFileId =
+            parsed.hostname === "drive.google.com"
+              ? parsed.pathname.match(/\/file\/d\/([^/]+)/)?.[1] ||
+                parsed.searchParams.get("id")
+              : parsed.hostname === "docs.google.com"
+                ? parsed.searchParams.get("id")
+                : null;
+          if (driveFileId) {
+            imageUrl = `https://drive.google.com/thumbnail?id=${encodeURIComponent(driveFileId)}&sz=w1200`;
+          }
+        }
+      } catch {
+        // Keep trimmed as-is
+      }
     }
     const imageUrls = [...form.image_urls];
     if (imagePrompt.index === -1) imageUrls.push(imageUrl);
@@ -1522,13 +2697,106 @@ function MenuManagement() {
     setImagePrompt(null);
   }
   function removeImage(index: number) {
+    const targetUrl = form.image_urls[index];
+    if (targetUrl) {
+      if (pendingFilesRef.current.has(targetUrl)) {
+        pendingFilesRef.current.delete(targetUrl);
+        if (targetUrl.startsWith("blob:")) URL.revokeObjectURL(targetUrl);
+      } else if (targetUrl.includes("storage.googleapis.com") || targetUrl.includes("menuImages/")) {
+        deletedGcsUrlsRef.current.add(targetUrl);
+      }
+    }
     const imageUrls = form.image_urls.filter(
       (_, imageIndex) => imageIndex !== index,
     );
     setForm({ ...form, image_urls: imageUrls, image_url: imageUrls[0] || "" });
   }
+  function setMainImage(index: number) {
+    if (index <= 0 || index >= form.image_urls.length) return;
+    const target = form.image_urls[index];
+    const remaining = form.image_urls.filter((_, i) => i !== index);
+    const updated = [target, ...remaining];
+    setForm({ ...form, image_urls: updated, image_url: updated[0] || "" });
+  }
   const categories = menuCategories.length;
   const showModal = creating || Boolean(editing);
+
+  const totalMenuItems = items.length + customItems.length;
+  const availableMenuItems =
+    items.filter((item) => item.is_available).length +
+    customItems.filter((item) => item.is_available).length;
+
+  const searchQuery = menuSearch.trim().toLowerCase();
+
+  let displayNormalItems = items.filter((item) => {
+    if (item.is_custom) return false;
+    if (selectedCategoryFilter !== "All" && !itemHasCategory(item, selectedCategoryFilter)) {
+      return false;
+    }
+    if (searchQuery) {
+      const matchName = item.name.toLowerCase().includes(searchQuery);
+      const matchDesc = (item.description || "").toLowerCase().includes(searchQuery);
+      const matchCats = (item.categories || []).some((c) => c.toLowerCase().includes(searchQuery)) ||
+        (item.category || "").toLowerCase().includes(searchQuery);
+      const matchVars = (item.variations || []).some((v) => v.name.toLowerCase().includes(searchQuery));
+      if (!matchName && !matchDesc && !matchCats && !matchVars) return false;
+    }
+    return true;
+  });
+
+  let displayCustomItems = customItems.filter((item) => {
+    if (selectedCategoryFilter !== "All" && !itemHasCategory(item, selectedCategoryFilter)) {
+      return false;
+    }
+    if (searchQuery) {
+      const matchName = item.name.toLowerCase().includes(searchQuery);
+      const matchDesc = (item.description || "").toLowerCase().includes(searchQuery);
+      const matchCats = (item.categories || []).some((c) => c.toLowerCase().includes(searchQuery)) ||
+        (item.category || "").toLowerCase().includes(searchQuery);
+      const matchSections = (item.sections || []).some(
+        (s) =>
+          s.name.toLowerCase().includes(searchQuery) ||
+          s.options.some((o) => o.name.toLowerCase().includes(searchQuery)),
+      );
+      if (!matchName && !matchDesc && !matchCats && !matchSections) return false;
+    }
+    return true;
+  });
+
+  displayNormalItems = [...displayNormalItems].sort((a, b) => {
+    switch (menuSort) {
+      case "name_asc":
+        return a.name.localeCompare(b.name);
+      case "name_desc":
+        return b.name.localeCompare(a.name);
+      case "price_asc":
+        return getMenuItemLowestPrice(a) - getMenuItemLowestPrice(b);
+      case "price_desc":
+        return getMenuItemLowestPrice(b) - getMenuItemLowestPrice(a);
+      case "available":
+        return (b.is_available ? 1 : 0) - (a.is_available ? 1 : 0);
+      default:
+        return (a.category || "").localeCompare(b.category || "");
+    }
+  });
+
+  displayCustomItems = [...displayCustomItems].sort((a, b) => {
+    switch (menuSort) {
+      case "name_asc":
+        return a.name.localeCompare(b.name);
+      case "name_desc":
+        return b.name.localeCompare(a.name);
+      case "price_asc":
+        return getCustomItemLowestPrice(a) - getCustomItemLowestPrice(b);
+      case "price_desc":
+        return getCustomItemLowestPrice(b) - getCustomItemLowestPrice(a);
+      case "available":
+        return (b.is_available ? 1 : 0) - (a.is_available ? 1 : 0);
+      default:
+        return (a.category || "").localeCompare(b.category || "");
+    }
+  });
+
   return (
     <>
       <PageTitle
@@ -1547,14 +2815,14 @@ function MenuManagement() {
           <span>
             <CookingPot size={17} />
           </span>
-          <strong>{items.length}</strong>
+          <strong>{totalMenuItems}</strong>
           <small>Total menu items</small>
         </div>
         <div>
           <span>
             <Check size={17} />
           </span>
-          <strong>{items.filter((item) => item.is_available).length}</strong>
+          <strong>{availableMenuItems}</strong>
           <small>Available now</small>
         </div>
         <div>
@@ -1590,34 +2858,152 @@ function MenuManagement() {
           </Button>
         </form>
         <div className="category-list">
-          {menuCategories.map((category) => (
-            <div
-              className="category-chip"
-              key={`${category.id}-${category.name}`}
-            >
-              <span>{category.name}</span>
-              <small>
-                {items.filter((item) => item.category === category.name || item.category_id === category.id).length}{" "}
-                menus
-              </small>
-              <button
-                type="button"
-                className="icon-button danger-icon"
-                title={`Delete ${category.name}`}
-                aria-label={`Delete ${category.name}`}
-                onClick={() => void deleteCategory(category)}
+          <div
+            className={`category-chip ${selectedCategoryFilter === "All" ? "category-chip-active" : ""}`}
+            onClick={() => setSelectedCategoryFilter("All")}
+            style={{ cursor: "pointer" }}
+            role="button"
+            tabIndex={0}
+          >
+            <span>All</span>
+            <small>{totalMenuItems} menus</small>
+          </div>
+          {menuCategories.map((category) => {
+            const count = getCategoryMenuCount(category);
+            const isSelected = selectedCategoryFilter === category.name;
+            return (
+              <div
+                className={`category-chip ${isSelected ? "category-chip-active" : ""}`}
+                key={`${category.id}-${category.name}`}
+                onClick={() =>
+                  setSelectedCategoryFilter(isSelected ? "All" : category.name)
+                }
+                style={{ cursor: "pointer" }}
+                role="button"
+                tabIndex={0}
               >
-                <Trash2 size={14} />
-              </button>
-            </div>
-          ))}
+                <span>{category.name}</span>
+                <small>{count} menus</small>
+                <button
+                  type="button"
+                  className="icon-button danger-icon"
+                  title={`Delete ${category.name}`}
+                  aria-label={`Delete ${category.name}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCategoryDeleteTarget(category);
+                  }}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            );
+          })}
         </div>
       </section>
+
+      <div className="admin-search-sort-controls" style={{ margin: "20px 0 14px" }}>
+        <label className="admin-search-field">
+          <Search size={16} />
+          <input
+            value={menuSearch}
+            onChange={(e) => setMenuSearch(e.target.value)}
+            placeholder="Search menu items by name, description, or ingredients…"
+            aria-label="Search menu items"
+          />
+          {menuSearch && (
+            <button
+              type="button"
+              className="icon-button"
+              onClick={() => setMenuSearch("")}
+              style={{ padding: 4, flexShrink: 0 }}
+              title="Clear search"
+              aria-label="Clear search"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </label>
+        <RoundedSelect
+          icon={<ArrowUpDown size={15} />}
+          ariaLabel="Sort menu items"
+          value={menuSort}
+          onChange={(val) => setMenuSort(val)}
+          options={[
+            { value: "default", label: "Default order" },
+            { value: "name_asc", label: "Name: A → Z" },
+            { value: "name_desc", label: "Name: Z → A" },
+            { value: "price_asc", label: "Price: Low to High" },
+            { value: "price_desc", label: "Price: High to Low" },
+            { value: "available", label: "Available first" },
+          ]}
+          className="orders-period-select"
+        />
+      </div>
+
+      {(selectedCategoryFilter !== "All" || menuSearch) && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            margin: "0 0 16px",
+            padding: "10px 16px",
+            background: "rgba(43, 57, 51, 0.06)",
+            borderRadius: "10px",
+            fontSize: "13px",
+            fontWeight: 500,
+            gap: "12px",
+            flexWrap: "wrap",
+          }}
+        >
+          <span>
+            {selectedCategoryFilter !== "All" && (
+              <>Category: <strong>{selectedCategoryFilter}</strong> </>
+            )}
+            {selectedCategoryFilter !== "All" && menuSearch && "· "}
+            {menuSearch && (
+              <>Search: <strong>“{menuSearch}”</strong> </>
+            )}
+            ({displayNormalItems.length + displayCustomItems.length} {displayNormalItems.length + displayCustomItems.length === 1 ? "item" : "items"} found)
+          </span>
+          <button
+            type="button"
+            className="button button-secondary button-sm"
+            onClick={() => {
+              setSelectedCategoryFilter("All");
+              setMenuSearch("");
+            }}
+          >
+            Clear filters
+          </button>
+        </div>
+      )}
       {loading ? (
         <Loading label="Laying out the menu…" />
+      ) : displayNormalItems.length === 0 && displayCustomItems.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "48px 20px", color: "#666" }}>
+          <p style={{ margin: "0 0 12px", fontSize: "15px" }}>
+            {menuSearch
+              ? `No menu items matching “${menuSearch}”.`
+              : `No menu items found under “${selectedCategoryFilter}”.`}
+          </p>
+          {(selectedCategoryFilter !== "All" || menuSearch) && (
+            <Button
+              variant="secondary"
+              size="button-sm"
+              onClick={() => {
+                setSelectedCategoryFilter("All");
+                setMenuSearch("");
+              }}
+            >
+              Clear search &amp; filter
+            </Button>
+          )}
+        </div>
       ) : (
         <div className="menu-admin-list">
-          {items.filter((item) => !item.is_custom).map((item) => (
+          {displayNormalItems.map((item) => (
             <article
               className={`menu-admin-card ${!item.is_available ? "menu-item-muted" : ""}`}
               key={item.id}
@@ -1644,7 +3030,13 @@ function MenuManagement() {
               </div>
               <div className="menu-admin-main">
                 <div className="menu-admin-tags">
-                  <Badge tone="soft">{item.category || "Uncategorized"}</Badge>
+                  {item.categories && item.categories.length > 0 ? (
+                    item.categories.map((c) => (
+                      <Badge key={c} tone="soft">{c}</Badge>
+                    ))
+                  ) : (
+                    <Badge tone="soft">{item.category || "Uncategorized"}</Badge>
+                  )}
                   {item.is_vegetarian && <span className="veg-label">VEG</span>}
                   {!item.is_available && (
                     <Badge tone="danger">Unavailable</Badge>
@@ -1682,7 +3074,7 @@ function MenuManagement() {
                   <button
                     className="icon-button danger-icon"
                     title="Remove from live menu"
-                    onClick={() => void archive(item)}
+                    onClick={() => setArchiveTarget(item)}
                   >
                     <Trash2 size={16} />
                   </button>
@@ -1692,16 +3084,16 @@ function MenuManagement() {
           ))}
         </div>
       )}
-      {customItems.length > 0 && (
+      {displayCustomItems.length > 0 && (
         <section className="admin-panel custom-menu-admin-section">
           <div className="panel-heading">
             <div>
               <span className="eyebrow">BUILD-YOUR-OWN</span>
-              <h2>Custom menu items</h2>
+              <h2>{selectedCategoryFilter === "All" && !menuSearch ? "Custom menu items" : `Custom menu items (${displayCustomItems.length})`}</h2>
             </div>
           </div>
           <div className="menu-admin-list">
-            {customItems.map((item) => (
+            {displayCustomItems.map((item) => (
               <article
                 className={`menu-admin-card custom-menu-card ${!item.is_available ? "menu-item-muted" : ""}`}
                 key={`custom-${item.id}`}
@@ -1728,7 +3120,13 @@ function MenuManagement() {
                 </div>
                 <div className="menu-admin-main">
                   <div className="menu-admin-tags">
-                    <Badge tone="soft">{item.category || "Uncategorized"}</Badge>
+                    {item.categories && item.categories.length > 0 ? (
+                      item.categories.map((c) => (
+                        <Badge key={c} tone="soft">{c}</Badge>
+                      ))
+                    ) : (
+                      <Badge tone="soft">{item.category || "Uncategorized"}</Badge>
+                    )}
                     <Badge tone="amber">Custom</Badge>
                     {item.is_vegetarian && <span className="veg-label">VEG</span>}
                     {!item.is_available && (
@@ -1761,7 +3159,7 @@ function MenuManagement() {
                     <button
                       className="icon-button danger-icon"
                       title="Remove from live menu"
-                      onClick={() => void archiveCustom(item)}
+                      onClick={() => setArchiveCustomTarget(item)}
                     >
                       <Trash2 size={16} />
                     </button>
@@ -1777,8 +3175,7 @@ function MenuManagement() {
           className="modal-backdrop"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) {
-              setEditing(null);
-              setCreating(false);
+              handleRequestCloseNormal();
             }
           }}
         >
@@ -1794,10 +3191,7 @@ function MenuManagement() {
               </div>
               <button
                 className="icon-button"
-                onClick={() => {
-                  setEditing(null);
-                  setCreating(false);
-                }}
+                onClick={handleRequestCloseNormal}
                 aria-label="Close"
               >
                 <X size={18} />
@@ -1832,50 +3226,66 @@ function MenuManagement() {
                   placeholder="What makes this one a favorite?"
                 />
               </label>
-              <div className="modal-two-col">
-                <label className="field-label">
-                  Category
-                  <RoundedSelect
-                    value={form.category}
-                    onChange={(val) =>
-                      setForm({ ...form, category: val })
-                    }
-                    placeholder="No category"
-                    options={[
-                      { value: "", label: "No category" },
-                      ...menuCategories.map((category) => ({
-                        value: category.name,
-                        label: category.name,
-                      })),
-                    ]}
-                  />
-                </label>
-                <label className="field-label">
-                  Price · INR
-                  <input
-                    required={form.variations.length === 0}
-                    type="number"
-                    min="1"
-                    step="1"
-                    disabled={form.variations.length > 0}
-                    value={
-                      form.variations.length > 0
-                        ? (Math.min(...form.variations.map((v) => Number(v.price_paise) || 0)) || "")
-                        : form.price_paise
-                    }
-                    onChange={(event) =>
-                      setForm({
-                        ...form,
-                        price_paise: Number(event.target.value),
-                      })
-                    }
-                    placeholder="299"
-                  />
-                  {form.variations.length > 0 && (
-                    <span className="field-optional">Auto-set to lowest portion price</span>
-                  )}
-                </label>
+              <div className="field-label" style={{ marginBottom: 12 }}>
+                Categories (select all that apply)
+                {menuCategories.length === 0 ? (
+                  <span style={{ fontSize: "12px", color: "#888", display: "block", marginTop: 4 }}>
+                    No categories created yet. Add one in the Category Manager.
+                  </span>
+                ) : (
+                  <div className="category-multi-select-list">
+                    {menuCategories.map((category) => {
+                      const isSelected = form.categories.includes(category.name);
+                      return (
+                        <button
+                          key={category.id}
+                          type="button"
+                          className={`category-toggle-pill ${isSelected ? "selected" : ""}`}
+                          onClick={() => {
+                            const newCategories = isSelected
+                              ? form.categories.filter((c) => c !== category.name)
+                              : [...form.categories, category.name];
+                            const newCategory = newCategories[0] || "";
+                            setForm({
+                              ...form,
+                              categories: newCategories,
+                              category: newCategory,
+                            });
+                          }}
+                        >
+                          {isSelected ? "✓ " : "+ "}
+                          {category.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
+              <label className="field-label">
+                Price · INR
+                <input
+                  required={form.variations.length === 0}
+                  type="number"
+                  min="1"
+                  step="1"
+                  disabled={form.variations.length > 0}
+                  value={
+                    form.variations.length > 0
+                      ? (Math.min(...form.variations.map((v) => Number(v.price_paise) || 0)) || "")
+                      : form.price_paise
+                  }
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      price_paise: Number(event.target.value),
+                    })
+                  }
+                  placeholder="299"
+                />
+                {form.variations.length > 0 && (
+                  <span className="field-optional">Auto-set to lowest portion price</span>
+                )}
+              </label>
               <div className="custom-sections-builder" style={{ marginTop: 4, marginBottom: 12 }}>
                 <div className="custom-sections-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexDirection: "row" }}>
                   <div>
@@ -1939,7 +3349,7 @@ function MenuManagement() {
                   {form.image_urls.map((url, index) => (
                     <div className="menu-image-tile" key={`${index}-${url}`}>
                       <img
-                        src={url}
+                        src={resolveImageUrl(url)}
                         alt={`Menu image ${index + 1}`}
                         onError={(event) =>
                           event.currentTarget
@@ -1947,10 +3357,32 @@ function MenuManagement() {
                             ?.classList.add("menu-image-failed")
                         }
                       />
-                      <span className="menu-image-order">
-                        {index === 0 ? "MAIN" : `#${index + 1}`}
-                      </span>
+                      {index === 0 ? (
+                        <span className="menu-image-order menu-image-main-badge" title="Main dish photo">
+                          <Star size={10} fill="currentColor" /> MAIN
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="menu-image-order menu-image-order-btn"
+                          title="Click to set as main image"
+                          onClick={() => setMainImage(index)}
+                        >
+                          #{index + 1}
+                        </button>
+                      )}
                       <div className="menu-image-actions">
+                        {index !== 0 && (
+                          <button
+                            type="button"
+                            className="menu-image-set-main-btn"
+                            aria-label="Set as main image"
+                            title="Set as main photo (moves to front)"
+                            onClick={() => setMainImage(index)}
+                          >
+                            <Star size={13} />
+                          </button>
+                        )}
                         <button
                           type="button"
                           aria-label="Change image"
@@ -2024,10 +3456,7 @@ function MenuManagement() {
               <div className="modal-actions">
                 <Button
                   variant="secondary"
-                  onClick={() => {
-                    setEditing(null);
-                    setCreating(false);
-                  }}
+                  onClick={handleRequestCloseNormal}
                 >
                   Cancel
                 </Button>
@@ -2041,12 +3470,14 @@ function MenuManagement() {
         </div>
       )}
       {imagePrompt && (
-        <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setImagePrompt(null) }}>
-          <section className="modal-card image-url-modal" role="dialog" aria-modal="true" aria-labelledby="image-url-title">
-            <div className="modal-heading"><div><span className="eyebrow">MENU PHOTOGRAPHY</span><h2 id="image-url-title">{imagePrompt.index === -1 ? "Add image" : "Replace image"}</h2></div><button className="icon-button" type="button" aria-label="Close" onClick={() => setImagePrompt(null)}><X size={18} /></button></div>
-            <div className="modal-form"><label className="field-label">Image URL<input autoFocus type="url" required value={imagePrompt.value} onChange={(event) => setImagePrompt({ ...imagePrompt, value: event.target.value })} placeholder="https://…" /></label><div className="modal-actions"><Button type="button" variant="secondary" onClick={() => setImagePrompt(null)}>Cancel</Button><Button type="button" onClick={saveImage}>Use image <ArrowRight size={15} /></Button></div></div>
-          </section>
-        </div>
+        <ImageUploadModal
+          key={`menu-img-modal-${imagePrompt.index}-${imagePrompt.value || "new"}`}
+          isOpen={true}
+          title={imagePrompt.index === -1 ? "Add menu image" : "Replace menu image"}
+          initialUrl={imagePrompt.value || ""}
+          onSave={handleSaveImage}
+          onClose={() => setImagePrompt(null)}
+        />
       )}
       {showTypePicker && (
         <div
@@ -2101,8 +3532,7 @@ function MenuManagement() {
           className="modal-backdrop"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) {
-              setCreatingCustom(false);
-              setEditingCustom(null);
+              handleRequestCloseCustom();
             }
           }}
         >
@@ -2116,10 +3546,7 @@ function MenuManagement() {
               </div>
               <button
                 className="icon-button"
-                onClick={() => {
-                  setCreatingCustom(false);
-                  setEditingCustom(null);
-                }}
+                onClick={handleRequestCloseCustom}
                 aria-label="Close"
               >
                 <X size={18} />
@@ -2154,42 +3581,58 @@ function MenuManagement() {
                   placeholder="What makes this customizable dish special?"
                 />
               </label>
-              <div className="modal-two-col">
-                <label className="field-label">
-                  Category
-                  <RoundedSelect
-                    value={customForm.category}
-                    onChange={(val) =>
-                      setCustomForm((f) => ({ ...f, category: val }))
-                    }
-                    placeholder="No category"
-                    options={[
-                      { value: "", label: "No category" },
-                      ...menuCategories.map((cat) => ({
-                        value: cat.name,
-                        label: cat.name,
-                      })),
-                    ]}
-                  />
-                </label>
-                <label className="field-label">
-                  Base price · INR
-                  <input
-                    required
-                    type="number"
-                    min="1"
-                    step="1"
-                    value={customForm.base_price_paise}
-                    onChange={(e) =>
-                      setCustomForm((f) => ({
-                        ...f,
-                        base_price_paise: Number(e.target.value),
-                      }))
-                    }
-                    placeholder="120"
-                  />
-                </label>
+              <div className="field-label" style={{ marginBottom: 12 }}>
+                Categories (select all that apply)
+                {menuCategories.length === 0 ? (
+                  <span style={{ fontSize: "12px", color: "#888", display: "block", marginTop: 4 }}>
+                    No categories created yet. Add one in the Category Manager.
+                  </span>
+                ) : (
+                  <div className="category-multi-select-list">
+                    {menuCategories.map((cat) => {
+                      const isSelected = customForm.categories.includes(cat.name);
+                      return (
+                        <button
+                          key={cat.id}
+                          type="button"
+                          className={`category-toggle-pill ${isSelected ? "selected" : ""}`}
+                          onClick={() => {
+                            const newCategories = isSelected
+                              ? customForm.categories.filter((c) => c !== cat.name)
+                              : [...customForm.categories, cat.name];
+                            const newCategory = newCategories[0] || "";
+                            setCustomForm((f) => ({
+                              ...f,
+                              categories: newCategories,
+                              category: newCategory,
+                            }));
+                          }}
+                        >
+                          {isSelected ? "✓ " : "+ "}
+                          {cat.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
+              <label className="field-label">
+                Base price · INR
+                <input
+                  required
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={customForm.base_price_paise}
+                  onChange={(e) =>
+                    setCustomForm((f) => ({
+                      ...f,
+                      base_price_paise: Number(e.target.value),
+                    }))
+                  }
+                  placeholder="120"
+                />
+              </label>
 
               {/* Addon sections */}
               <div className="custom-sections-builder">
@@ -2300,7 +3743,7 @@ function MenuManagement() {
                   {customForm.image_urls.map((url, index) => (
                     <div className="menu-image-tile" key={`${index}-${url}`}>
                       <img
-                        src={url}
+                        src={resolveImageUrl(url)}
                         alt={`Custom item image ${index + 1}`}
                         onError={(e) =>
                           e.currentTarget
@@ -2308,13 +3751,36 @@ function MenuManagement() {
                             ?.classList.add("menu-image-failed")
                         }
                       />
-                      <span className="menu-image-order">
-                        {index === 0 ? "MAIN" : `#${index + 1}`}
-                      </span>
+                      {index === 0 ? (
+                        <span className="menu-image-order menu-image-main-badge" title="Main dish photo">
+                          <Star size={10} fill="currentColor" /> MAIN
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="menu-image-order menu-image-order-btn"
+                          title="Click to set as main image"
+                          onClick={() => setMainCustomImage(index)}
+                        >
+                          #{index + 1}
+                        </button>
+                      )}
                       <div className="menu-image-actions">
+                        {index !== 0 && (
+                          <button
+                            type="button"
+                            className="menu-image-set-main-btn"
+                            aria-label="Set as main image"
+                            title="Set as main photo (moves to front)"
+                            onClick={() => setMainCustomImage(index)}
+                          >
+                            <Star size={13} />
+                          </button>
+                        )}
                         <button
                           type="button"
                           aria-label="Change image"
+                          title="Change image"
                           onClick={() =>
                             setCustomImagePrompt({ index, value: url })
                           }
@@ -2324,6 +3790,7 @@ function MenuManagement() {
                         <button
                           type="button"
                           aria-label="Delete image"
+                          title="Delete image"
                           onClick={() => removeCustomImage(index)}
                         >
                           <Trash2 size={13} />
@@ -2399,10 +3866,7 @@ function MenuManagement() {
               <div className="modal-actions">
                 <Button
                   variant="secondary"
-                  onClick={() => {
-                    setCreatingCustom(false);
-                    setEditingCustom(null);
-                  }}
+                  onClick={handleRequestCloseCustom}
                 >
                   Cancel
                 </Button>
@@ -2420,64 +3884,298 @@ function MenuManagement() {
         </div>
       )}
       {customImagePrompt && (
+        <ImageUploadModal
+          key={`custom-img-modal-${customImagePrompt.index}-${customImagePrompt.value || "new"}`}
+          isOpen={true}
+          title={customImagePrompt.index === -1 ? "Add custom dish image" : "Replace custom dish image"}
+          initialUrl={customImagePrompt.value || ""}
+          onSave={handleSaveCustomImage}
+          onClose={() => setCustomImagePrompt(null)}
+        />
+      )}
+
+      {discardModalOpen && (
         <div
-          className="modal-backdrop"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setCustomImagePrompt(null);
+          className="address-map-backdrop"
+          style={{
+            zIndex: 10005,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
           }}
         >
-          <section
-            className="modal-card image-url-modal"
+          <div
+            className="admin-panel"
             role="dialog"
             aria-modal="true"
+            style={{
+              maxWidth: "430px",
+              width: "90%",
+              padding: "1.75rem",
+              borderRadius: "14px",
+              textAlign: "center",
+              boxShadow: "0 16px 40px rgba(0, 0, 0, 0.45)",
+            }}
           >
-            <div className="modal-heading">
-              <div>
-                <span className="eyebrow">MENU PHOTOGRAPHY</span>
-                <h2>
-                  {customImagePrompt.index === -1 ? "Add image" : "Replace image"}
-                </h2>
-              </div>
-              <button
-                className="icon-button"
+            <h3 style={{ margin: "0 0 0.75rem 0", fontSize: "1.2rem", fontWeight: 700 }}>
+              Discard changes?
+            </h3>
+            <p style={{ margin: "0 0 1.5rem 0", color: "var(--muted)", fontSize: "0.92rem", lineHeight: 1.45 }}>
+              Are you sure you want to discard your changes? Any unsaved edits and staged dish photos will be lost.
+            </p>
+            <div style={{ display: "flex", justifyContent: "center", gap: "0.85rem" }}>
+              <Button
                 type="button"
-                aria-label="Close"
-                onClick={() => setCustomImagePrompt(null)}
+                variant="secondary"
+                onClick={() => setDiscardModalOpen(false)}
               >
-                <X size={18} />
-              </button>
+                Keep editing
+              </Button>
+              <Button
+                type="button"
+                variant="danger"
+                onClick={forceCloseNormal}
+              >
+                Discard changes
+              </Button>
             </div>
-            <div className="modal-form">
-              <label className="field-label">
-                Image URL
-                <input
-                  autoFocus
-                  type="url"
-                  required
-                  value={customImagePrompt.value}
-                  onChange={(e) =>
-                    setCustomImagePrompt({
-                      ...customImagePrompt,
-                      value: e.target.value,
-                    })
-                  }
-                  placeholder="https://…"
-                />
-              </label>
-              <div className="modal-actions">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => setCustomImagePrompt(null)}
-                >
-                  Cancel
-                </Button>
-                <Button type="button" onClick={saveCustomImage}>
-                  Use image <ArrowRight size={15} />
-                </Button>
-              </div>
+          </div>
+        </div>
+      )}
+
+      {discardCustomModalOpen && (
+        <div
+          className="address-map-backdrop"
+          style={{
+            zIndex: 10005,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <div
+            className="admin-panel"
+            role="dialog"
+            aria-modal="true"
+            style={{
+              maxWidth: "430px",
+              width: "90%",
+              padding: "1.75rem",
+              borderRadius: "14px",
+              textAlign: "center",
+              boxShadow: "0 16px 40px rgba(0, 0, 0, 0.45)",
+            }}
+          >
+            <h3 style={{ margin: "0 0 0.75rem 0", fontSize: "1.2rem", fontWeight: 700 }}>
+              Discard custom item?
+            </h3>
+            <p style={{ margin: "0 0 1.5rem 0", color: "var(--muted)", fontSize: "0.92rem", lineHeight: 1.45 }}>
+              Are you sure you want to discard your changes? Any unsaved custom sections and staged photos will be lost.
+            </p>
+            <div style={{ display: "flex", justifyContent: "center", gap: "0.85rem" }}>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setDiscardCustomModalOpen(false)}
+              >
+                Keep editing
+              </Button>
+              <Button
+                type="button"
+                variant="danger"
+                onClick={forceCloseCustom}
+              >
+                Discard changes
+              </Button>
             </div>
-          </section>
+          </div>
+        </div>
+      )}
+
+      {archiveTarget && (
+        <div
+          className="address-map-backdrop"
+          style={{
+            zIndex: 10005,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <div
+            className="admin-panel"
+            role="dialog"
+            aria-modal="true"
+            style={{
+              maxWidth: "430px",
+              width: "90%",
+              padding: "1.75rem",
+              borderRadius: "14px",
+              textAlign: "center",
+              boxShadow: "0 16px 40px rgba(0, 0, 0, 0.45)",
+            }}
+          >
+            <h3 style={{ margin: "0 0 0.75rem 0", fontSize: "1.2rem", fontWeight: 700 }}>
+              Remove from live menu?
+            </h3>
+            <p style={{ margin: "0 0 1.5rem 0", color: "var(--muted)", fontSize: "0.92rem", lineHeight: 1.45 }}>
+              Are you sure you want to remove <strong>{archiveTarget.name}</strong> from the live menu? This will mark it as unavailable.
+            </p>
+            <div style={{ display: "flex", justifyContent: "center", gap: "0.85rem" }}>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setArchiveTarget(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="danger"
+                onClick={() => {
+                  const target = archiveTarget;
+                  setArchiveTarget(null);
+                  if (target) void archive(target);
+                }}
+              >
+                Remove item
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {archiveCustomTarget && (
+        <div
+          className="address-map-backdrop"
+          style={{
+            zIndex: 10005,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <div
+            className="admin-panel"
+            role="dialog"
+            aria-modal="true"
+            style={{
+              maxWidth: "430px",
+              width: "90%",
+              padding: "1.75rem",
+              borderRadius: "14px",
+              textAlign: "center",
+              boxShadow: "0 16px 40px rgba(0, 0, 0, 0.45)",
+            }}
+          >
+            <h3 style={{ margin: "0 0 0.75rem 0", fontSize: "1.2rem", fontWeight: 700 }}>
+              Remove custom item?
+            </h3>
+            <p style={{ margin: "0 0 1.5rem 0", color: "var(--muted)", fontSize: "0.92rem", lineHeight: 1.45 }}>
+              Are you sure you want to remove <strong>{archiveCustomTarget.name}</strong> from the custom menu?
+            </p>
+            <div style={{ display: "flex", justifyContent: "center", gap: "0.85rem" }}>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setArchiveCustomTarget(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="danger"
+                onClick={() => {
+                  const target = archiveCustomTarget;
+                  setArchiveCustomTarget(null);
+                  if (target) void archiveCustom(target);
+                }}
+              >
+                Remove item
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {categoryDeleteTarget && (
+        <div
+          className="address-map-backdrop"
+          style={{
+            zIndex: 10005,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setCategoryDeleteTarget(null);
+          }}
+        >
+          <div
+            className="admin-panel"
+            role="dialog"
+            aria-modal="true"
+            style={{
+              maxWidth: "430px",
+              width: "90%",
+              padding: "1.75rem",
+              borderRadius: "14px",
+              textAlign: "center",
+              boxShadow: "0 16px 40px rgba(0, 0, 0, 0.45)",
+            }}
+          >
+            <div
+              style={{
+                width: 48,
+                height: 48,
+                borderRadius: "50%",
+                background: "#fef2f2",
+                color: "#dc2626",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                margin: "0 auto 1rem",
+              }}
+            >
+              <Trash2 size={24} />
+            </div>
+            <h3 style={{ margin: "0 0 0.75rem 0", fontSize: "1.2rem", fontWeight: 700 }}>
+              Delete category?
+            </h3>
+            <p style={{ margin: "0 0 1.5rem 0", color: "var(--muted)", fontSize: "0.92rem", lineHeight: 1.45 }}>
+              {(() => {
+                const affected = getCategoryMenuCount(categoryDeleteTarget);
+                return affected > 0 ? (
+                  <>
+                    Are you sure you want to delete <strong>“{categoryDeleteTarget.name}”</strong>?{" "}
+                    <strong>{affected}</strong> {affected === 1 ? "menu item belongs" : "menu items belong"} to this category.
+                  </>
+                ) : (
+                  <>Are you sure you want to delete category <strong>“{categoryDeleteTarget.name}”</strong>?</>
+                );
+              })()}
+            </p>
+            <div style={{ display: "flex", justifyContent: "center", gap: "0.85rem" }}>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setCategoryDeleteTarget(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="danger"
+                onClick={() => {
+                  const target = categoryDeleteTarget;
+                  setCategoryDeleteTarget(null);
+                  if (target) void executeDeleteCategory(target);
+                }}
+              >
+                Delete category
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </>
@@ -2490,7 +4188,6 @@ function BadgeTag() {
 
 function Reports() {
   const [period, setPeriod] = usePreference<string>("admin_reports_period", "week");
-  const [periodOpen, setPeriodOpen] = useState(false);
   const [report, setReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -2519,14 +4216,19 @@ function Reports() {
         title="Sales reports"
         description="A clear picture of sales, order volume and what people are loving."
         action={
-          <div className="period-select">
-            <BarChart3 size={15} />
-            <button type="button" className="period-select-trigger" aria-haspopup="listbox" aria-expanded={periodOpen} onClick={() => setPeriodOpen((open) => !open)}>
-              {({ day: "Today", week: "This week", month: "This month", year: "This year" } as const)[period as "day" | "week" | "month" | "year"]}
-              <ChevronDown size={14} />
-            </button>
-            {periodOpen && <div className="period-select-options" role="listbox" aria-label="Report period">{([['day', 'Today'], ['week', 'This week'], ['month', 'This month'], ['year', 'This year']] as const).map(([value, label]) => <button type="button" role="option" aria-selected={period === value} className={period === value ? 'active' : ''} key={value} onClick={() => { setPeriod(value); setPeriodOpen(false) }}>{label}</button>)}</div>}
-          </div>
+          <RoundedSelect
+            className="sales-period-select"
+            icon={<BarChart3 size={15} />}
+            ariaLabel="Report period"
+            value={period}
+            onChange={(next) => setPeriod(next)}
+            options={[
+              { value: "day", label: "Today" },
+              { value: "week", label: "This week" },
+              { value: "month", label: "This month" },
+              { value: "year", label: "This year" },
+            ]}
+          />
         }
       />
       {error && <Notice>{error}</Notice>}
@@ -2821,6 +4523,25 @@ function checkClash(
   return null;
 }
 
+function formatOverrideTime(isoString?: string | null): string {
+  if (!isoString) return "";
+  try {
+    const d = new Date(isoString);
+    const now = new Date();
+    const isToday = d.toDateString() === now.toDateString();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const isTomorrow = d.toDateString() === tomorrow.toDateString();
+    const timeStr = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    if (isToday) return `today at ${timeStr}`;
+    if (isTomorrow) return `tomorrow at ${timeStr}`;
+    const dayName = d.toLocaleDateString([], { weekday: "short" });
+    return `${dayName} at ${timeStr}`;
+  } catch {
+    return "";
+  }
+}
+
 function isCurrentlyOpenBySchedule(schedules: CustomSchedule[]): boolean {
   if (!schedules || schedules.length === 0) return false;
   const now = new Date();
@@ -2875,6 +4596,9 @@ function SettingsPage() {
   const [savedToastOpen, setSavedToastOpen] = useState(false);
   const initialSnapshot = useRef<string>("");
 
+  const [confirmSaveOpen, setConfirmSaveOpen] = useState(false);
+  const [settingsDiffs, setSettingsDiffs] = useState<{ label: string; from: string; to: string }[]>([]);
+
   const [overrideWarningOpen, setOverrideWarningOpen] = useState(false);
   const [pendingToggleValue, setPendingToggleValue] = useState<boolean | null>(null);
 
@@ -2883,7 +4607,6 @@ function SettingsPage() {
       .then((settings) => {
         const parsedScheds = parseSchedulesFromWeekly(settings.weekly_schedule);
         setSchedules(parsedScheds);
-        const scheduledOpen = isCurrentlyOpenBySchedule(parsedScheds);
         const phonesList = (settings.phones && settings.phones.length > 0)
           ? settings.phones
           : settings.phone
@@ -2897,7 +4620,7 @@ function SettingsPage() {
           weekly_schedule: settings.weekly_schedule || {},
           delivery_fee_per_km_paise: settings.delivery_fee_per_km_paise / 100,
           minimum_order_paise: settings.minimum_order_paise / 100,
-          accepting_orders: settings.accepting_orders !== undefined ? settings.accepting_orders : scheduledOpen,
+          accepting_orders: settings.accepting_orders,
           distance_calculation_mode: settings.distance_calculation_mode || "AUTO",
           haversine_routing_factor: settings.haversine_routing_factor ?? 1.3,
           enforce_driver_geofence: Boolean(settings.enforce_driver_geofence),
@@ -2928,13 +4651,50 @@ function SettingsPage() {
     return current !== initialSnapshot.current;
   }, [form, schedules, phoneNumbers]);
 
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isDirty]);
+
+  // Periodic poll so the switch updates automatically in real-time when schedule shifts occur
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (!isDirty && !busy) {
+        api<Restaurant>("/admin/settings")
+          .then((settings) => {
+            setForm((prev) => {
+              if (!prev) return null;
+              return {
+                ...prev,
+                accepting_orders: settings.accepting_orders,
+                admin_override_state: settings.admin_override_state,
+                admin_override_until: settings.admin_override_until,
+                admin_override_open: settings.admin_override_open,
+                is_currently_scheduled_open: settings.is_currently_scheduled_open,
+                schedule_status: settings.schedule_status,
+                next_schedule_refresh: settings.next_schedule_refresh,
+              };
+            });
+          })
+          .catch(() => {});
+      }
+    }, 15000);
+    return () => window.clearInterval(timer);
+  }, [isDirty, busy]);
+
   async function persistAcceptingOrders(nextVal: boolean) {
     if (!form) return;
     const cleanPhones = phoneNumbers.map((p) => p.trim()).filter(Boolean);
     const phoneStr = cleanPhones.join(", ");
     const weekly = buildWeeklySchedule(schedules);
-    const scheduledOpen = isCurrentlyOpenBySchedule(schedules);
-    const adminOverride = !scheduledOpen && nextVal;
+    const scheduledOpen = form.is_currently_scheduled_open ?? isCurrentlyOpenBySchedule(schedules);
+    const isOverride = nextVal !== scheduledOpen;
 
     setBusy(true);
     try {
@@ -2943,7 +4703,7 @@ function SettingsPage() {
         body: JSON.stringify({
           ...form,
           accepting_orders: nextVal,
-          admin_override_open: adminOverride,
+          admin_override_open: nextVal,
           phone: phoneStr,
           phones: cleanPhones,
           weekly_schedule: weekly,
@@ -2983,9 +4743,20 @@ function SettingsPage() {
         phoneNumbers: finalPhones,
       });
 
-      setNotice(nextVal ? (adminOverride ? "Admin override active: Open for orders." : "Restaurant is open for orders.") : "Restaurant orders paused & delivery riders turned off-duty.");
+      let noticeMsg = "Order status updated.";
+      if (isOverride) {
+        const untilStr = updated.admin_override_until ? ` until ${formatOverrideTime(updated.admin_override_until)}` : "";
+        noticeMsg = nextVal
+          ? `Override active: Restaurant opened for orders${untilStr}.`
+          : `Override active: Restaurant orders paused${untilStr}.`;
+      } else {
+        noticeMsg = nextVal
+          ? "Restaurant is open for orders as scheduled."
+          : "Restaurant is closed for orders as scheduled.";
+      }
+      setNotice(noticeMsg);
       setSavedToastOpen(true);
-      setTimeout(() => setSavedToastOpen(false), 2600);
+      setTimeout(() => setSavedToastOpen(false), 3000);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not update order status.");
     } finally {
@@ -2996,7 +4767,7 @@ function SettingsPage() {
   function handleToggleAcceptingOrders() {
     if (!form || busy) return;
     const nextVal = !form.accepting_orders;
-    const scheduledOpen = isCurrentlyOpenBySchedule(schedules);
+    const scheduledOpen = form.is_currently_scheduled_open ?? isCurrentlyOpenBySchedule(schedules);
     if (nextVal !== scheduledOpen) {
       setPendingToggleValue(nextVal);
       setOverrideWarningOpen(true);
@@ -3077,8 +4848,7 @@ function SettingsPage() {
     change("weekly_schedule", newWeekly);
   }
 
-  async function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function executeSaveSettings() {
     if (!form || !isDirty) return;
     setBusy(true);
     setError("");
@@ -3128,6 +4898,8 @@ function SettingsPage() {
         schedules: parsedScheds,
         phoneNumbers: finalPhones,
       });
+      setConfirmSaveOpen(false);
+      setSettingsDiffs([]);
       setNotice("Restaurant details saved.");
       setSavedToastOpen(true);
       setTimeout(() => setSavedToastOpen(false), 2600);
@@ -3138,6 +4910,157 @@ function SettingsPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function handleFormSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!form || !isDirty) return;
+
+    let initial: { form?: Restaurant; schedules?: CustomSchedule[]; phoneNumbers?: string[] } = {};
+    try {
+      initial = JSON.parse(initialSnapshot.current || "{}");
+    } catch {}
+
+    const oldF: Restaurant = initial.form || ({} as Restaurant);
+    const oldScheds: CustomSchedule[] = initial.schedules || [];
+    const oldP: string[] = initial.phoneNumbers || [];
+
+    const diffs: { label: string; from: string; to: string }[] = [];
+
+    if (form.restaurant_name !== oldF.restaurant_name) {
+      diffs.push({
+        label: "Restaurant name",
+        from: oldF.restaurant_name || "—",
+        to: form.restaurant_name || "—",
+      });
+    }
+
+    if ((form.tagline || "") !== (oldF.tagline || "")) {
+      diffs.push({
+        label: "Tagline",
+        from: oldF.tagline || "—",
+        to: form.tagline || "—",
+      });
+    }
+
+    const oldCleanPhones = oldP.map((p) => p.trim()).filter(Boolean).join(", ");
+    const newCleanPhones = phoneNumbers.map((p) => p.trim()).filter(Boolean).join(", ");
+    if (oldCleanPhones !== newCleanPhones) {
+      diffs.push({
+        label: "Contact phone numbers",
+        from: oldCleanPhones || "—",
+        to: newCleanPhones || "—",
+      });
+    }
+
+    if ((form.address || "") !== (oldF.address || "")) {
+      diffs.push({
+        label: "Restaurant address",
+        from: oldF.address || "—",
+        to: form.address || "—",
+      });
+    }
+
+    if (
+      Number(oldF.latitude || 0).toFixed(4) !== Number(form.latitude || 0).toFixed(4) ||
+      Number(oldF.longitude || 0).toFixed(4) !== Number(form.longitude || 0).toFixed(4)
+    ) {
+      diffs.push({
+        label: "GPS coordinates",
+        from: `${oldF.latitude ?? 0}, ${oldF.longitude ?? 0}`,
+        to: `${form.latitude ?? 0}, ${form.longitude ?? 0}`,
+      });
+    }
+
+    if ((form.distance_calculation_mode || "AUTO") !== (oldF.distance_calculation_mode || "AUTO")) {
+      const modeNames: Record<string, string> = {
+        AUTO: "Auto",
+        GOOGLE_MAPS: "Google's API",
+        HAVERSINE: "Haversine",
+      };
+      diffs.push({
+        label: "Distance calculation mode",
+        from: modeNames[oldF.distance_calculation_mode || "AUTO"] || oldF.distance_calculation_mode || "AUTO",
+        to: modeNames[form.distance_calculation_mode || "AUTO"] || form.distance_calculation_mode || "AUTO",
+      });
+    }
+
+    if (Number(form.haversine_routing_factor ?? 1.3) !== Number(oldF.haversine_routing_factor ?? 1.3)) {
+      diffs.push({
+        label: "Haversine routing factor",
+        from: String(oldF.haversine_routing_factor ?? 1.3),
+        to: String(form.haversine_routing_factor ?? 1.3),
+      });
+    }
+
+    if (Number(form.minimum_order_paise) !== Number(oldF.minimum_order_paise)) {
+      diffs.push({
+        label: "Minimum order amount",
+        from: `₹${oldF.minimum_order_paise}`,
+        to: `₹${form.minimum_order_paise}`,
+      });
+    }
+
+    if (Number(form.delivery_radius_km) !== Number(oldF.delivery_radius_km)) {
+      diffs.push({
+        label: "Max delivery distance",
+        from: `${oldF.delivery_radius_km} km`,
+        to: `${form.delivery_radius_km} km`,
+      });
+    }
+
+    if (Number(form.free_delivery_radius_km) !== Number(oldF.free_delivery_radius_km)) {
+      diffs.push({
+        label: "Free delivery radius",
+        from: `${oldF.free_delivery_radius_km} km`,
+        to: `${form.free_delivery_radius_km} km`,
+      });
+    }
+
+    if (Number(form.delivery_fee_per_km_paise) !== Number(oldF.delivery_fee_per_km_paise)) {
+      diffs.push({
+        label: "Delivery fee per km",
+        from: `₹${oldF.delivery_fee_per_km_paise}`,
+        to: `₹${form.delivery_fee_per_km_paise}`,
+      });
+    }
+
+    const oldGeofenceEnforced = Boolean(oldF.enforce_driver_geofence);
+    const newGeofenceEnforced = Boolean(form.enforce_driver_geofence);
+    const oldMeters = oldF.driver_geofence_meters || 500;
+    const newMeters = form.driver_geofence_meters || 500;
+    if (oldGeofenceEnforced !== newGeofenceEnforced || (newGeofenceEnforced && oldMeters !== newMeters)) {
+      diffs.push({
+        label: "Driver geofence enforcement",
+        from: oldGeofenceEnforced ? `Enabled (${oldMeters}m)` : "Disabled",
+        to: newGeofenceEnforced ? `Enabled (${newMeters}m)` : "Disabled",
+      });
+    }
+
+    const formatSchedSummary = (list: CustomSchedule[]) => {
+      if (!list || list.length === 0) return "No custom schedules";
+      return list
+        .map(
+          (s) =>
+            `${s.days.map((d) => d.slice(0, 3).toUpperCase()).join(", ")} (${s.start_time} - ${s.end_time})`,
+        )
+        .join("; ");
+    };
+    if (JSON.stringify(oldScheds) !== JSON.stringify(schedules)) {
+      diffs.push({
+        label: "Operating schedules",
+        from: formatSchedSummary(oldScheds),
+        to: formatSchedSummary(schedules),
+      });
+    }
+
+    if (diffs.length === 0) {
+      void executeSaveSettings();
+      return;
+    }
+
+    setSettingsDiffs(diffs);
+    setConfirmSaveOpen(true);
   }
 
   if (loading) return <Loading label="Opening the settings book…" />;
@@ -3159,7 +5082,7 @@ function SettingsPage() {
       />
       {notice && <Notice tone="success">{notice}</Notice>}
       {error && <Notice>{error}</Notice>}
-      <form className="settings-form" onSubmit={(event) => void save(event)}>
+      <form className="settings-form" onSubmit={handleFormSubmit}>
         <div className="settings-layout">
           <div className="settings-main">
             <section className="admin-panel settings-card">
@@ -3311,25 +5234,43 @@ function SettingsPage() {
                       display: "flex",
                       alignItems: "center",
                       gap: "0.75rem",
+                      flexWrap: "wrap",
                     }}
                   >
                     <span style={{ fontSize: "0.92rem", fontWeight: 600 }}>
                       Open for Orders
                     </span>
-                    {form.accepting_orders && !isCurrentlyOpenBySchedule(schedules) && (
+                    {form.admin_override_state !== null && form.admin_override_state !== undefined && (
                       <span
                         style={{
                           fontSize: "0.75rem",
                           fontWeight: 700,
-                          padding: "2px 8px",
+                          padding: "3px 9px",
                           borderRadius: "6px",
-                          background: "#fef3c7",
-                          color: "#92400e",
-                          border: "1px solid #fde68a",
+                          background: form.accepting_orders ? "#fef3c7" : "#fee2e2",
+                          color: form.accepting_orders ? "#92400e" : "#991b1b",
+                          border: form.accepting_orders ? "1px solid #fde68a" : "1px solid #fecaca",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "6px",
                         }}
                       >
-                        OVERRIDE ACTIVE
+                        OVERRIDE ACTIVE · {form.accepting_orders ? "Open" : "Paused"}{form.admin_override_until ? ` until ${formatOverrideTime(form.admin_override_until)}` : ""}
                       </span>
+                    )}
+                    {form.admin_override_state !== null && form.admin_override_state !== undefined && (
+                      <button
+                        type="button"
+                        className="button button-sm button-secondary"
+                        style={{ padding: "3px 9px", fontSize: "0.75rem", height: "auto" }}
+                        disabled={busy}
+                        onClick={() => {
+                          const scheduledOpen = form.is_currently_scheduled_open ?? isCurrentlyOpenBySchedule(schedules);
+                          void persistAcceptingOrders(scheduledOpen);
+                        }}
+                      >
+                        Resume schedule
+                      </button>
                     )}
                     <label className="toggle-switch">
                       <input
@@ -3868,8 +5809,8 @@ function SettingsPage() {
               }}
             >
               {pendingToggleValue
-                ? "The restaurant is currently outside scheduled operating hours. Turning this on will allow customers to place orders right now."
-                : "The restaurant is currently within scheduled operating hours. Turning this off will pause incoming orders immediately."}
+                ? "The restaurant is currently outside scheduled operating hours. Turning this on will allow customers to place orders right now. It will automatically turn off at the end of operating hours."
+                : "The restaurant is currently within scheduled operating hours. Turning this off will pause incoming orders immediately. It will automatically turn back on when the next scheduled working hours start."}
             </p>
             <div
               style={{
@@ -3901,6 +5842,133 @@ function SettingsPage() {
                 }}
               >
                 Yes
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmSaveOpen && (
+        <div
+          className="address-map-backdrop"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+          }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget && !busy) {
+              setConfirmSaveOpen(false);
+            }
+          }}
+        >
+          <div
+            className="admin-panel"
+            role="dialog"
+            aria-modal="true"
+            style={{
+              maxWidth: "560px",
+              width: "92%",
+              maxHeight: "85vh",
+              display: "flex",
+              flexDirection: "column",
+              padding: "1.75rem",
+              borderRadius: "14px",
+              boxShadow: "0 16px 40px rgba(0, 0, 0, 0.45)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                marginBottom: "1rem",
+              }}
+            >
+              <div>
+                <span
+                  className="eyebrow"
+                  style={{
+                    color: "var(--brand-accent, #e57373)",
+                    fontWeight: 700,
+                    fontSize: "0.75rem",
+                    letterSpacing: "0.08em",
+                  }}
+                >
+                  CONFIRM SETTINGS UPDATE
+                </span>
+                <h3 style={{ margin: "4px 0 0 0", fontSize: "1.25rem", fontWeight: 700 }}>
+                  Review your changes
+                </h3>
+              </div>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setConfirmSaveOpen(false)}
+                aria-label="Close review dialog"
+                disabled={busy}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p
+              style={{
+                margin: "0 0 1rem 0",
+                color: "var(--muted)",
+                fontSize: "0.92rem",
+                lineHeight: 1.45,
+              }}
+            >
+              Are you sure you want to make these changes to the restaurant settings?
+            </p>
+
+            <div
+              style={{
+                overflowY: "auto",
+                flex: 1,
+                paddingRight: "4px",
+                marginBottom: "1.25rem",
+              }}
+            >
+              <div className="settings-diff-list">
+                {settingsDiffs.map((diff) => (
+                  <div className="settings-diff-item" key={diff.label}>
+                    <span className="settings-diff-label">{diff.label}</span>
+                    <div className="settings-diff-values">
+                      <span className="settings-diff-from">{diff.from}</span>
+                      <span className="settings-diff-arrow">→</span>
+                      <span className="settings-diff-to">{diff.to}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: "0.75rem",
+                borderTop: "1px solid var(--border)",
+                paddingTop: "1rem",
+              }}
+            >
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setConfirmSaveOpen(false)}
+                disabled={busy}
+              >
+                Keep editing
+              </Button>
+              <Button
+                type="button"
+                disabled={busy}
+                onClick={() => void executeSaveSettings()}
+              >
+                {busy ? "Saving…" : "Confirm & Save changes"} <ArrowRight size={15} />
               </Button>
             </div>
           </div>

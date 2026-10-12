@@ -3,17 +3,38 @@ import secrets
 import string
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 import httpx
 from sqlalchemy import func, or_, select, update
 
 from app.dependencies import CurrentAccount, DbSession, require_roles
 from app.config import settings
 from app.integrations import staff_account_notifier
-from app.models import Account, AdminEvent, CustomMenuItem, DeliveryDuty, MenuDiscount, MenuDiscountItem, MenuItem, OfferLog, Order, OrderItem, OrderStatus, Payment, PaymentMethod, PaymentStatus, RestaurantSettings, Role
+from app.models import (
+    Account,
+    AdminEvent,
+    CustomMenuItem,
+    StaffInfo,
+    MenuDiscount,
+    MenuDiscountItem,
+    MenuItem,
+    OfferLog,
+    Order,
+    OrderItem,
+    OrderStatus,
+    PasswordResetCode,
+    Payment,
+    PaymentMethod,
+    PaymentStatus,
+    RestaurantSettings,
+    Role,
+    utcnow,
+)
 from app.schemas import AccountsPageOut, AccountOut, AdminAccountCreate, AdminOrdersPageOut, MenuDiscountInput, OfferInput, OrderStatusUpdate, ProvisionedAccountOut, RestaurantSettingsInput
 from app.security import hash_password
 from app.services import (
+    calculate_override_until,
+    get_next_schedule_refresh,
     is_restaurant_open,
     is_scheduled_open,
     issue_razorpay_refund,
@@ -65,31 +86,62 @@ def create_account(data: AdminAccountCreate, db: DbSession):
     email = data.email.lower().strip()
     if db.scalar(select(Account.id).where(Account.email == email)):
         raise HTTPException(status_code=409, detail="An account with this email already exists")
-    temporary_password = generated_temporary_password(data.name)
+    
+    # Generate high-entropy unguessable initial password
+    random_init_password = secrets.token_urlsafe(32)
     account = Account(
         name=data.name.strip(),
         email=email,
         phone=data.phone,
-        password_hash=hash_password(temporary_password),
+        password_hash=hash_password(random_init_password),
         role=data.role,
-        must_change_password=True,
+    )
+    account.staff_info = StaffInfo(
+        account_id=account.id,
+        is_accepting_deliveries=False,
+        must_change_password=False,
     )
     db.add(account)
+    db.flush()
+
+    # Generate secure, short-lived reset/invite token with admin-configurable duration (minimum 30 minutes)
+    expiry_minutes = max(30, int(getattr(data, "invite_expiry_minutes", 30) or 30))
+    if expiry_minutes % 60 == 0:
+        hours = expiry_minutes // 60
+        duration_str = f"{hours} hour" if hours == 1 else f"{hours} hours"
+    else:
+        duration_str = f"{expiry_minutes} minutes"
+
+    invite_token = secrets.token_urlsafe(32)
+    reset_code = PasswordResetCode(
+        account_id=account.id,
+        otp_hash=hash_password(invite_token),
+        expires_at=utcnow() + timedelta(minutes=expiry_minutes),
+    )
+    db.add(reset_code)
     db.add(AdminEvent(event_type="account_created", message=f"{account.name} created with role {account.role.value}", details={"role": account.role.value, "email": account.email}))
     db.commit()
     db.refresh(account)
-    notification_status = staff_account_notifier.send_temporary_password(
+
+    base_origin = (settings.cors_origins[0] if settings.cors_origins else "http://localhost:5173").rstrip("/")
+    invite_url = f"{base_origin}/recovery?email={email}&token={invite_token}"
+
+    notification_status = staff_account_notifier.send_staff_invite(
         name=account.name,
         email=account.email,
         role=account.role.value,
-        temporary_password=temporary_password,
+        invite_url=invite_url,
+        duration_str=duration_str,
     )
+
+    # S-08: If sending email fails, immediately expire/delete the link
+    if notification_status != "EMAIL_SENT":
+        db.delete(reset_code)
+        db.commit()
+
     payload = AccountOut.model_validate(account).model_dump()
-    # Do not return a delivered password to the browser. If email is not
-    # available, show it once to the administrator as a secure hand-off
-    # fallback instead.
     payload.update(
-        temporary_password=None if notification_status == "EMAIL_SENT" else temporary_password,
+        temporary_password=None,  # Never leak plaintext passwords in API response
         notification_status=notification_status,
     )
     return payload
@@ -107,6 +159,12 @@ def change_role(account_id: int, role: Role, actor: CurrentAccount, db: DbSessio
         if admin_count <= 1:
             raise HTTPException(status_code=400, detail="Cannot change the role of the last remaining administrator")
     account.role = role
+    if role != Role.USER and account.staff_info is None:
+        account.staff_info = StaffInfo(
+            account_id=account.id,
+            is_accepting_deliveries=False,
+            must_change_password=False,
+        )
     db.add(AdminEvent(event_type="account_role_changed", message=f"{account.name}'s role changed to {role.value}", actor_id=actor.id, details={"account_id": account.id, "role": role.value}))
     db.commit()
     db.refresh(account)
@@ -194,9 +252,62 @@ async def refund_order(order_id: str, db: DbSession):
     return {"order_id": order.order_id, "payment_status": payment.status, "refund_id": refund_id}
 
 
+def sync_override_if_expired(settings_obj: RestaurantSettings, db: DbSession | None = None) -> None:
+    if settings_obj.admin_override_until is not None:
+        now_utc = datetime.now(timezone.utc)
+        until_utc = settings_obj.admin_override_until
+        if until_utc.tzinfo is None:
+            until_utc = until_utc.replace(tzinfo=timezone.utc)
+        if now_utc >= until_utc:
+            settings_obj.admin_override_state = None
+            settings_obj.admin_override_until = None
+            settings_obj.admin_override_open = False
+            is_open, _ = is_scheduled_open(settings_obj)
+            settings_obj.accepting_orders = is_open
+            if db is not None:
+                db.commit()
+
+
+def serialize_restaurant_settings(settings_obj: RestaurantSettings) -> dict:
+    is_open, status_reason = is_restaurant_open(settings_obj)
+    sched_open, _ = is_scheduled_open(settings_obj)
+    next_refresh = get_next_schedule_refresh(settings_obj)
+
+    phones = [p.strip() for p in (settings_obj.phone or "").split(",") if p.strip()]
+
+    return {
+        "id": settings_obj.id,
+        "restaurant_name": settings_obj.restaurant_name,
+        "tagline": settings_obj.tagline,
+        "phone": settings_obj.phone,
+        "phones": phones,
+        "address": settings_obj.address,
+        "latitude": settings_obj.latitude,
+        "longitude": settings_obj.longitude,
+        "weekly_schedule": settings_obj.weekly_schedule or {},
+        "minimum_order_paise": settings_obj.minimum_order_paise,
+        "delivery_radius_km": settings_obj.delivery_radius_km,
+        "free_delivery_radius_km": settings_obj.free_delivery_radius_km,
+        "delivery_fee_per_km_paise": settings_obj.delivery_fee_per_km_paise,
+        "accepting_orders": is_open,
+        "admin_override_open": bool(settings_obj.admin_override_state is True if settings_obj.admin_override_state is not None else settings_obj.admin_override_open),
+        "admin_override_state": settings_obj.admin_override_state,
+        "admin_override_until": settings_obj.admin_override_until,
+        "is_currently_scheduled_open": sched_open,
+        "schedule_status": status_reason,
+        "next_schedule_refresh": next_refresh,
+        "distance_calculation_mode": settings_obj.distance_calculation_mode,
+        "enforce_driver_geofence": settings_obj.enforce_driver_geofence,
+        "driver_geofence_meters": settings_obj.driver_geofence_meters,
+        "haversine_routing_factor": settings_obj.haversine_routing_factor,
+    }
+
+
 @router.get("/settings")
 def get_settings(db: DbSession):
-    return restaurant_settings(db)
+    settings = restaurant_settings(db)
+    sync_override_if_expired(settings, db)
+    return serialize_restaurant_settings(settings)
 
 
 @router.put("/settings")
@@ -210,33 +321,56 @@ def update_settings(data: RestaurantSettingsInput, db: DbSession):
     if "weekly_schedule" in payload_data and payload_data["weekly_schedule"]:
         settings.weekly_schedule = payload_data["weekly_schedule"]
 
-    is_sched_open, _ = is_scheduled_open(settings)
+    now_dt = datetime.now(timezone.utc)
+    is_sched_open, _ = is_scheduled_open(settings, now_dt)
 
-    if data.admin_override_open is not None:
-        admin_override = bool(data.admin_override_open and data.accepting_orders)
-    elif data.accepting_orders:
-        admin_override = not is_sched_open
+    target_accepting = data.accepting_orders
+
+    if target_accepting == is_sched_open:
+        # Desired state matches natural schedule: clear any active override!
+        settings.admin_override_state = None
+        settings.admin_override_until = None
+        settings.admin_override_open = False
+        settings.accepting_orders = target_accepting
     else:
-        admin_override = False
+        # Desired state is an override against the natural schedule!
+        override_until = calculate_override_until(settings, now_dt, target_accepting)
+        settings.admin_override_state = target_accepting
+        settings.admin_override_until = override_until
+        settings.admin_override_open = (target_accepting is True)
+        settings.accepting_orders = target_accepting
 
-    payload_data["admin_override_open"] = admin_override
+    payload_data.pop("admin_override_open", None)
+    payload_data.pop("admin_override_state", None)
+    payload_data.pop("admin_override_until", None)
+    payload_data.pop("accepting_orders", None)
 
     for field, value in payload_data.items():
         if hasattr(settings, field):
             setattr(settings, field, value)
 
-    is_now_open, _ = is_restaurant_open(settings)
-    if not is_now_open or not settings.accepting_orders:
+    is_now_open, _ = is_restaurant_open(settings, now_dt)
+    if not is_now_open:
         db.execute(
-            update(DeliveryDuty)
-            .where(DeliveryDuty.is_accepting_deliveries == True)
+            update(StaffInfo)
+            .where(StaffInfo.is_accepting_deliveries == True)
             .values(is_accepting_deliveries=False)
         )
 
-    db.add(AdminEvent(event_type="settings_changed", message="Restaurant settings updated", details={"weekly_schedule": data.weekly_schedule, "accepting_orders": data.accepting_orders, "admin_override_open": admin_override}))
+    db.add(AdminEvent(
+        event_type="settings_changed",
+        message="Restaurant settings updated",
+        details={
+            "weekly_schedule": data.weekly_schedule,
+            "accepting_orders": settings.accepting_orders,
+            "admin_override_state": settings.admin_override_state,
+            "admin_override_until": settings.admin_override_until.isoformat() if settings.admin_override_until else None,
+        }
+    ))
     db.commit()
     db.refresh(settings)
-    return settings
+    return serialize_restaurant_settings(settings)
+
 
 
 @router.get("/events")
@@ -245,8 +379,25 @@ def admin_events(db: DbSession, limit: int = Query(default=100, ge=1, le=250)):
     return [{"id": row.id, "event_type": row.event_type, "message": row.message, "details": row.details, "actor_name": row.actor.name if row.actor else "System", "created_at": row.created_at} for row in rows]
 
 
+def _send_offer_campaign_bg(log_id: int, recipient_emails: list[str], subject: str, message: str):
+    from app.db import SessionLocal
+    with SessionLocal() as db:
+        log = db.get(OfferLog, log_id)
+        if not log:
+            return
+        sent = 0
+        for email in recipient_emails:
+            if staff_account_notifier.send_offer(recipient=email, subject=subject, message_text=message):
+                sent += 1
+        log.sent_count = sent
+        log.status = "SENT" if sent == len(recipient_emails) else "PARTIAL" if sent > 0 else "FAILED"
+        if log.delivery_counts and "EMAIL" in log.delivery_counts:
+            log.delivery_counts["EMAIL"]["sent_count"] = sent
+        db.commit()
+
+
 @router.post("/offers", status_code=status.HTTP_201_CREATED)
-async def create_offer(data: OfferInput, actor: CurrentAccount, db: DbSession):
+async def create_offer(data: OfferInput, actor: CurrentAccount, db: DbSession, background_tasks: BackgroundTasks):
     customer_accounts = select(Account).where(Account.role == Role.USER)
     customers = db.scalars(customer_accounts.order_by(Account.created_at.desc())).all()
     order_counts = dict(db.execute(select(Order.customer_id, func.count(Order.order_id)).where(Order.customer_id.is_not(None)).group_by(Order.customer_id)).all())
@@ -257,31 +408,49 @@ async def create_offer(data: OfferInput, actor: CurrentAccount, db: DbSession):
     configured = {"SMS": False, "EMAIL": bool(settings.smtp_password)}
     eligible = {channel: [person for person in customers if (person.phone if channel == "SMS" else person.email)] for channel in data.channels}
     recipients = list({person.id: person for people in eligible.values() for person in people}.values())
-    sent = 0
     failures = []
     delivery_counts = {channel: {"recipient_count": len(eligible[channel]), "sent_count": 0} for channel in data.channels}
     clean_subject = " ".join(data.subject.splitlines()).strip()
-    for channel in data.channels:
-        if not configured[channel]:
-            failures.append("SMS is not configured" if channel == "SMS" else "Email is not configured")
-            continue
-        channel_recipients = eligible[channel]
-        failed_count = 0
-        for person in channel_recipients:
-            if staff_account_notifier.send_offer(recipient=person.email, subject=clean_subject, message_text=data.message):
-                sent += 1
-                delivery_counts[channel]["sent_count"] += 1
-            else:
-                failed_count += 1
-        if failed_count:
-            failures.append(f"Email could not be delivered to {failed_count} recipient{'s' if failed_count != 1 else ''}")
-    state = "SENT" if sent and not failures else "PARTIAL" if sent else "NOT_CONFIGURED" if not any(configured[c] for c in data.channels) else "FAILED"
-    log = OfferLog(actor_id=actor.id, audience=data.audience, channels=data.channels, subject=clean_subject, message=data.message, delivery_counts=delivery_counts, recipient_count=sum(len(eligible[channel]) for channel in data.channels), sent_count=sent, status=state)
+
+    email_recipients = [person.email for person in eligible.get("EMAIL", [])] if "EMAIL" in data.channels else []
+    if "SMS" in data.channels and not configured["SMS"]:
+        failures.append("SMS is not configured")
+    if "EMAIL" in data.channels and not configured["EMAIL"]:
+        failures.append("Email is not configured")
+
+    state = "QUEUED" if configured.get("EMAIL") and email_recipients else ("NOT_CONFIGURED" if not any(configured[c] for c in data.channels) else "FAILED")
+    log = OfferLog(
+        actor_id=actor.id,
+        audience=data.audience,
+        channels=data.channels,
+        subject=clean_subject,
+        message=data.message,
+        delivery_counts=delivery_counts,
+        recipient_count=sum(len(eligible[channel]) for channel in data.channels),
+        sent_count=0,
+        status=state,
+    )
     db.add(log)
-    db.add(AdminEvent(event_type="offer_sent", message=f"Offer message campaign {state.lower()} by {actor.name}", actor_id=actor.id, details={"audience": data.audience, "channels": data.channels, "recipients": len(recipients), "sent": sent, "status": state}))
+    db.add(AdminEvent(event_type="offer_sent", message=f"Offer message campaign queued by {actor.name}", actor_id=actor.id, details={"audience": data.audience, "channels": data.channels, "recipients": len(recipients), "status": state}))
     db.commit()
     db.refresh(log)
-    return {"id": log.id, "audience": log.audience, "channels": log.channels, "subject": log.subject, "message": log.message, "delivery_counts": log.delivery_counts, "recipient_count": log.recipient_count, "sent_count": log.sent_count, "status": log.status, "provider_notes": failures, "created_at": log.created_at}
+
+    if state == "QUEUED" and email_recipients:
+        background_tasks.add_task(_send_offer_campaign_bg, log.id, email_recipients, clean_subject, data.message)
+
+    return {
+        "id": log.id,
+        "audience": log.audience,
+        "channels": log.channels,
+        "subject": log.subject,
+        "message": log.message,
+        "delivery_counts": log.delivery_counts,
+        "recipient_count": log.recipient_count,
+        "sent_count": 0,
+        "status": log.status,
+        "provider_notes": failures,
+        "created_at": log.created_at,
+    }
 
 
 @router.get("/offers")

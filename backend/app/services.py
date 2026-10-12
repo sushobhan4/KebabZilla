@@ -46,6 +46,59 @@ ALLOWED_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
 }
 
 
+def resolve_categories(
+    db: Session,
+    categories: list[str] | None = None,
+    category_ids: list[int] | None = None,
+    fallback_category: str | None = None,
+    fallback_category_id: int | None = None,
+):
+    from app.models import MenuCategory
+    resolved: list[MenuCategory] = []
+    seen_ids = set()
+
+    if category_ids:
+        for cid in category_ids:
+            if cid and cid not in seen_ids:
+                cat = db.get(MenuCategory, cid)
+                if cat:
+                    resolved.append(cat)
+                    seen_ids.add(cat.id)
+
+    if categories:
+        for cname in categories:
+            name_clean = (cname or "").strip()
+            if name_clean:
+                cat = db.scalar(select(MenuCategory).where(func.lower(MenuCategory.name) == name_clean.lower()))
+                if cat and cat.id not in seen_ids:
+                    resolved.append(cat)
+                    seen_ids.add(cat.id)
+
+    if not resolved:
+        if fallback_category_id and fallback_category_id not in seen_ids:
+            cat = db.get(MenuCategory, fallback_category_id)
+            if cat:
+                resolved.append(cat)
+                seen_ids.add(cat.id)
+        elif fallback_category:
+            name_clean = fallback_category.strip()
+            if name_clean:
+                cat = db.scalar(select(MenuCategory).where(func.lower(MenuCategory.name) == name_clean.lower()))
+                if cat and cat.id not in seen_ids:
+                    resolved.append(cat)
+                    seen_ids.add(cat.id)
+
+    return resolved
+
+
+def get_next_menu_id(db: Session) -> int:
+    """Return the next unique ID in the unified menu sequence across regular and custom items."""
+    from app.models import MenuItem, CustomMenuItem
+    max_menu = db.scalar(select(func.coalesce(func.max(MenuItem.id), 0))) or 0
+    max_custom = db.scalar(select(func.coalesce(func.max(CustomMenuItem.id), 0))) or 0
+    return max(max_menu, max_custom) + 1
+
+
 def restaurant_settings(db: Session) -> RestaurantSettings:
     settings = db.get(RestaurantSettings, 1)
     if settings is None:
@@ -188,12 +241,15 @@ def assemble_order(
                     var_name = c.get("name")
                     break
 
+        unit_price = line_unit_price(line)
+
         order_items.append(
             OrderItem(
                 menu_item_id=actual_mid,
                 custom_menu_item_id=actual_cid,
                 variation_name=var_name,
                 quantity=line.quantity,
+                unit_price_paise=unit_price,
                 customizations=getattr(line, "customizations", None) or [],
             )
         )
@@ -207,6 +263,9 @@ def assemble_order(
         delivery_fee_paise=delivery_fee,
         scheduled_for=scheduled_for,
         notes=notes,
+        address=address.strip() if address else "",
+        latitude=latitude,
+        longitude=longitude,
         customer_name=customer_name or (customer.name if customer else "Walk-in"),
         customer_phone=customer_phone if customer_phone is not None else (customer.phone if customer else None),
         items=order_items,
@@ -341,68 +400,189 @@ def _distance_km(latitude_a: float, longitude_a: float, latitude_b: float, longi
     return earth_radius_km * 2 * math.atan2(math.sqrt(haversine), math.sqrt(1 - haversine))
 
 
+def get_schedule_intervals_for_range(
+    config: RestaurantSettings,
+    ref_dt: datetime,
+    days_ahead: int = 8,
+) -> list[tuple[datetime, datetime]]:
+    """Return all scheduled open intervals [(start_dt, end_dt)] in chronological order."""
+    tz = ZoneInfo(settings.business_timezone)
+    local_dt = ref_dt.astimezone(tz)
+    schedule = getattr(config, "weekly_schedule", None) or {}
+    custom_schedules = schedule.get("custom_schedules")
+
+    intervals: list[tuple[datetime, datetime]] = []
+    base_date = local_dt.date() - timedelta(days=1)
+
+    for offset in range(days_ahead + 2):
+        curr_d = base_date + timedelta(days=offset)
+        day_name = curr_d.strftime("%A").lower()
+
+        if isinstance(custom_schedules, list):
+            day_matches = [s for s in custom_schedules if day_name in (s.get("days") or [])]
+            for s in day_matches:
+                try:
+                    opens_time = datetime.strptime(str(s["start_time"]), "%H:%M").time()
+                    closes_time = datetime.strptime(str(s["end_time"]), "%H:%M").time()
+                except (KeyError, ValueError, TypeError):
+                    continue
+                start_dt = datetime.combine(curr_d, opens_time, tzinfo=tz)
+                if opens_time <= closes_time:
+                    end_dt = datetime.combine(curr_d, closes_time, tzinfo=tz)
+                else:
+                    end_dt = datetime.combine(curr_d + timedelta(days=1), closes_time, tzinfo=tz)
+                intervals.append((start_dt, end_dt))
+        else:
+            day_cfg = schedule.get(day_name)
+            if day_cfg and day_cfg.get("open"):
+                slots = day_cfg.get("slots")
+                if isinstance(slots, list) and slots:
+                    for slot in slots:
+                        try:
+                            opens_time = datetime.strptime(str(slot["opens"]), "%H:%M").time()
+                            closes_time = datetime.strptime(str(slot["closes"]), "%H:%M").time()
+                        except (KeyError, ValueError, TypeError):
+                            continue
+                        start_dt = datetime.combine(curr_d, opens_time, tzinfo=tz)
+                        if opens_time <= closes_time:
+                            end_dt = datetime.combine(curr_d, closes_time, tzinfo=tz)
+                        else:
+                            end_dt = datetime.combine(curr_d + timedelta(days=1), closes_time, tzinfo=tz)
+                        intervals.append((start_dt, end_dt))
+                else:
+                    try:
+                        opens_time = datetime.strptime(str(day_cfg.get("opens", "10:00")), "%H:%M").time()
+                        closes_time = datetime.strptime(str(day_cfg.get("closes", "22:00")), "%H:%M").time()
+                        start_dt = datetime.combine(curr_d, opens_time, tzinfo=tz)
+                        if opens_time <= closes_time:
+                            end_dt = datetime.combine(curr_d, closes_time, tzinfo=tz)
+                        else:
+                            end_dt = datetime.combine(curr_d + timedelta(days=1), closes_time, tzinfo=tz)
+                        intervals.append((start_dt, end_dt))
+                    except (KeyError, ValueError, TypeError):
+                        pass
+
+    intervals.sort(key=lambda item: item[0])
+    return intervals
+
+
 def is_scheduled_open(config: RestaurantSettings, value: datetime | None = None) -> tuple[bool, str]:
-    schedule = config.weekly_schedule or {}
+    schedule = getattr(config, "weekly_schedule", None) or {}
     if not schedule:
         return True, "Open"
     if value is None:
         value = datetime.now(timezone.utc)
-    local = value.astimezone(ZoneInfo(settings.business_timezone))
-    day = local.strftime("%A").lower()
+    tz = ZoneInfo(settings.business_timezone)
+    local = value.astimezone(tz)
 
-    custom_schedules = schedule.get("custom_schedules")
-    if isinstance(custom_schedules, list):
-        if not custom_schedules:
+    intervals = get_schedule_intervals_for_range(config, local)
+    if not intervals:
+        if isinstance(schedule.get("custom_schedules"), list) and not schedule.get("custom_schedules"):
             return True, "Open"
-        moment = local.time().replace(tzinfo=None)
-        day_matches = [s for s in custom_schedules if day in (s.get("days") or [])]
-        if not day_matches:
-            return False, "Closed today"
-        for s in day_matches:
-            try:
-                opens = datetime.strptime(str(s["start_time"]), "%H:%M").time()
-                closes = datetime.strptime(str(s["end_time"]), "%H:%M").time()
-                if opens <= closes:
-                    inside = opens <= moment <= closes
-                else:
-                    inside = moment >= opens or moment <= closes
-                if inside:
-                    return True, f"Open until {closes.strftime('%I:%M %p')}"
-            except (KeyError, ValueError, TypeError):
-                continue
         return False, "Closed"
 
-    hours = schedule.get(day)
-    if not hours or not hours.get("open"):
-        return False, "Closed today"
-    try:
-        opens = datetime.strptime(str(hours["opens"]), "%H:%M").time()
-        closes = datetime.strptime(str(hours["closes"]), "%H:%M").time()
-    except (KeyError, ValueError, TypeError):
-        return True, "Open"
-    moment = local.time().replace(tzinfo=None)
-    if opens <= closes:
-        inside = opens <= moment <= closes
-    else:
-        inside = moment >= opens or moment <= closes
+    inside = next((it for it in intervals if it[0] <= local <= it[1]), None)
     if inside:
-        return True, f"Open until {closes.strftime('%I:%M %p')}"
-    return False, f"Closed (Opens at {opens.strftime('%I:%M %p')})"
+        return True, f"Open until {inside[1].strftime('%I:%M %p')}"
+
+    next_it = next((it for it in intervals if it[0] > local), None)
+    if next_it:
+        day_str = "today" if next_it[0].date() == local.date() else next_it[0].strftime("%A")
+        return False, f"Closed (Opens {day_str} at {next_it[0].strftime('%I:%M %p')})"
+    return False, "Closed"
+
+
+def calculate_override_until(config: RestaurantSettings, value: datetime | None, target_state: bool) -> datetime | None:
+    """Calculate the expiration timestamp for an admin manual override.
+
+    - If toggled OFF during working hours: automatically turn back on at the start of working hours on the next working day.
+    - If toggled ON outside working hours: automatically turn off at the end of the next working day.
+    """
+    if value is None:
+        value = datetime.now(timezone.utc)
+    tz = ZoneInfo(settings.business_timezone)
+    local = value.astimezone(tz)
+
+    intervals = get_schedule_intervals_for_range(config, local)
+    if not intervals:
+        return None
+
+    curr_inside = next((it for it in intervals if it[0] <= local <= it[1]), None)
+
+    if target_state is False:
+        if curr_inside:
+            next_open = next((it[0] for it in intervals if it[0] > curr_inside[1]), None)
+        else:
+            next_open = next((it[0] for it in intervals if it[0] > local), None)
+        return next_open
+    else:
+        if curr_inside:
+            return curr_inside[1]
+        next_it = next((it for it in intervals if it[0] > local), None)
+        if next_it:
+            return next_it[1]
+        return None
+
+
+def get_next_schedule_refresh(config: RestaurantSettings, value: datetime | None = None) -> datetime | None:
+    """Return the next timestamp when the restaurant order status naturally refreshes or changes."""
+    if value is None:
+        value = datetime.now(timezone.utc)
+    tz = ZoneInfo(settings.business_timezone)
+    local = value.astimezone(tz)
+
+    override_until = getattr(config, "admin_override_until", None)
+    if override_until is not None:
+        if override_until.tzinfo is None:
+            override_until = override_until.replace(tzinfo=timezone.utc)
+        if value < override_until:
+            return override_until.astimezone(tz)
+
+    intervals = get_schedule_intervals_for_range(config, local)
+    if not intervals:
+        return None
+
+    curr_inside = next((it for it in intervals if it[0] <= local <= it[1]), None)
+    if curr_inside:
+        return curr_inside[1]
+    next_it = next((it for it in intervals if it[0] > local), None)
+    if next_it:
+        return next_it[0]
+    return None
 
 
 def is_restaurant_open(config: RestaurantSettings, value: datetime | None = None) -> tuple[bool, str]:
-    if not getattr(config, "accepting_orders", True):
-        return False, "Not accepting orders"
+    if value is None:
+        value = datetime.now(timezone.utc)
 
-    sched_open, sched_reason = is_scheduled_open(config, value)
-    if sched_open:
-        return True, sched_reason
+    override_state = getattr(config, "admin_override_state", None)
+    override_until = getattr(config, "admin_override_until", None)
 
-    # If outside operating hours, check if admin explicitly activated an override
-    if getattr(config, "admin_override_open", False) is True:
+    if override_until is not None and override_state is not None:
+        if override_until.tzinfo is None:
+            override_until = override_until.replace(tzinfo=timezone.utc)
+        now_utc = value.astimezone(timezone.utc)
+        until_utc = override_until.astimezone(timezone.utc)
+
+        if now_utc < until_utc:
+            tz = ZoneInfo(settings.business_timezone)
+            local_until = override_until.astimezone(tz)
+            friendly_time = local_until.strftime("%I:%M %p")
+            if local_until.date() != value.astimezone(tz).date():
+                friendly_time = f"{local_until.strftime('%A')} at {friendly_time}"
+
+            sched_open, sched_reason = is_scheduled_open(config, value)
+            if override_state is True:
+                return True, sched_reason if sched_open else f"Open (Admin override until {friendly_time})"
+            else:
+                return False, f"Closed (Paused by admin until {friendly_time})"
+
+    # Legacy fallback: admin_override_open without override_until
+    if getattr(config, "admin_override_open", False) is True and override_until is None:
         return True, "Open (Admin override)"
 
-    return False, sched_reason
+    # Natural schedule state
+    return is_scheduled_open(config, value)
 
 
 def _validate_opening_time(config: RestaurantSettings, value: datetime) -> None:
@@ -438,7 +618,7 @@ def order_payload(order: Order, *, include_delivery_otp: bool = False) -> dict:
 
         customs = line.customizations or []
         extra = sum(opt.get("extra_paise", 0) for opt in customs if isinstance(opt, dict) and opt.get("name") != line.variation_name)
-        unit_price = base_price + extra
+        unit_price = line.unit_price_paise if getattr(line, "unit_price_paise", 0) else (base_price + extra)
 
         if line.variation_name:
             item_name = f"{base_name} ({line.variation_name})"
@@ -465,19 +645,28 @@ def order_payload(order: Order, *, include_delivery_otp: bool = False) -> dict:
             "image_urls": img_urls,
         })
     subtotal = sum(line["line_total_paise"] for line in items)
-    chosen_addr = next((a for a in customer.addresses if a.is_default), customer.addresses[0]) if customer and customer.addresses else None
-    addr_str = (
-        ", ".join(
-            p for p in [
-                chosen_addr.house_number,
-                chosen_addr.road,
-                chosen_addr.area,
-                chosen_addr.landmark,
-                chosen_addr.city,
-                chosen_addr.pincode,
-            ] if p
-        ) or chosen_addr.label
-    ) if chosen_addr else ""
+
+    addr_str = order.address or ""
+    lat = order.latitude
+    lng = order.longitude
+    if not addr_str and customer and customer.addresses:
+        chosen_addr = next((a for a in customer.addresses if a.is_default), customer.addresses[0])
+        addr_str = (
+            ", ".join(
+                p for p in [
+                    chosen_addr.house_number,
+                    chosen_addr.road,
+                    chosen_addr.area,
+                    chosen_addr.landmark,
+                    chosen_addr.city,
+                    chosen_addr.pincode,
+                ] if p
+            ) or chosen_addr.label
+        )
+        if lat is None:
+            lat = chosen_addr.latitude
+        if lng is None:
+            lng = chosen_addr.longitude
 
     return {
         "order_id": order.order_id,
@@ -494,8 +683,8 @@ def order_payload(order: Order, *, include_delivery_otp: bool = False) -> dict:
         "delivery_fee_paise": order.delivery_fee_paise,
         "total_paise": subtotal + order.delivery_fee_paise,
         "address": addr_str,
-        "latitude": chosen_addr.latitude if chosen_addr else None,
-        "longitude": chosen_addr.longitude if chosen_addr else None,
+        "latitude": lat,
+        "longitude": lng,
         "scheduled_for": order.scheduled_for,
         "notes": order.notes,
         "assigned_delivery_id": order.assigned_delivery_id,
@@ -508,10 +697,22 @@ def order_payload(order: Order, *, include_delivery_otp: bool = False) -> dict:
 
 
 def order_total_paise(order: Order) -> int:
-    return sum(
-        (line.menu_item.price_paise if line.menu_item else 0) * line.quantity
-        for line in order.items
-    ) + order.delivery_fee_paise
+    def line_cost(line: OrderItem) -> int:
+        if line.unit_price_paise:
+            return line.unit_price_paise
+        base = 0
+        if line.custom_menu_item:
+            base = line.custom_menu_item.base_price_paise
+        elif line.menu_item:
+            if line.variation_name and line.menu_item.variations:
+                matched_v = next((v for v in line.menu_item.variations if v.get("name", "").lower() == line.variation_name.lower()), None)
+                base = matched_v["price_paise"] if matched_v else line.menu_item.price_paise
+            else:
+                base = line.menu_item.price_paise
+        extra = sum(opt.get("extra_paise", 0) for opt in (line.customizations or []) if isinstance(opt, dict) and opt.get("name") != line.variation_name)
+        return base + extra
+
+    return sum(line_cost(line) * line.quantity for line in order.items) + order.delivery_fee_paise
 
 
 def transition_order(order: Order, new_status: OrderStatus) -> None:

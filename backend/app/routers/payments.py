@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from app.dependencies import CurrentAccount, DbSession
 from app.integrations import razorpay
-from app.models import Order, OrderStatus, Payment, PaymentMethod, PaymentStatus
+from app.models import CartItem, Order, OrderStatus, Payment, PaymentMethod, PaymentStatus
 from app.services import issue_razorpay_refund
 
 router = APIRouter(prefix="/payments", tags=["payments"])
@@ -49,6 +49,8 @@ async def verify_checkout(data: VerifyPayment, account: CurrentAccount, db: DbSe
         raise HTTPException(status_code=409, detail="Payment is awaiting capture. Refresh your order status in a moment.")
     payment.gateway_payment_id = data.gateway_payment_id
     payment.status = PaymentStatus.PAID
+    if order.customer_id:
+        db.query(CartItem).filter(CartItem.customer_id == order.customer_id).delete(synchronize_session=False)
     if order.status == OrderStatus.CANCELLED:
         await issue_razorpay_refund(order, payment)
     db.commit()

@@ -119,7 +119,31 @@ class CustomerNotifier:
 
 
 class StaffAccountNotifier:
-    """Sends first-login credentials through the configured Workspace mailbox."""
+    """Sends first-login credentials and invite links through the configured Workspace mailbox."""
+
+    def send_staff_invite(self, *, name: str, email: str, role: str, invite_url: str, duration_str: str = "30 minutes") -> str:
+        if not settings.smtp_password:
+            return "NOT_CONFIGURED"
+        message = EmailMessage()
+        message["Subject"] = "Set up your KebabZilla account"
+        message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
+        message["To"] = email
+        message.set_content(
+            f"Hi {name},\n\n"
+            f"Your KebabZilla {role.lower()} account has been created.\n\n"
+            f"Please set up your password and access your account using the secure link below:\n"
+            f"{invite_url}\n\n"
+            f"This link will expire in {duration_str}. You can also sign in directly using Google if your email matches.\n\n"
+            "If you were not expecting this invitation, please contact your administrator."
+        )
+        try:
+            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as client:
+                client.starttls()
+                client.login(settings.smtp_username, settings.smtp_password)
+                client.send_message(message)
+        except (OSError, smtplib.SMTPException):
+            return "EMAIL_FAILED"
+        return "EMAIL_SENT"
 
     def send_temporary_password(self, *, name: str, email: str, role: str, temporary_password: str) -> str:
         if not settings.smtp_password:

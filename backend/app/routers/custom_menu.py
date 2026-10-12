@@ -5,6 +5,8 @@ from sqlalchemy import func, select
 from app.dependencies import CurrentAccount, DbSession, require_roles
 from app.models import AdminEvent, CustomMenuItem, CustomMenuSection, MenuCategory, MenuDiscount, Role
 from app.schemas import CustomMenuItemInput, CustomMenuItemOut
+from app.services import get_next_menu_id, resolve_categories
+from app.storage import cleanup_unreferenced_gcs_images
 
 router = APIRouter(prefix="/custom-menu", tags=["custom menu"])
 
@@ -15,7 +17,7 @@ def list_custom_menu(db: DbSession):
     now = datetime.now(timezone.utc)
     items = db.scalars(
         select(CustomMenuItem)
-        .where(CustomMenuItem.is_available.is_(True), CustomMenuItem.paused_by_id.is_(None))
+        .where(CustomMenuItem.is_available.is_(True))
         .order_by(CustomMenuItem.category_id, CustomMenuItem.name)
     ).all()
     discounts = db.scalars(select(MenuDiscount)).all() if items else []
@@ -40,7 +42,7 @@ def list_custom_menu(db: DbSession):
     return results
 
 
-@router.get("/manage", response_model=list[CustomMenuItemOut], dependencies=[Depends(require_roles(Role.ADMIN))])
+@router.get("/manage", response_model=list[CustomMenuItemOut], dependencies=[Depends(require_roles(Role.ADMIN, Role.EMPLOYEE))])
 def list_all_custom_menu(db: DbSession):
     return db.scalars(
         select(CustomMenuItem)
@@ -50,22 +52,26 @@ def list_all_custom_menu(db: DbSession):
 
 @router.post("", response_model=CustomMenuItemOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_roles(Role.ADMIN))])
 def create_custom_menu_item(data: CustomMenuItemInput, actor: CurrentAccount, db: DbSession):
-    cat_id = data.category_id
-    if cat_id is None and data.category:
-        cat = db.scalar(select(MenuCategory).where(func.lower(MenuCategory.name) == data.category.lower().strip()))
-        if cat:
-            cat_id = cat.id
+    resolved_cats = resolve_categories(
+        db,
+        categories=data.categories,
+        category_ids=data.category_ids,
+        fallback_category=data.category,
+        fallback_category_id=data.category_id,
+    )
 
     item = CustomMenuItem(
+        id=get_next_menu_id(db),
         name=data.name,
         description=data.description,
-        category_id=cat_id,
+        category_id=resolved_cats[0].id if resolved_cats else None,
         base_price_paise=data.base_price_paise,
         image_urls=data.image_urls,
         is_vegetarian=data.is_vegetarian,
         is_available=data.is_available,
         is_featured=data.is_featured,
     )
+    item.categories = resolved_cats
     for idx, sec in enumerate(data.sections):
         section = CustomMenuSection(
             name=sec.name,
@@ -93,15 +99,21 @@ def update_custom_menu_item(item_id: int, data: CustomMenuItemInput, actor: Curr
     item = db.get(CustomMenuItem, item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Custom menu item not found")
-    cat_id = data.category_id
-    if cat_id is None and data.category:
-        cat = db.scalar(select(MenuCategory).where(func.lower(MenuCategory.name) == data.category.lower().strip()))
-        if cat:
-            cat_id = cat.id
+
+    old_urls = list(item.image_urls or [])
+
+    resolved_cats = resolve_categories(
+        db,
+        categories=data.categories,
+        category_ids=data.category_ids,
+        fallback_category=data.category,
+        fallback_category_id=data.category_id,
+    )
 
     item.name = data.name
     item.description = data.description
-    item.category_id = cat_id
+    item.category_id = resolved_cats[0].id if resolved_cats else None
+    item.categories = resolved_cats
     item.base_price_paise = data.base_price_paise
     item.image_urls = data.image_urls
     item.is_vegetarian = data.is_vegetarian
@@ -127,6 +139,12 @@ def update_custom_menu_item(item_id: int, data: CustomMenuItemInput, actor: Curr
     ))
     db.commit()
     db.refresh(item)
+
+    # Clean up unreferenced GCS images that were removed in this update
+    removed_urls = [u for u in old_urls if u not in (data.image_urls or [])]
+    if removed_urls:
+        cleanup_unreferenced_gcs_images(db, removed_urls, exclude_custom_menu_item_id=item.id)
+
     return item
 
 

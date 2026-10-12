@@ -82,6 +82,39 @@ def delete_session_cookie(response: Response) -> None:
     )
 
 
+CSRF_COOKIE_NAME = "kz_csrf_token"
+
+
+def generate_csrf_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def set_csrf_cookie(response: Response, token: str) -> None:
+    params = get_cookie_security_params()
+    max_age = settings.session_lifetime_days * 86400
+    response.set_cookie(
+        key=CSRF_COOKIE_NAME,
+        value=token,
+        max_age=max_age,
+        expires=max_age,
+        path=params.get("path", "/"),
+        httponly=False,
+        secure=params.get("secure", False),
+        samesite=params.get("samesite", "lax"),
+    )
+
+
+def delete_csrf_cookie(response: Response) -> None:
+    params = get_cookie_security_params()
+    response.delete_cookie(
+        key=CSRF_COOKIE_NAME,
+        path=params.get("path", "/"),
+        httponly=False,
+        secure=params.get("secure", False),
+        samesite=params.get("samesite", "lax"),
+    )
+
+
 def create_access_token(account_id: int) -> tuple[str, int]:
     expires_in = settings.access_token_minutes * 60
     now = datetime.now(timezone.utc)

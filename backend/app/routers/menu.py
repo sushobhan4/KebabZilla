@@ -1,14 +1,35 @@
+import os
 import re
 
 import httpx
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from sqlalchemy import func, select
 
 from app.dependencies import CurrentAccount, DbSession, require_roles
-from app.models import AdminEvent, MenuCategory, MenuDiscount, MenuDiscountItem, MenuItem, Order, OrderItem, OrderStatus, Role
+from app.models import (
+    AdminEvent,
+    CustomMenuItem,
+    MenuCategory,
+    MenuDiscount,
+    MenuDiscountItem,
+    MenuItem,
+    Order,
+    OrderItem,
+    OrderStatus,
+    Role,
+    menu_item_categories,
+)
+from app.services import get_next_menu_id, resolve_categories
 from app.schemas import MenuCategoryDeleteOut, MenuCategoryInput, MenuCategoryOut, MenuItemInput, MenuItemOut
+from app.storage import (
+    cleanup_unreferenced_gcs_images,
+    delete_menu_image,
+    get_menu_image_blob,
+    is_gcs_image_referenced,
+    upload_menu_image,
+)
 
 router = APIRouter(prefix="/menu", tags=["menu"])
 
@@ -55,6 +76,66 @@ def drive_menu_image(file_id: str):
     )
 
 
+@router.get("/images/gcs/{filename:path}", response_class=Response)
+def serve_gcs_menu_image(filename: str):
+    """Serve a menu image stored in Google Cloud Storage."""
+    try:
+        data, content_type = get_menu_image_blob(filename)
+        return Response(
+            content=data,
+            media_type=content_type,
+            headers={
+                "Cache-Control": "public, max-age=86400, immutable",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Menu image not found")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Could not load image from storage: {exc}")
+
+
+@router.post("/images/upload", dependencies=[Depends(require_roles(Role.ADMIN))])
+async def upload_menu_image_endpoint(file: UploadFile = File(...)):
+    """Upload a menu image directly into the Google Cloud Storage bucket (menuImages/ folder)."""
+    allowed_types = {"image/jpeg", "image/png", "image/webp", "image/gif", "image/avif"}
+    content_type = (file.content_type or "image/jpeg").lower()
+    if content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Only JPEG, PNG, WebP, GIF, and AVIF image formats are supported.")
+
+    content = await file.read()
+    max_size_bytes = 1 * 1024 * 1024  # 1MB
+    if len(content) > max_size_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Image size must not exceed 1MB. (Uploaded size: {len(content) / (1024 * 1024):.2f}MB)",
+        )
+    if len(content) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    try:
+        result = upload_menu_image(content, file.filename or "image.jpg", content_type)
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to upload image to Cloud Storage: {exc}")
+
+
+@router.delete("/images/gcs/{filename:path}", dependencies=[Depends(require_roles(Role.ADMIN))])
+def delete_gcs_menu_image_endpoint(filename: str, db: DbSession):
+    """Explicitly delete an unreferenced menu image from GCS."""
+    clean_file = os.path.basename(filename)
+    if is_gcs_image_referenced(db, clean_file):
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete this image from Cloud Storage because it is currently assigned to a menu item.",
+        )
+    deleted = delete_menu_image(clean_file)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Image not found in Cloud Storage.")
+    return {"deleted": True, "filename": clean_file}
+
+
+
 @router.get("/categories", response_model=list[MenuCategoryOut], dependencies=[Depends(require_roles(Role.ADMIN))])
 def list_categories(db: DbSession):
     saved = db.scalars(select(MenuCategory).order_by(MenuCategory.name)).all()
@@ -82,8 +163,13 @@ def delete_category(category_id: int, db: DbSession):
     category = db.get(MenuCategory, category_id)
     if category is None:
         raise HTTPException(status_code=404, detail="Category not found")
-    affected = db.scalar(select(func.count(MenuItem.id)).where(MenuItem.category_id == category_id)) or 0
+    affected_menu = db.scalar(select(func.count()).select_from(menu_item_categories).where(menu_item_categories.c.category_id == category_id)) or 0
+    legacy_affected = db.scalar(select(func.count(MenuItem.id)).where(MenuItem.category_id == category_id)) or 0
+    affected = max(affected_menu, legacy_affected)
+
+    db.execute(menu_item_categories.delete().where(menu_item_categories.c.category_id == category_id))
     db.query(MenuItem).filter(MenuItem.category_id == category_id).update({MenuItem.category_id: None}, synchronize_session=False)
+    db.query(CustomMenuItem).filter(CustomMenuItem.category_id == category_id).update({CustomMenuItem.category_id: None}, synchronize_session=False)
     db.delete(category)
     db.commit()
     return {"affected_menus": affected}
@@ -92,7 +178,7 @@ def delete_category(category_id: int, db: DbSession):
 @router.get("", response_model=list[MenuItemOut])
 def list_menu(db: DbSession):
     now = datetime.now(timezone.utc)
-    query = select(MenuItem).where(MenuItem.is_available.is_(True), MenuItem.paused_by_id.is_(None)).order_by(MenuItem.category_id, MenuItem.name)
+    query = select(MenuItem).where(MenuItem.is_available.is_(True)).order_by(MenuItem.category_id, MenuItem.name)
     items = db.scalars(query).all()
     counts = dict(db.execute(
         select(OrderItem.menu_item_id, func.sum(OrderItem.quantity))
@@ -128,15 +214,22 @@ def list_all_menu(db: DbSession):
 
 @router.post("", response_model=MenuItemOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_roles(Role.ADMIN))])
 def create_menu_item(data: MenuItemInput, db: DbSession):
+    resolved_cats = resolve_categories(
+        db,
+        categories=data.categories,
+        category_ids=data.category_ids,
+        fallback_category=data.category,
+        fallback_category_id=data.category_id,
+    )
     values = data.model_dump()
-    legacy_category = values.pop("category")
-    legacy_image = values.pop("image_url")
-    if values["category_id"] is None and legacy_category:
-        category = db.scalar(select(MenuCategory).where(func.lower(MenuCategory.name) == legacy_category.lower()))
-        if category:
-            values["category_id"] = category.id
+    values.pop("category", None)
+    values.pop("categories", None)
+    values.pop("category_ids", None)
+    legacy_image = values.pop("image_url", None)
+    values["category_id"] = resolved_cats[0].id if resolved_cats else None
     values["image_urls"] = values["image_urls"] or ([legacy_image] if legacy_image else [])
-    item = MenuItem(**values)
+    item = MenuItem(id=get_next_menu_id(db), **values)
+    item.categories = resolved_cats
     db.add(item)
     db.commit()
     db.refresh(item)
@@ -148,18 +241,35 @@ def update_menu_item(item_id: int, data: MenuItemInput, db: DbSession):
     item = db.get(MenuItem, item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Menu item not found")
+
+    old_urls = list(item.image_urls or [])
+
+    resolved_cats = resolve_categories(
+        db,
+        categories=data.categories,
+        category_ids=data.category_ids,
+        fallback_category=data.category,
+        fallback_category_id=data.category_id,
+    )
     values = data.model_dump()
-    legacy_category = values.pop("category")
-    legacy_image = values.pop("image_url")
-    if values["category_id"] is None and legacy_category:
-        category = db.scalar(select(MenuCategory).where(func.lower(MenuCategory.name) == legacy_category.lower()))
-        if category:
-            values["category_id"] = category.id
-    values["image_urls"] = values["image_urls"] or ([legacy_image] if legacy_image else [])
+    values.pop("category", None)
+    values.pop("categories", None)
+    values.pop("category_ids", None)
+    legacy_image = values.pop("image_url", None)
+    new_urls = values["image_urls"] or ([legacy_image] if legacy_image else [])
+    values["image_urls"] = new_urls
+    values["category_id"] = resolved_cats[0].id if resolved_cats else None
     for key, value in values.items():
         setattr(item, key, value)
+    item.categories = resolved_cats
     db.commit()
     db.refresh(item)
+
+    # Clean up unreferenced GCS images that were removed in this update
+    removed_urls = [u for u in old_urls if u not in new_urls]
+    if removed_urls:
+        cleanup_unreferenced_gcs_images(db, removed_urls, exclude_menu_item_id=item.id)
+
     return item
 
 

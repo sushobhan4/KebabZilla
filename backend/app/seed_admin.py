@@ -2,8 +2,9 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models import Account, MenuItem, RestaurantSettings, Role
+from app.models import Account, MenuCategory, MenuItem, RestaurantSettings, Role, StaffInfo
 from app.security import hash_password
+from app.services import get_next_menu_id
 
 DEFAULT_MENU = [
     ("Zilla Seekh Kebab", "Charcoal-grilled lamb seekh, mint chutney, pickled onion.", "Signature kebabs", 32900, False, True),
@@ -23,14 +24,17 @@ def main() -> None:
             email = settings.seed_admin_email.lower().strip()
             account = db.scalar(select(Account).where(Account.email == email))
             if not account:
-                db.add(
-                    Account(
-                        name="Restaurant Admin",
-                        email=email,
-                        password_hash=hash_password(settings.seed_admin_password),
-                        role=Role.ADMIN,
-                    )
+                admin_account = Account(
+                    name="Restaurant Admin",
+                    email=email,
+                    password_hash=hash_password(settings.seed_admin_password),
+                    role=Role.ADMIN,
                 )
+                admin_account.staff_info = StaffInfo(
+                    is_accepting_deliveries=False,
+                    must_change_password=False,
+                )
+                db.add(admin_account)
                 print(f"Created administrator {email}")
             else:
                 print(f"Administrator {email} already exists; no changes made")
@@ -39,12 +43,27 @@ def main() -> None:
         if db.get(RestaurantSettings, 1) is None:
             db.add(RestaurantSettings(id=1))
         if db.scalar(select(MenuItem.id).limit(1)) is None:
-            db.add_all(
-                [
-                    MenuItem(name=name, description=description, category=category, price_paise=price, is_vegetarian=veg, is_featured=featured)
-                    for name, description, category, price, veg, featured in DEFAULT_MENU
-                ]
-            )
+            cat_map = {}
+            for name, description, cat_name, price, veg, featured in DEFAULT_MENU:
+                if cat_name not in cat_map:
+                    cat = db.scalar(select(MenuCategory).where(MenuCategory.name == cat_name))
+                    if not cat:
+                        cat = MenuCategory(name=cat_name)
+                        db.add(cat)
+                        db.flush()
+                    cat_map[cat_name] = cat
+                db.add(
+                    MenuItem(
+                        id=get_next_menu_id(db),
+                        name=name,
+                        description=description,
+                        category_id=cat_map[cat_name].id,
+                        price_paise=price,
+                        is_vegetarian=veg,
+                        is_featured=featured,
+                    )
+                )
+                db.flush()
             print("Added sample opening menu. Edit it in the admin dashboard.")
         db.commit()
 

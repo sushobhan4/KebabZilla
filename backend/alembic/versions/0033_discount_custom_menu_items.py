@@ -15,7 +15,8 @@ depends_on = None
 
 def upgrade() -> None:
     bind = op.get_bind()
-    cols = [x[1] for x in bind.execute(sa.text("PRAGMA table_info(menu_discount_items)")).fetchall()]
+    insp = sa.inspect(bind)
+    cols = [c["name"] for c in insp.get_columns("menu_discount_items")]
     if "custom_menu_item_id" not in cols:
         with op.batch_alter_table("menu_discount_items") as batch:
             batch.add_column(

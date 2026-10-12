@@ -17,15 +17,16 @@ depends_on = None
 
 def upgrade() -> None:
     bind = op.get_bind()
+    insp = sa.inspect(bind)
 
     # 1. Add required column to custom_menu_sections if not present
-    section_cols = [x[1] for x in bind.execute(sa.text("PRAGMA table_info(custom_menu_sections)")).fetchall()]
+    section_cols = [c["name"] for c in insp.get_columns("custom_menu_sections")]
     if "required" not in section_cols:
         with op.batch_alter_table("custom_menu_sections") as batch:
             batch.add_column(sa.Column("required", sa.Boolean(), nullable=False, server_default="1"))
 
     # 2. Migrate any custom items currently in menu_items into custom_menu_items and custom_menu_sections
-    menu_cols = [x[1] for x in bind.execute(sa.text("PRAGMA table_info(menu_items)")).fetchall()]
+    menu_cols = [c["name"] for c in insp.get_columns("menu_items")]
     if "is_custom" in menu_cols:
         custom_rows = bind.execute(
             sa.text("SELECT * FROM menu_items WHERE is_custom = 1")
@@ -96,7 +97,7 @@ def upgrade() -> None:
                 batch.add_column(sa.Column("variations", sa.JSON(), nullable=False, server_default="[]"))
 
     # 5. Add custom_menu_item_id and variation_name to order_items
-    order_item_cols = [x[1] for x in bind.execute(sa.text("PRAGMA table_info(order_items)")).fetchall()]
+    order_item_cols = [c["name"] for c in insp.get_columns("order_items")]
     with op.batch_alter_table("order_items") as batch:
         if "custom_menu_item_id" not in order_item_cols:
             batch.add_column(sa.Column("custom_menu_item_id", sa.Integer(), nullable=True))

@@ -14,7 +14,7 @@ import AuthPage from './pages/AuthPage'
 import Profile from './pages/Profile'
 import ForcedPasswordChange from './pages/ForcedPasswordChange'
 import { getPreference, setPreference } from './cookies'
-import { CookieConsentBanner, CookiePolicyModal, CookiePreferencesModal } from './components/CookieConsent'
+import { CookieConsentBanner, CookiePolicyModal, CookiePreferencesModal, PrivacyPolicyModal, DataPolicyModal } from './components/CookieConsent'
 
 type NavItem = { to: string; label: string; icon: ReactNode; end?: boolean; tone?: 'employee' | 'delivery' }
 
@@ -380,6 +380,8 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null)
   const [cookiePolicyOpen, setCookiePolicyOpen] = useState(false)
   const [cookiePreferencesOpen, setCookiePreferencesOpen] = useState(false)
+  const [privacyPolicyOpen, setPrivacyPolicyOpen] = useState(false)
+  const [dataPolicyOpen, setDataPolicyOpen] = useState(false)
 
   const phoneList = (restaurant?.phones && restaurant.phones.length > 0)
     ? restaurant.phones
@@ -402,6 +404,9 @@ export default function App() {
       <Route path="/login" element={account ? <Navigate to={homeFor(account.role)} replace /> : <AuthPage mode="login" />} />
       <Route path="/register" element={account ? <Navigate to={homeFor(account.role)} replace /> : <AuthPage mode="register" />} />
       <Route path="/forgot-password" element={account ? <Navigate to={homeFor(account.role)} replace /> : <AuthPage mode="recovery" />} />
+      <Route path="/recovery" element={account ? <Navigate to={homeFor(account.role)} replace /> : <AuthPage mode="recovery" />} />
+      <Route path="/reset-password" element={account ? <Navigate to={homeFor(account.role)} replace /> : <AuthPage mode="recovery" />} />
+      <Route path="/activate" element={account ? <Navigate to={homeFor(account.role)} replace /> : <AuthPage mode="recovery" />} />
       <Route path="/workspace" element={account ? <Navigate to={homeFor(account.role)} replace /> : <Navigate to="/login" replace />} />
       <Route path="/orders" element={<RoleGuard roles={['USER']}><OrdersPage /></RoleGuard>} />
       <Route path="/profile" element={<RoleGuard roles={['USER', 'ADMIN', 'EMPLOYEE', 'DELIVERY']}><Profile /></RoleGuard>} />
@@ -414,17 +419,19 @@ export default function App() {
       <div className="footer-identity-col">
         <Brand compact showTagline={false} />
         <div className="footer-copy">© {new Date().getFullYear()} {restaurant?.restaurant_name || 'KebabZilla'}. All rights reserved.</div>
+      </div>
+      <div className="footer-middle-col">
         <div className="footer-cookie-links">
-          <button type="button" className="footer-cookie-link" onClick={() => setCookiePolicyOpen(true)}>
-            Cookie Policy
+          <button type="button" className="footer-cookie-link" onClick={() => setPrivacyPolicyOpen(true)}>
+            Privacy Policy
           </button>
           <span>·</span>
-          <button
-            type="button"
-            className="footer-cookie-link"
-            onClick={() => setCookiePreferencesOpen(true)}
-          >
-            Cookie Preferences
+          <button type="button" className="footer-cookie-link" onClick={() => setDataPolicyOpen(true)}>
+            Data Policy
+          </button>
+          <span>·</span>
+          <button type="button" className="footer-cookie-link" onClick={() => setCookiePolicyOpen(true)}>
+            Cookie Policy
           </button>
         </div>
       </div>
@@ -477,6 +484,14 @@ export default function App() {
         setCookiePolicyOpen(false);
         setCookiePreferencesOpen(true);
       }}
+    />
+    <PrivacyPolicyModal
+      open={privacyPolicyOpen}
+      onClose={() => setPrivacyPolicyOpen(false)}
+    />
+    <DataPolicyModal
+      open={dataPolicyOpen}
+      onClose={() => setDataPolicyOpen(false)}
     />
   </div>
 }

@@ -6,10 +6,20 @@ export function setAccessToken(token: string | null) {
   accessToken = token
 }
 
+function getCsrfToken(): string | null {
+  const match = document.cookie.match(/(?:^|;\s*)kz_csrf_token=([^;]+)/)
+  return match ? decodeURIComponent(match[1]) : null
+}
+
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   if (init.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
+  const method = (init.method || 'GET').toUpperCase()
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+    const csrf = getCsrfToken()
+    if (csrf) headers.set('X-CSRF-Token', csrf)
+  }
   let response: Response
   try {
     response = await fetch(`${API_BASE}${path}`, {
@@ -68,6 +78,8 @@ export type MenuItem = {
   description: string
   category: string
   category_id: number | null
+  categories?: string[]
+  category_ids?: number[]
   price_paise: number
   base_price_paise?: number
   discount_percent: number
@@ -76,6 +88,7 @@ export type MenuItem = {
   image_urls: string[]
   is_vegetarian: boolean
   is_available: boolean
+  is_paused?: boolean
   is_featured: boolean
   variations?: MenuItemVariation[]
   is_custom?: boolean
@@ -101,12 +114,15 @@ export type CustomMenuItem = {
   description: string
   category: string
   category_id: number | null
+  categories?: string[]
+  category_ids?: number[]
   base_price_paise: number
   lowest_price_paise?: number
   image_url: string | null
   image_urls: string[]
   is_vegetarian: boolean
   is_available: boolean
+  is_paused?: boolean
   is_featured: boolean
   sections: CustomMenuSection[]
 }
@@ -175,6 +191,11 @@ export type Restaurant = {
   delivery_fee_per_km_paise: number
   accepting_orders: boolean
   admin_override_open?: boolean
+  admin_override_state?: boolean | null
+  admin_override_until?: string | null
+  is_currently_scheduled_open?: boolean
+  schedule_status?: string
+  next_schedule_refresh?: string | null
   distance_calculation_mode?: 'AUTO' | 'GOOGLE_MAPS' | 'HAVERSINE'
   enforce_driver_geofence?: boolean
   driver_geofence_meters?: number
@@ -246,4 +267,53 @@ export async function confirmPasswordReset(email: string, otp: string, newPasswo
     method: 'POST',
     body: JSON.stringify({ email, otp, new_password: newPassword }),
   })
+}
+
+export type UploadImageResult = {
+  url: string
+  gcs_uri: string
+  filename: string
+  content_type: string
+  size_bytes: number
+}
+
+export async function uploadMenuImage(file: File): Promise<UploadImageResult> {
+  const formData = new FormData()
+  formData.append('file', file)
+  return api<UploadImageResult>('/menu/images/upload', {
+    method: 'POST',
+    body: formData,
+  })
+}
+
+export async function deleteMenuImage(urlOrFilename: string): Promise<boolean> {
+  if (!urlOrFilename) return false
+  const filename = urlOrFilename.startsWith('/menu/images/gcs/')
+    ? urlOrFilename.slice('/menu/images/gcs/'.length)
+    : urlOrFilename.split('/').pop() || urlOrFilename
+  try {
+    await api<{ deleted: boolean }>(`/menu/images/gcs/${encodeURIComponent(filename)}`, {
+      method: 'DELETE',
+    })
+    return true
+  } catch (err) {
+    console.warn('Could not delete image from GCS:', err)
+    return false
+  }
+}
+
+export function resolveImageUrl(url: string): string {
+  if (!url) return ''
+  if (url.startsWith('/')) {
+    return `${API_BASE}${url}`
+  }
+  try {
+    const parsed = new URL(url)
+    const fileId = parsed.hostname === 'drive.google.com'
+      ? parsed.pathname.match(/\/file\/d\/([^/]+)/)?.[1] || parsed.searchParams.get('id')
+      : null
+    return fileId ? `${API_BASE}/menu/images/${encodeURIComponent(fileId)}` : url
+  } catch {
+    return url
+  }
 }

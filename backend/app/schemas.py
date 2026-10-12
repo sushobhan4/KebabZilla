@@ -30,6 +30,7 @@ class AdminAccountCreate(BaseModel):
     email: EmailStr
     phone: str = Field(min_length=3, max_length=32)
     role: Role
+    invite_expiry_minutes: int = Field(default=30, ge=30, description="Invite link expiry in minutes (minimum 30)")
 
     @field_validator("name")
     @classmethod
@@ -45,6 +46,13 @@ class AdminAccountCreate(BaseModel):
         value = value.strip()
         if not value:
             raise ValueError("A mobile number is required")
+        return value
+
+    @field_validator("invite_expiry_minutes")
+    @classmethod
+    def validate_invite_expiry(cls, value: int) -> int:
+        if value < 30:
+            raise ValueError("Invite link expiry must be at least 30 minutes")
         return value
 
 
@@ -88,7 +96,7 @@ class PasswordResetRequest(BaseModel):
 
 class PasswordResetConfirm(BaseModel):
     email: str = Field(min_length=3, max_length=255)
-    otp: str = Field(pattern=r"^\d{6}$")
+    otp: str = Field(min_length=6, max_length=64)
     new_password: str = Field(min_length=10, max_length=128)
 
     @field_validator("email")
@@ -106,7 +114,7 @@ class AccountOut(ORMModel):
     phone: str | None
     addresses: list[dict] = Field(default_factory=list)
     role: Role
-    must_change_password: bool
+    must_change_password: bool = False
     is_accepting_deliveries: bool = False
     created_at: datetime
 
@@ -123,6 +131,8 @@ class AccountOut(ORMModel):
                 for address in (value.addresses or [])
             ]
             data["addresses"] = [{("id" if key == "address_id" else key): val for key, val in item.items()} for item in data["addresses"]]
+            data["must_change_password"] = bool(getattr(value, "must_change_password", False))
+            data["is_accepting_deliveries"] = bool(getattr(value, "is_accepting_deliveries", False))
             return data
         return value
 
@@ -169,7 +179,7 @@ class AccountProfileUpdate(BaseModel):
 
 
 class PasswordUpdate(BaseModel):
-    current_password: str
+    current_password: str | None = None
     new_password: str = Field(min_length=10, max_length=128)
 
 
@@ -207,6 +217,8 @@ class MenuItemInput(BaseModel):
     description: str = Field(default="", max_length=2000)
     category_id: int | None = None
     category: str | None = Field(default=None, max_length=80)
+    categories: list[str] = Field(default_factory=list)
+    category_ids: list[int] = Field(default_factory=list)
     price_paise: int = Field(gt=0, le=10_000_000)
     image_url: str | None = Field(default=None, max_length=500)
     image_urls: list[str] = Field(default_factory=list, max_length=20)
@@ -220,8 +232,10 @@ class MenuItemOut(ORMModel):
     id: int
     name: str
     description: str
-    category_id: int | None
+    category_id: int | None = None
     category: str = ""
+    categories: list[str] = Field(default_factory=list)
+    category_ids: list[int] = Field(default_factory=list)
     price_paise: int
     discount_percent: int = 0
     discounted_price_paise: int | None = None
@@ -229,6 +243,7 @@ class MenuItemOut(ORMModel):
     image_url: str | None = None
     is_vegetarian: bool
     is_available: bool
+    is_paused: bool = False
     is_featured: bool
     variations: list[dict] = Field(default_factory=list)
     discount_campaign_name: str | None = None
@@ -241,8 +256,19 @@ class MenuItemOut(ORMModel):
             import json
             data = dict(value.__dict__)
             data["image_url"] = (value.image_urls or [None])[0]
-            cat = getattr(value, "category", None)
-            data["category"] = cat.name if cat else ""
+            cats = getattr(value, "categories", []) or []
+            cat_names = [c.name for c in cats if getattr(c, "name", None)]
+            cat_ids = [c.id for c in cats if getattr(c, "id", None) is not None]
+            if not cat_names:
+                cat = getattr(value, "category", None)
+                if cat and getattr(cat, "name", None):
+                    cat_names = [cat.name]
+                    cat_ids = [cat.id]
+            data["categories"] = cat_names
+            data["category_ids"] = cat_ids
+            data["category"] = cat_names[0] if cat_names else ""
+            data["category_id"] = cat_ids[0] if cat_ids else getattr(value, "category_id", None)
+            data["is_paused"] = bool(data.get("paused_by_id") is not None or getattr(value, "paused_by_id", None) is not None)
             vars_val = data.get("variations")
             if isinstance(vars_val, str):
                 try:
@@ -259,6 +285,17 @@ class MenuItemOut(ORMModel):
                 data["price_paise"] = min_price
 
             return data
+        elif isinstance(value, dict):
+            value["is_paused"] = bool(value.get("is_paused") or value.get("paused_by_id") is not None)
+            cats = value.get("categories") or []
+            if not cats and value.get("category"):
+                cats = [value["category"]]
+            value["categories"] = cats
+            value["category"] = cats[0] if cats else (value.get("category") or "")
+            if not value.get("category_ids") and value.get("category_id"):
+                value["category_ids"] = [value["category_id"]]
+            return value
+            return value
         return value
 
 
@@ -367,6 +404,8 @@ class RestaurantSettingsInput(BaseModel):
     delivery_fee_per_km_paise: int = Field(ge=0, le=1_000_000)
     accepting_orders: bool
     admin_override_open: bool | None = None
+    admin_override_state: bool | None = None
+    admin_override_until: datetime | None = None
     distance_calculation_mode: str = Field(default="AUTO", pattern=r"^(AUTO|GOOGLE_MAPS|HAVERSINE)$")
     enforce_driver_geofence: bool = Field(default=False)
     driver_geofence_meters: int = Field(default=500, ge=50, le=50000)
@@ -389,6 +428,11 @@ class RestaurantSettingsOut(ORMModel):
     delivery_fee_per_km_paise: int
     accepting_orders: bool
     admin_override_open: bool = False
+    admin_override_state: bool | None = None
+    admin_override_until: datetime | None = None
+    is_currently_scheduled_open: bool = False
+    schedule_status: str = ""
+    next_schedule_refresh: datetime | None = None
     distance_calculation_mode: str = "AUTO"
     enforce_driver_geofence: bool = False
     driver_geofence_meters: int = 500
@@ -494,6 +538,8 @@ class CustomMenuItemInput(BaseModel):
     description: str = Field(default="", max_length=2000)
     category_id: int | None = None
     category: str | None = None
+    categories: list[str] = Field(default_factory=list)
+    category_ids: list[int] = Field(default_factory=list)
     base_price_paise: int = Field(gt=0, le=10_000_000)
     image_urls: list[str] = Field(default_factory=list, max_length=20)
     is_vegetarian: bool = False
@@ -514,8 +560,10 @@ class CustomMenuItemOut(ORMModel):
     id: int
     name: str
     description: str
-    category_id: int | None
+    category_id: int | None = None
     category: str = ""
+    categories: list[str] = Field(default_factory=list)
+    category_ids: list[int] = Field(default_factory=list)
     base_price_paise: int
     lowest_price_paise: int = 0
     discount_percent: int = 0
@@ -525,6 +573,7 @@ class CustomMenuItemOut(ORMModel):
     image_url: str | None = None
     is_vegetarian: bool
     is_available: bool
+    is_paused: bool = False
     is_featured: bool
     sections: list[CustomMenuSectionOut]
 
@@ -534,8 +583,19 @@ class CustomMenuItemOut(ORMModel):
         if hasattr(value, "image_urls"):
             data = dict(value.__dict__)
             data["image_url"] = (value.image_urls or [None])[0]
-            cat = getattr(value, "category", None)
-            data["category"] = cat.name if cat else ""
+            cats = getattr(value, "categories", []) or []
+            cat_names = [c.name for c in cats if getattr(c, "name", None)]
+            cat_ids = [c.id for c in cats if getattr(c, "id", None) is not None]
+            if not cat_names:
+                cat = getattr(value, "category", None)
+                if cat and getattr(cat, "name", None):
+                    cat_names = [cat.name]
+                    cat_ids = [cat.id]
+            data["categories"] = cat_names
+            data["category_ids"] = cat_ids
+            data["category"] = cat_names[0] if cat_names else ""
+            data["category_id"] = cat_ids[0] if cat_ids else getattr(value, "category_id", None)
+            data["is_paused"] = bool(data.get("paused_by_id") is not None or getattr(value, "paused_by_id", None) is not None)
 
             # Calculate lowest possible price
             # base price + minimum price from each mandatory/required section
@@ -552,5 +612,15 @@ class CustomMenuItemOut(ORMModel):
                     lowest += min_extra
             data["lowest_price_paise"] = lowest
             return data
+        elif isinstance(value, dict):
+            value["is_paused"] = bool(value.get("is_paused") or value.get("paused_by_id") is not None)
+            cats = value.get("categories") or []
+            if not cats and value.get("category"):
+                cats = [value["category"]]
+            value["categories"] = cats
+            value["category"] = cats[0] if cats else (value.get("category") or "")
+            if not value.get("category_ids") and value.get("category_id"):
+                value["category_ids"] = [value["category_id"]]
+            return value
         return value
 
