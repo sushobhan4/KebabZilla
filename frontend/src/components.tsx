@@ -563,8 +563,6 @@ export function MenuImageCarousel({ images, alt, className = '' }: { images: str
   )
 }
 
-export function HeroArrow() { return <ArrowRight size={17} /> }
-
 export function formatPhoneWithPrefix(value: string | null | undefined): string {
   if (!value) return '+91'
   const trimmed = value.trim()

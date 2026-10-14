@@ -1,0 +1,12 @@
+.venv
+__pycache__
+app/__pycache__
+app/routers/__pycache__
+alembic/__pycache__
+alembic/versions/__pycache__
+alembic/legacy_versions
+*.db
+*.db-shm
+*.db-wal
+*.log
+.env

@@ -38,6 +38,10 @@ export default function Storefront() {
   useEffect(() => {
     liquidGlassManager.invalidateAll()
   }, [category, menuSearch, menuSort])
+
+  useEffect(() => {
+    liquidGlassManager.updateStuckState()
+  }, [])
   const [activeDetailItem, setActiveDetailItem] = useState<MenuItem | null>(null)
   const [customizingModalItem, setCustomizingModalItem] = useState<MenuItem | null>(null)
   const [variationModalItem, setVariationModalItem] = useState<MenuItem | null>(null)

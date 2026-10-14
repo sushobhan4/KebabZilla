@@ -33,6 +33,11 @@
   --shadow: 0 18px 50px rgba(39, 37, 29, 0.08);
   --radius: 16px;
   --app-header-height: 72px;
+  /* Glass Container Settings (Tweak here) */
+  --glass-container-blur: 3px;
+  --glass-container-bg: rgba(250, 249, 246, 0.78);
+  --glass-container-saturate: 135%;
+  --sticky-controls-height: 54px;
 }
 * {
   box-sizing: border-box;
@@ -87,13 +92,14 @@ select:focus-visible {
 }
 .app-header {
   height: 72px;
-  background: rgba(250, 249, 246, 0.72);
-  border-bottom: 1px solid rgba(235, 232, 224, 0.7);
+  background: var(--glass-container-bg);
+  border-bottom: 1px solid rgba(235, 232, 224, 0.6);
   position: sticky;
   top: 0;
   z-index: 30;
-  backdrop-filter: blur(18px) saturate(180%);
-  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  backdrop-filter: blur(var(--glass-container-blur)) saturate(var(--glass-container-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-container-blur)) saturate(var(--glass-container-saturate));
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
 }
 .header-inner {
   height: 100%;
@@ -8499,18 +8505,20 @@ body {
 }
 .storefront-sticky-controls {
   position: sticky;
-  top: var(--app-header-height, 72px);
+  top: calc(var(--app-header-height, 72px) - 1px);
   z-index: 25;
   width: 100vw;
   margin-left: calc(50% - 50vw);
   margin-right: calc(50% - 50vw);
   box-sizing: border-box;
   padding: 8px clamp(14px, 4vw, 48px) 10px;
-  background: rgba(250, 249, 246, 0.72);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  background: var(--glass-container-bg);
+  backdrop-filter: blur(var(--glass-container-blur)) saturate(var(--glass-container-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-container-blur)) saturate(var(--glass-container-saturate));
+  border-top: none !important;
   border-bottom: 1px solid rgba(235, 232, 224, 0.6);
   margin-bottom: 18px;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
 }
 .storefront-sticky-controls .menu-discovery-controls {
   max-width: 1320px;
@@ -10582,8 +10590,8 @@ input[type="radio"]:focus-visible {
     display: flex !important;
     align-items: center !important;
     justify-content: space-between !important;
-    height: 100% !important;
-    min-height: 100% !important;
+    height: 72px !important;
+    min-height: 72px !important;
   }
   .app-header .header-brand {
     position: relative !important;
@@ -12985,15 +12993,6 @@ input[type="radio"]:focus-visible {
    Apple Liquid Glass UI - WebGL Shader & Settings Inspector
    ========================================================================== */
 
-:root {
-  --glass-opacity: 0.95;
-  --glass-blur: 18px;
-  --glass-specular-intensity: 0.65;
-  --glass-corner-radius: 20px;
-  --glass-tint-color: #ffffff;
-  --light-x: 35%;
-  --light-y: 25%;
-}
 
 /* Glass element enhancements - WebGL Shader transparency */
 .app-header.has-liquid-glass,
@@ -13002,13 +13001,32 @@ input[type="radio"]:focus-visible {
   background: transparent !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.3) !important;
+  border-bottom: none !important;
+  border-top: none !important;
   overflow: visible !important;
   box-shadow: none !important;
 }
 
-.app-header.has-liquid-glass.is-stuck-together {
+/* When the navbar and sticky search controls meet and stick together, fuse them into one seamless container */
+.app-header.is-stuck-together {
+  border-bottom-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.storefront-sticky-controls.is-stuck-together {
+  border-top: none !important;
+  background: var(--glass-container-bg) !important;
+  backdrop-filter: blur(var(--glass-container-blur)) saturate(var(--glass-container-saturate)) !important;
+  -webkit-backdrop-filter: blur(var(--glass-container-blur)) saturate(var(--glass-container-saturate)) !important;
+  border-bottom: 1px solid rgba(235, 232, 224, 0.6) !important;
+  box-shadow: 0 12px 28px -8px rgba(39, 37, 29, 0.08) !important;
+}
+
+.app-header.has-liquid-glass.is-stuck-together,
+.storefront-sticky-controls.has-liquid-glass.is-stuck-together {
   border-bottom: none !important;
+  border-top: none !important;
+  box-shadow: none !important;
 }
 
 .app-header.has-liquid-glass .header-inner,

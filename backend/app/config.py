@@ -49,11 +49,32 @@ class Settings(BaseSettings):
     gcs_project_id: str = "kebabzilla"
     gcs_menu_images_folder: str = "menuImages"
 
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def normalize_database_url(cls, value: object) -> object:
+        if isinstance(value, str):
+            val = value.strip()
+            if val.startswith("postgres://"):
+                return val.replace("postgres://", "postgresql+psycopg://", 1)
+            if val.startswith("postgresql://") and not val.startswith("postgresql+"):
+                return val.replace("postgresql://", "postgresql+psycopg://", 1)
+            return val
+        return value
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def split_origins(cls, value: object) -> object:
         if isinstance(value, str):
-            return [origin.strip() for origin in value.split(",") if origin.strip()]
+            trimmed = value.strip()
+            if trimmed.startswith("[") and trimmed.endswith("]"):
+                try:
+                    import json
+                    parsed = json.loads(trimmed)
+                    if isinstance(parsed, list):
+                        return [str(origin).strip() for origin in parsed if str(origin).strip()]
+                except Exception:
+                    pass
+            return [origin.strip().strip("'\"") for origin in value.split(",") if origin.strip().strip("'\"")]
         return value
 
     @model_validator(mode="after")

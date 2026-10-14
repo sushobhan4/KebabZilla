@@ -134,7 +134,7 @@ const STORAGE_KEY = "kz_liquid_glass_config_final";
 
 const DEFAULT_SETTINGS: GlassSettings = {
   ...DEFAULTS,
-  blurAmount: 0.3,
+  blurAmount: 0.14,
   refraction: 0.9,
   chromAberration: 0.3,
   edgeHighlight: 0.1,
@@ -172,8 +172,19 @@ class LiquidGlassManager {
   private isDirty = true;
   private dirtyFramesRemaining = 0;
   private mutationObserver: MutationObserver | null = null;
-  private lightX = 35;
-  private lightY = 25;
+  private isEnabled = true;
+  private isThrottled = false;
+  private frameCount = 0;
+  private lastFpsSampleTime = 0;
+  private lowFpsStreak = 0;
+  private longTaskObserver: PerformanceObserver | null = null;
+  private longTaskStreak = 0;
+  private readonly FPS_SAMPLE_INTERVAL = 1000;
+  private readonly FPS_THRESHOLD = 32;
+  private readonly STREAK_THRESHOLD = 3;
+  private cachedHeaderH = -1;
+  private cachedSearchH = -1;
+  private lastStuckState: boolean | null = null;
 
   constructor() {
     this.loadFromStorage();
@@ -212,7 +223,6 @@ class LiquidGlassManager {
     this.listeners.forEach((fn) => fn(this.getSettings()));
     this.saveToStorage();
     this.requestRender();
-    this.applyCSSVariables();
   }
 
   public updateSettings(partial: Partial<GlassSettings>) {
@@ -244,6 +254,24 @@ class LiquidGlassManager {
 
   public start() {
     if (this.isRunning) return;
+    if (!this.isEnabled) {
+      this.isRunning = true;
+      // Liquid glass effect disabled: attach lightweight scroll listener for the seamless container merge
+      window.addEventListener("scroll", this.handleScrollOrResize, {
+        passive: true,
+      });
+      window.addEventListener("resize", this.handleScrollOrResize, {
+        passive: true,
+      });
+      this.updateStuckState();
+      return;
+    }
+    if (this.isThrottled) {
+      console.info(
+        "LiquidGlassManager: Throttling active; staying on CSS glass fallback.",
+      );
+      return;
+    }
     try {
       this.renderer = new GlassRenderer();
     } catch (err) {
@@ -251,7 +279,46 @@ class LiquidGlassManager {
         "LiquidGlassManager: WebGL initialization failed, fallback to CSS glass:",
         err,
       );
+      this.handleThrottlingTrigger("WebGL initialization failure");
       return;
+    }
+
+    // Attach WebGL context lost listener if available
+    try {
+      const glCanvas = (this.renderer as any)?.canvas as
+        | HTMLCanvasElement
+        | undefined;
+      if (glCanvas) {
+        glCanvas.addEventListener(
+          "webglcontextlost",
+          () => {
+            this.handleThrottlingTrigger("WebGL context lost");
+          },
+          { once: true },
+        );
+      }
+    } catch {}
+
+    // Monitor for long tasks (> 100ms) which indicate severe main thread bottlenecking
+    if (typeof window !== "undefined" && "PerformanceObserver" in window) {
+      try {
+        this.longTaskObserver = new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) {
+            if (entry.duration > 100) {
+              this.longTaskStreak++;
+              if (this.longTaskStreak >= 2) {
+                this.handleThrottlingTrigger(
+                  `Long task detected (${Math.round(entry.duration)}ms)`,
+                );
+                break;
+              }
+            } else {
+              this.longTaskStreak = Math.max(0, this.longTaskStreak - 1);
+            }
+          }
+        });
+        this.longTaskObserver.observe({ entryTypes: ["longtask"] });
+      } catch {}
     }
 
     try {
@@ -329,32 +396,13 @@ class LiquidGlassManager {
     window.addEventListener("resize", this.handleScrollOrResize, {
       passive: true,
     });
-    window.addEventListener("mousemove", this.handleMouseMove, {
-      passive: true,
-    });
     window.addEventListener("pointerdown", this.handleInteraction, {
       passive: true,
     });
     window.addEventListener("click", this.handleInteraction, { passive: true });
     window.addEventListener("input", this.handleInteraction, { passive: true });
 
-    this.applyCSSVariables();
-    setTimeout(() => this.prewarmVisibleCaptures(), 200);
-    this.renderLoop();
-  }
-
-  private prewarmVisibleCaptures() {
-    if (!this.capture) return;
-    // Exclude .menu-tabs so it is never frozen into a static snapshot
-    const blocks = document.querySelectorAll<HTMLElement>(
-      ".hero-section, .value-strip, .food-card",
-    );
-    for (let i = 0; i < Math.min(blocks.length, 12); i++) {
-      const b = blocks[i];
-      if (b && !b.closest(".has-liquid-glass")) {
-        this.capture.captureElement(b).catch(() => {});
-      }
-    }
+    this.scheduleRender(8);
   }
 
   public stop() {
@@ -367,12 +415,17 @@ class LiquidGlassManager {
       this.mutationObserver.disconnect();
       this.mutationObserver = null;
     }
+    if (this.longTaskObserver) {
+      this.longTaskObserver.disconnect();
+      this.longTaskObserver = null;
+    }
     window.removeEventListener("scroll", this.handleScrollOrResize);
     window.removeEventListener("resize", this.handleScrollOrResize);
-    window.removeEventListener("mousemove", this.handleMouseMove);
     window.removeEventListener("pointerdown", this.handleInteraction);
     window.removeEventListener("click", this.handleInteraction);
     window.removeEventListener("input", this.handleInteraction);
+    window.removeEventListener("change", this.handleInteraction);
+    window.removeEventListener("keyup", this.handleInteraction);
 
     for (const [el, canvas] of this.elementCanvases) {
       canvas.remove();
@@ -391,17 +444,23 @@ class LiquidGlassManager {
     }
   }
 
-  public requestRender() {
+  public scheduleRender(frames = 6) {
+    this.dirtyFramesRemaining = Math.max(this.dirtyFramesRemaining, frames);
     this.isDirty = true;
-    this.dirtyFramesRemaining = 12;
+    if (this.isRunning && !this.rafId) {
+      this.rafId = requestAnimationFrame(this.renderLoop);
+    }
+  }
+
+  public requestRender(frames = 6) {
+    this.scheduleRender(frames);
   }
 
   public invalidateAll() {
     if (this.capture) {
       this.capture.cache.clear();
     }
-    this.isDirty = true;
-    this.dirtyFramesRemaining = 15;
+    this.scheduleRender(8);
   }
 
   private handleInteraction = (e?: Event) => {
@@ -413,43 +472,72 @@ class LiquidGlassManager {
         this.capture.invalidateCache(block);
       }
     }
-    this.isDirty = true;
-    this.dirtyFramesRemaining = 15;
+    this.scheduleRender(6);
   };
 
   private handleScrollOrResize = () => {
-    this.isDirty = true;
-    this.dirtyFramesRemaining = 8;
+    this.updateStuckState();
+    this.scheduleRender(6);
   };
 
-  private handleMouseMove = (e: MouseEvent) => {
-    const w = window.innerWidth || 1;
-    const h = window.innerHeight || 1;
-    this.lightX = Math.round((e.clientX / w) * 100);
-    this.lightY = Math.round((e.clientY / h) * 100);
-    document.documentElement.style.setProperty("--light-x", `${this.lightX}%`);
-    document.documentElement.style.setProperty("--light-y", `${this.lightY}%`);
-  };
+  /**
+   * Evaluates if navbar and search controls are physically touching/stuck together.
+   * Keeps .is-stuck-together class in sync in both WebGL and CSS-only fallback modes.
+   */
+  public updateStuckState(): boolean {
+    const header = document.querySelector<HTMLElement>(".app-header");
+    const searchStrip = document.querySelector<HTMLElement>(
+      ".storefront-sticky-controls",
+    );
+    if (!header || !searchStrip) return false;
 
-  private applyCSSVariables() {
-    const root = document.documentElement;
-    root.style.setProperty("--glass-opacity", `${this.settings.opacity}`);
-    root.style.setProperty(
-      "--glass-blur",
-      `${Math.round(this.settings.blurAmount * 50)}px`,
-    );
-    root.style.setProperty(
-      "--glass-specular-intensity",
-      `${this.settings.specular}`,
-    );
-    root.style.setProperty(
-      "--glass-corner-radius",
-      `${this.settings.cornerRadius}px`,
-    );
-    if (this.settings.tintColor) {
-      root.style.setProperty("--glass-tint-color", this.settings.tintColor);
+    const inner = header.querySelector<HTMLElement>(".header-inner");
+    const baseHeaderH = inner
+      ? inner.getBoundingClientRect().height
+      : header.getBoundingClientRect().height;
+
+    if (baseHeaderH > 0) {
+      const roundedH = Math.round(baseHeaderH);
+      if (this.cachedHeaderH !== roundedH) {
+        this.cachedHeaderH = roundedH;
+        document.documentElement.style.setProperty(
+          "--app-header-height",
+          `${roundedH}px`,
+        );
+      }
     }
+
+    const searchRect = searchStrip.getBoundingClientRect();
+    if (searchRect.height > 0) {
+      const roundedSearchH = Math.round(searchRect.height);
+      if (this.cachedSearchH !== roundedSearchH) {
+        this.cachedSearchH = roundedSearchH;
+        document.documentElement.style.setProperty(
+          "--sticky-controls-height",
+          `${roundedSearchH}px`,
+        );
+      }
+    }
+
+    const navRect = header.getBoundingClientRect();
+    const gap = searchRect.top - navRect.bottom;
+    const isStuck =
+      Math.abs(gap) <= 4 && navRect.height > 0 && searchRect.height > 0;
+
+    if (this.lastStuckState !== isStuck) {
+      this.lastStuckState = isStuck;
+      if (isStuck) {
+        header.classList.add("is-stuck-together");
+        searchStrip.classList.add("is-stuck-together");
+      } else {
+        header.classList.remove("is-stuck-together");
+        searchStrip.classList.remove("is-stuck-together");
+      }
+    }
+
+    return isStuck;
   }
+
 
   private discoverElements() {
     const targets: HTMLElement[] = [];
@@ -464,15 +552,12 @@ class LiquidGlassManager {
       }
     }
 
+    const searchStrip = document.querySelector<HTMLElement>(
+      ".storefront-sticky-controls",
+    );
     if (this.settings.applyToSearch) {
-      const searchStrip = document.querySelector<HTMLElement>(
-        ".storefront-sticky-controls",
-      );
       if (searchStrip) targets.push(searchStrip);
     } else {
-      const searchStrip = document.querySelector<HTMLElement>(
-        ".storefront-sticky-controls",
-      );
       if (searchStrip && this.elementCanvases.has(searchStrip)) {
         this.removeElementCanvas(searchStrip);
       }
@@ -539,21 +624,103 @@ class LiquidGlassManager {
     el.classList.remove("has-liquid-glass");
   }
 
-  private renderLoop = () => {
+  private renderLoop = (timestamp?: number) => {
     if (!this.isRunning) return;
 
-    this.discoverElements();
+    // Monitor frame performance & device throttling
+    if (typeof timestamp === "number") {
+      this.frameCount++;
+      if (this.lastFpsSampleTime === 0) {
+        this.lastFpsSampleTime = timestamp;
+      } else {
+        const delta = timestamp - this.lastFpsSampleTime;
+        if (delta >= this.FPS_SAMPLE_INTERVAL) {
+          const fps = Math.round((this.frameCount * 1000) / delta);
+          this.frameCount = 0;
+          this.lastFpsSampleTime = timestamp;
+
+          // If low FPS detected under stress
+          if (fps < this.FPS_THRESHOLD) {
+            this.lowFpsStreak++;
+            if (this.lowFpsStreak >= this.STREAK_THRESHOLD) {
+              this.handleThrottlingTrigger(`Low FPS sustained (${fps} FPS)`);
+              return; // Stop animation loop immediately
+            }
+          } else {
+            this.lowFpsStreak = Math.max(0, this.lowFpsStreak - 1);
+          }
+        }
+      }
+    }
 
     if ((this.isDirty || this.dirtyFramesRemaining > 0) && this.renderer) {
       if (this.dirtyFramesRemaining > 0) {
         this.dirtyFramesRemaining--;
       }
       this.isDirty = false;
+      this.discoverElements();
       this.renderElements();
     }
 
-    this.rafId = requestAnimationFrame(this.renderLoop);
+    if (this.dirtyFramesRemaining > 0 || this.isDirty) {
+      this.rafId = requestAnimationFrame(this.renderLoop);
+    } else {
+      this.rafId = null;
+    }
   };
+
+  /**
+   * Automatically triggered when device throttling or low FPS is detected.
+   * Completely tears down WebGL liquid glass and falls back smoothly to standard CSS.
+   */
+  private handleThrottlingTrigger(reason: string) {
+    if (this.isThrottled) return;
+    this.isThrottled = true;
+    console.warn(
+      `LiquidGlassManager: Performance throttling detected (${reason}). Falling back to regular CSS styling.`,
+    );
+
+    // Stop WebGL loop and remove canvas overlays
+    this.stop();
+
+    // Re-attach lightweight scroll/resize listener specifically for the CSS stuck-together effect
+    window.addEventListener("scroll", this.handleScrollOrResize, {
+      passive: true,
+    });
+    window.addEventListener("resize", this.handleScrollOrResize, {
+      passive: true,
+    });
+    this.updateStuckState();
+
+    // Remove WebGL styling classes so regular CSS takes over
+    const header = document.querySelector<HTMLElement>(".app-header");
+    const searchStrip = document.querySelector<HTMLElement>(
+      ".storefront-sticky-controls",
+    );
+    if (header) {
+      header.classList.remove("has-liquid-glass");
+    }
+    if (searchStrip) {
+      searchStrip.classList.remove("has-liquid-glass");
+    }
+
+    // Set fallback CSS variable flag
+    document.documentElement.style.setProperty("--liquid-glass-throttled", "1");
+  }
+
+  public isPerformanceThrottled(): boolean {
+    return this.isThrottled;
+  }
+
+  public resetThrottling() {
+    this.isThrottled = false;
+    this.lowFpsStreak = 0;
+    this.longTaskStreak = 0;
+    this.lastFpsSampleTime = 0;
+    this.frameCount = 0;
+    document.documentElement.style.removeProperty("--liquid-glass-throttled");
+    this.start();
+  }
 
   private renderElements() {
     if (!this.renderer || this.elementCanvases.size === 0) return;
@@ -577,35 +744,26 @@ class LiquidGlassManager {
     }
 
     // Check if both elements are currently active and stuck together
-    let isStuckTogether = false;
-    let navRect: DOMRect | null = null;
-    let searchRect: DOMRect | null = null;
+    let isStuckTogether = this.updateStuckState();
+    let navRect: DOMRect | null = header
+      ? header.getBoundingClientRect()
+      : null;
+    let searchRect: DOMRect | null = searchStrip
+      ? searchStrip.getBoundingClientRect()
+      : null;
 
     if (
+      isStuckTogether &&
       header &&
       searchStrip &&
       this.elementCanvases.has(header) &&
-      this.elementCanvases.has(searchStrip)
+      this.elementCanvases.has(searchStrip) &&
+      navRect &&
+      searchRect
     ) {
-      navRect = header.getBoundingClientRect();
-      searchRect = searchStrip.getBoundingClientRect();
-      // When the search controls stick directly under the navbar (within 3px tolerance)
-      const gap = searchRect.top - navRect.bottom;
-      if (Math.abs(gap) <= 3 && navRect.height > 0 && searchRect.height > 0) {
-        isStuckTogether = true;
-      }
-    }
-
-    if (isStuckTogether && header && searchStrip && navRect && searchRect) {
-      header.classList.add("is-stuck-together");
-      searchStrip.classList.add("is-stuck-together");
-
       this.renderStuckPair(header, searchStrip, navRect, searchRect, dpr);
       return;
     }
-
-    if (header) header.classList.remove("is-stuck-together");
-    if (searchStrip) searchStrip.classList.remove("is-stuck-together");
 
     // Render independent elements when apart
     for (const [el, canvas] of this.elementCanvases) {
@@ -723,21 +881,24 @@ class LiquidGlassManager {
     searchCanvas.style.left = `${commonLeft - searchRect.left - SHADOW_PAD}px`;
     searchCanvas.style.width = `${combinedW + padW}px`;
 
-    // Vertical alignment:
-    // navCanvas: top shadow padding, flush bottom edge at header boundary (navRect.bottom)
+    // Vertical alignment with overlap:
+    // navCanvas extends down by OVERLAP px
+    const OVERLAP = 3;
+    const overlapDpr = Math.round(OVERLAP * effDpr);
     navCanvas.style.top = `-${SHADOW_PAD}px`;
-    navCanvas.style.height = `${navH + SHADOW_PAD}px`;
+    navCanvas.style.height = `${navH + SHADOW_PAD + OVERLAP}px`;
     const navSplitY = Math.round((SHADOW_PAD + navH) * effDpr);
-    if (navCanvas.width !== totalRenderW || navCanvas.height !== navSplitY) {
+    const navCanvasH = Math.round((SHADOW_PAD + navH + OVERLAP) * effDpr);
+    if (navCanvas.width !== totalRenderW || navCanvas.height !== navCanvasH) {
       navCanvas.width = totalRenderW;
-      navCanvas.height = navSplitY;
+      navCanvas.height = navCanvasH;
     }
 
-    // searchCanvas: top flush at navRect.bottom, bottom shadow padding
+    // searchCanvas extends up by OVERLAP px so the two canvases overlap seamlessly
     const searchTopInSearchStrip = Math.round(navRect.bottom - searchRect.top);
-    searchCanvas.style.top = `${searchTopInSearchStrip}px`;
-    const searchSliceH = Math.round((searchVisibleH + SHADOW_PAD) * effDpr);
-    searchCanvas.style.height = `${searchVisibleH + SHADOW_PAD}px`;
+    searchCanvas.style.top = `${searchTopInSearchStrip - OVERLAP}px`;
+    const searchSliceH = Math.round((searchVisibleH + SHADOW_PAD + OVERLAP) * effDpr);
+    searchCanvas.style.height = `${searchVisibleH + SHADOW_PAD + OVERLAP}px`;
     if (
       searchCanvas.width !== totalRenderW ||
       searchCanvas.height !== searchSliceH
@@ -779,7 +940,7 @@ class LiquidGlassManager {
     this.renderer.clear();
     this.renderer.renderGlassPanel(this.settings, combinedW, combinedH, effDpr);
 
-    // 5. Blit continuous slices to each element's canvas
+    // 5. Blit continuous overlapping slices to each element's canvas (zero seam)
     const navCtx = navCanvas.getContext("2d");
     if (navCtx) {
       navCtx.clearRect(0, 0, navCanvas.width, navCanvas.height);
@@ -788,7 +949,7 @@ class LiquidGlassManager {
         0,
         0,
         totalRenderW,
-        navSplitY,
+        navCanvasH,
         0,
         0,
         navCanvas.width,
@@ -802,7 +963,7 @@ class LiquidGlassManager {
       searchCtx.drawImage(
         this.renderer.canvas,
         0,
-        navSplitY,
+        Math.max(0, navSplitY - overlapDpr),
         totalRenderW,
         searchSliceH,
         0,
@@ -841,37 +1002,22 @@ class LiquidGlassManager {
     ctx.fillStyle = bodyBg === "rgba(0, 0, 0, 0)" ? "#faf9f6" : bodyBg;
     ctx.fillRect(0, 0, renderW, renderH);
 
-    // 2. Find candidate content containers underneath the glass (leaf elements only, no wrapper sections)
+    // 2. Find candidate content containers underneath the glass
     const candidateBlocks = document.querySelectorAll<HTMLElement>(
       ".hero-section, .value-strip, .menu-intro, .menu-tabs, .food-card, .story-banner, .store-bottom, .order-success",
     );
 
-    // Filter out nested candidate blocks to prevent duplicate drawing
-    const uniqueBlocks: HTMLElement[] = [];
+    // Render each intersecting block
     for (let i = 0; i < candidateBlocks.length; i++) {
-      const b = candidateBlocks[i];
+      const block = candidateBlocks[i];
       if (
-        ignoreElements.includes(b) ||
-        ignoreElements.some((ig) => ig.contains(b)) ||
-        b.closest(".has-liquid-glass")
+        ignoreElements.includes(block) ||
+        ignoreElements.some((ig) => ig.contains(block)) ||
+        block.closest(".has-liquid-glass")
       ) {
         continue;
       }
-      let isNested = false;
-      for (let j = 0; j < candidateBlocks.length; j++) {
-        if (i !== j && candidateBlocks[j].contains(b)) {
-          isNested = true;
-          break;
-        }
-      }
-      if (!isNested) {
-        uniqueBlocks.push(b);
-      }
-    }
 
-    // Render each intersecting block
-    for (let i = 0; i < uniqueBlocks.length; i++) {
-      const block = uniqueBlocks[i];
       const bRect = block.getBoundingClientRect();
 
       // Check if block intersects the glass viewport area

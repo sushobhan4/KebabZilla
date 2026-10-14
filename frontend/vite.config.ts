@@ -27,6 +27,34 @@ export default defineConfig(() => {
         '/api': 'http://127.0.0.1:8000',
       },
     },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (
+              id.includes('node_modules/react/') ||
+              id.includes('node_modules/react-dom/') ||
+              id.includes('node_modules/react-router/') ||
+              id.includes('node_modules/react-router-dom/')
+            ) {
+              return 'vendor-react'
+            }
+            if (
+              id.includes('node_modules/@react-oauth') ||
+              id.includes('node_modules/@googlemaps')
+            ) {
+              return 'vendor-services'
+            }
+            if (id.includes('node_modules/lucide-react')) {
+              return 'vendor-icons'
+            }
+            if (id.includes('src/vendor/liquidglass')) {
+              return 'vendor-liquidglass'
+            }
+          },
+        },
+      },
+    },
   }
 })
 

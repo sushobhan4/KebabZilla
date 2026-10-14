@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import or_, select
 
+from app.config import settings
 from app.dependencies import CurrentAccount, DbSession
 from app.integrations import razorpay
 from app.models import Account, CartItem, Order, OrderStatus, Payment, PaymentMethod, PaymentStatus, Role
@@ -15,7 +16,6 @@ async def create_order(data: OrderCreate, account: CurrentAccount, db: DbSession
     if account.role != Role.USER:
         raise HTTPException(status_code=403, detail="Customer ordering is only available to customer accounts")
     if data.payment_method == PaymentMethod.RAZORPAY:
-        from app.config import settings
         if not settings.razorpay_key_id or not settings.razorpay_key_secret:
             raise HTTPException(status_code=503, detail="Online payment is not configured. Choose cash or contact the restaurant.")
     order = assemble_order(
@@ -54,8 +54,6 @@ async def create_order(data: OrderCreate, account: CurrentAccount, db: DbSession
 
 
 def razorpay_key_id() -> str:
-    from app.config import settings
-
     return settings.razorpay_key_id or ""
 
 
@@ -143,9 +141,6 @@ async def cancel_order(order_id: str, account: CurrentAccount, db: DbSession):
 @router.post("/{order_id}/payment-session")
 async def payment_session(order_id: str, account: CurrentAccount, db: DbSession):
     """Issue a fresh Razorpay checkout for a still-payable customer order."""
-    from app.config import settings
-    from app.models import OrderStatus
-
     order = db.scalar(select(Order).where(Order.order_id == order_id, Order.customer_id == account.id))
     payment = db.get(Payment, order.order_id) if order else None
     if not order or not payment or payment.method != PaymentMethod.RAZORPAY:

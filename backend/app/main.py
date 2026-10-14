@@ -1,13 +1,15 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+import math
+from sqlalchemy import select
+
 from app.config import settings
 from app.routers import admin, auth, cart, custom_menu, delivery, menu, orders, payments, staff
 from app.schemas import PublicRestaurantOut
-from app.services import is_restaurant_open, restaurant_settings
+from app.services import calculate_delivery_distance, is_restaurant_open, restaurant_settings
 from app.dependencies import CurrentAccount, DbSession
 from app.models import Account, Role
-from sqlalchemy import select
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -101,8 +103,6 @@ def public_restaurant(db: DbSession):
 
 @app.get(f"{settings.api_prefix}/restaurant/delivery-estimate", tags=["restaurant"])
 def estimate_delivery(latitude: float, longitude: float, db: DbSession):
-    import math
-    from app.services import calculate_delivery_distance
     config = restaurant_settings(db)
     if config.latitude is None or config.longitude is None:
         raise HTTPException(status_code=503, detail="The restaurant delivery location is not configured")

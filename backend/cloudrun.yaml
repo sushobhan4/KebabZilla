@@ -1,14 +1,23 @@
-# Reference Cloud Run container settings. Provide secrets as Secret Manager-backed env vars.
+# Cloud Run Service Definition for KebabZilla API with Cloud SQL
 apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
   name: kebabzilla-api
+  annotations:
+    run.googleapis.com/ingress: all
 spec:
   template:
+    metadata:
+      annotations:
+        # Attach Cloud SQL instance (format: PROJECT_ID:REGION:INSTANCE_NAME)
+        run.googleapis.com/cloudsql-instances: PROJECT_ID:REGION:INSTANCE_NAME
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "10"
     spec:
       containerConcurrency: 80
+      timeoutSeconds: 300
       containers:
-        - image: REGION-docker.pkg.dev/PROJECT/REPOSITORY/kebabzilla-api:TAG
+        - image: gcr.io/PROJECT_ID/kebabzilla-api:latest
           ports:
             - name: http1
               containerPort: 8080
@@ -16,9 +25,47 @@ spec:
             limits:
               cpu: "1"
               memory: 512Mi
+          env:
+            - name: ENVIRONMENT
+              value: "production"
+            - name: DATABASE_URL
+              # Cloud SQL Unix Socket format:
+              value: "postgresql+psycopg://kebabzilla_user:DB_PASSWORD@/kebabzilla?host=/cloudsql/PROJECT_ID:REGION:INSTANCE_NAME"
+            - name: CORS_ORIGINS
+              # Comma-separated frontend domains (e.g. GitHub Pages or custom domain)
+              value: "https://your-username.github.io,https://kebabzilla.in"
+            - name: JWT_SECRET
+              value: "replace-with-a-random-32-plus-char-secret-key-here"
+            - name: SEED_ADMIN_EMAIL
+              value: "admin@kebabzilla.in"
+            - name: SEED_ADMIN_PASSWORD
+              value: "replace-with-secure-admin-password"
+            - name: GCS_BUCKET_NAME
+              value: "kebabzilla_cloud_storage"
+            - name: GCS_PROJECT_ID
+              value: "PROJECT_ID"
+            # Optional integrations:
+            # - name: RAZORPAY_KEY_ID
+            #   value: "rzp_live_..."
+            # - name: RAZORPAY_KEY_SECRET
+            #   value: "..."
+            # - name: GOOGLE_CLIENT_ID
+            #   value: "..."
+            # - name: GOOGLE_MAPS_API_KEY
+            #   value: "..."
+            # - name: SMTP_PASSWORD
+            #   value: "..."
           startupProbe:
             httpGet:
               path: /health
               port: 8080
             periodSeconds: 5
             failureThreshold: 12
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 15
+            failureThreshold: 3
+            timeoutSeconds: 3

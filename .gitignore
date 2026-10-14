@@ -11,4 +11,6 @@ backend/.ruff_cache/
 backend/alembic/versions/__pycache__/
 *.log
 *.db
+*.db-shm
+*.db-wal
 .DS_Store
