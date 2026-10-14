@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     smtp_port: int = 587
     smtp_username: str = "support@kebabzilla.in"
     smtp_password: str | None = None
+    smtp_email: str | None = None
     smtp_from_email: str = "support@kebabzilla.in"
     smtp_from_name: str = "KebabZilla"
     gcs_bucket_name: str = "kebabzilla_cloud_storage"
@@ -90,6 +91,11 @@ class Settings(BaseSettings):
                 raise ValueError("Production requires PostgreSQL")
             if not self.cors_origins or "*" in self.cors_origins:
                 raise ValueError("Production CORS_ORIGINS must explicitly list trusted frontend origins")
+        if self.smtp_email:
+            if not self.smtp_username or self.smtp_username == "support@kebabzilla.in":
+                self.smtp_username = self.smtp_email
+            if not self.smtp_from_email or self.smtp_from_email == "support@kebabzilla.in":
+                self.smtp_from_email = self.smtp_email
         return self
 
 
