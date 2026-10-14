@@ -3,7 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.routers import admin, auth, cart, custom_menu, delivery, menu, orders, payments, staff
-from app.services import get_next_schedule_refresh, is_restaurant_open, restaurant_settings
+from app.schemas import PublicRestaurantOut
+from app.services import is_restaurant_open, restaurant_settings
 from app.dependencies import CurrentAccount, DbSession
 from app.models import Account, Role
 from sqlalchemy import select
@@ -44,14 +45,47 @@ for route_module in (auth, menu, cart, orders, staff, delivery, admin, payments,
 
 
 
-@app.get(f"{settings.api_prefix}/restaurant", tags=["restaurant"])
+def format_public_weekly_schedule(raw_schedule: dict | None) -> dict:
+    if not isinstance(raw_schedule, dict):
+        return {}
+    all_days = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+    clean = {}
+    custom_schedules = raw_schedule.get("custom_schedules")
+    for day in all_days:
+        day_data = raw_schedule.get(day)
+        if isinstance(day_data, dict) and "open" in day_data:
+            clean[day] = {
+                "open": bool(day_data.get("open", False)),
+                "opens": str(day_data.get("opens", "10:00")),
+                "closes": str(day_data.get("closes", "22:00")),
+            }
+        elif isinstance(custom_schedules, list):
+            matching = [s for s in custom_schedules if isinstance(s, dict) and day in (s.get("days") or [])]
+            if matching:
+                clean[day] = {
+                    "open": True,
+                    "opens": str(matching[0].get("start_time", "10:00")),
+                    "closes": str(matching[0].get("end_time", "22:00")),
+                }
+            else:
+                clean[day] = {
+                    "open": False,
+                    "opens": "10:00",
+                    "closes": "22:00",
+                }
+    return clean
+
+
+@app.get(f"{settings.api_prefix}/restaurant", tags=["restaurant"], response_model=PublicRestaurantOut)
 def public_restaurant(db: DbSession):
     config = restaurant_settings(db)
-    is_open, sched_status = is_restaurant_open(config)
+    is_open, _ = is_restaurant_open(config)
+    phones = [p.strip() for p in (config.phone or "").split(",") if p.strip()]
     return {
         "restaurant_name": config.restaurant_name,
         "tagline": config.tagline,
         "phone": config.phone,
+        "phones": phones,
         "address": config.address,
         "latitude": config.latitude,
         "longitude": config.longitude,
@@ -61,13 +95,7 @@ def public_restaurant(db: DbSession):
         "delivery_fee_per_km_paise": config.delivery_fee_per_km_paise,
         "accepting_orders": is_open,
         "is_restaurant_open": is_open,
-        "schedule_status": sched_status,
-        "next_schedule_refresh": get_next_schedule_refresh(config),
-        "weekly_schedule": config.weekly_schedule or {},
-        "distance_calculation_mode": getattr(config, "distance_calculation_mode", "AUTO") or "AUTO",
-        "enforce_driver_geofence": getattr(config, "enforce_driver_geofence", False) or False,
-        "driver_geofence_meters": getattr(config, "driver_geofence_meters", 500) or 500,
-        "haversine_routing_factor": getattr(config, "haversine_routing_factor", 1.3) or 1.3,
+        "weekly_schedule": format_public_weekly_schedule(config.weekly_schedule),
     }
 
 

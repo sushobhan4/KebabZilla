@@ -121,20 +121,21 @@ class CustomerNotifier:
 class StaffAccountNotifier:
     """Sends first-login credentials and invite links through the configured Workspace mailbox."""
 
-    def send_staff_invite(self, *, name: str, email: str, role: str, invite_url: str, duration_str: str = "30 minutes") -> str:
+    def send_account_created_notice(self, *, name: str, email: str, role: str) -> str:
         if not settings.smtp_password:
             return "NOT_CONFIGURED"
         message = EmailMessage()
-        message["Subject"] = "Set up your KebabZilla account"
+        message["Subject"] = "Your KebabZilla account has been created"
         message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
         message["To"] = email
         message.set_content(
             f"Hi {name},\n\n"
             f"Your KebabZilla {role.lower()} account has been created.\n\n"
-            f"Please set up your password and access your account using the secure link below:\n"
-            f"{invite_url}\n\n"
-            f"This link will expire in {duration_str}. You can also sign in directly using Google if your email matches.\n\n"
-            "If you were not expecting this invitation, please contact your administrator."
+            f"Email: {email}\n\n"
+            f"To access your account, please visit the sign-in page and click 'Forgot password?' to set your password. You will receive an OTP code to verify your identity and choose your new password.\n\n"
+            f"You can also sign in directly using Google if your email matches.\n\n"
+            f"If you have any questions or were not expecting this email, please contact your administrator.\n\n"
+            f"Warm regards,\nThe KebabZilla Team"
         )
         try:
             with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as client:
@@ -144,6 +145,9 @@ class StaffAccountNotifier:
         except (OSError, smtplib.SMTPException):
             return "EMAIL_FAILED"
         return "EMAIL_SENT"
+
+    def send_staff_invite(self, *, name: str, email: str, role: str, invite_url: str = "", duration_str: str = "30 minutes") -> str:
+        return self.send_account_created_notice(name=name, email=email, role=role)
 
     def send_temporary_password(self, *, name: str, email: str, role: str, temporary_password: str) -> str:
         if not settings.smtp_password:
@@ -200,6 +204,31 @@ class StaffAccountNotifier:
             "This code expires in 10 minutes and can be used only once. "
             "If you did not request a password reset, you can safely ignore this email.\n\n"
             "KebabZilla"
+        )
+        try:
+            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as client:
+                client.starttls()
+                client.login(settings.smtp_username, settings.smtp_password)
+                client.send_message(message)
+        except (OSError, smtplib.SMTPException):
+            return False
+        return True
+
+    def send_2fa_code(self, *, name: str, email: str, code: str) -> bool:
+        if not settings.smtp_password:
+            # In local development without SMTP, print code to server logs for convenience
+            print(f"[SECURITY 2FA CODE] Staff 2-Step verification code for {email}: {code}")
+            return False
+        message = EmailMessage()
+        message["Subject"] = "Your KebabZilla 2-Step Verification Code"
+        message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
+        message["To"] = email
+        message.set_content(
+            f"Hi {name},\n\n"
+            f"Your KebabZilla 2-Step Verification Code is: {code}\n\n"
+            "This code is required to access the staff workspace and expires in 10 minutes. "
+            "Do not share this code with anyone.\n\n"
+            "KebabZilla Security"
         )
         try:
             with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as client:

@@ -4,7 +4,7 @@ import time
 from collections import defaultdict
 from typing import Annotated
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -12,8 +12,19 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.dependencies import CurrentAccount, DbSession, PasswordChangeAccount, bearer_scheme
 from app.integrations import staff_account_notifier
-from app.models import Account, AccountAddress, PasswordResetCode, Role, UserSession, utcnow
-from app.schemas import AccountCreate, AccountOut, AccountProfileUpdate, GoogleLoginRequest, LoginRequest, PasswordResetConfirm, PasswordResetRequest, PasswordUpdate, TokenOut
+from app.models import Account, AccountAddress, PasswordResetCode, Role, TwoFactorChallenge, UserSession, utcnow
+from app.schemas import (
+    AccountCreate,
+    AccountOut,
+    AccountProfileUpdate,
+    GoogleLoginRequest,
+    LoginRequest,
+    PasswordResetConfirm,
+    PasswordResetRequest,
+    PasswordUpdate,
+    TokenOut,
+    TwoFactorVerifyRequest,
+)
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 from app.security import (
@@ -23,12 +34,17 @@ from app.security import (
     compute_device_fingerprint,
     delete_csrf_cookie,
     delete_session_cookie,
+    generate_2fa_code,
+    generate_2fa_temp_token,
     generate_csrf_token,
     generate_session_token,
+    hash_2fa_code,
+    hash_2fa_temp_token,
     hash_password,
     hash_session_token,
     set_csrf_cookie,
     set_session_cookie,
+    verify_2fa_code,
     verify_password,
 )
 
@@ -83,7 +99,6 @@ def register(data: AccountCreate, request: Request, response: Response, db: DbSe
     )
     account.addresses = [
         AccountAddress(address_id="home", label="Home", is_default=True),
-        AccountAddress(address_id="work", label="Work"),
     ]
     db.add(account)
     db.commit()
@@ -116,19 +131,85 @@ def clear_failed_logins(key: str) -> None:
     _failed_logins.pop(key, None)
 
 
+def initiate_2fa_challenge(account: Account, db: Session) -> TokenOut:
+    code = generate_2fa_code()
+    code_hash = hash_2fa_code(code)
+    temp_token = generate_2fa_temp_token()
+    token_hash = hash_2fa_temp_token(temp_token)
+    expires_at = utcnow() + timedelta(minutes=10)
+
+    db.query(TwoFactorChallenge).filter(TwoFactorChallenge.account_id == account.id).delete(synchronize_session=False)
+    challenge = TwoFactorChallenge(
+        account_id=account.id,
+        token_hash=token_hash,
+        code_hash=code_hash,
+        expires_at=expires_at,
+        attempts=0,
+    )
+    db.add(challenge)
+    db.commit()
+
+    staff_account_notifier.send_2fa_code(name=account.name, email=account.email, code=code)
+
+    return TokenOut(
+        requires_2fa=True,
+        temp_token=temp_token,
+        email=account.email,
+        role=account.role,
+    )
+
+
 @router.post("/login", response_model=TokenOut)
 def login(data: LoginRequest, request: Request, response: Response, db: DbSession):
     email = data.email.lower().strip()
     ip_address = request.client.host if request.client else "unknown"
-    user_agent = request.headers.get("user-agent", "")
-    device_fingerprint = compute_device_fingerprint(user_agent)
-    rate_limit_key = f"{ip_address}:{device_fingerprint}:{email}"
+    rate_limit_key = f"{ip_address}:{email}"
     check_login_rate_limit(rate_limit_key)
     account = db.scalar(select(Account).where(Account.email == email))
     if not account or not verify_password(data.password, account.password_hash):
         record_failed_login(rate_limit_key)
         raise HTTPException(status_code=401, detail="Email or password is incorrect")
     clear_failed_logins(rate_limit_key)
+
+    if account.role in (Role.ADMIN, Role.EMPLOYEE, Role.DELIVERY):
+        return initiate_2fa_challenge(account, db)
+
+    return issue_session(account, request, response, db)
+
+
+@router.post("/verify-2fa", response_model=TokenOut)
+def verify_2fa(
+    data: TwoFactorVerifyRequest,
+    request: Request,
+    response: Response,
+    db: DbSession,
+):
+    token_hash = hash_2fa_temp_token(data.temp_token)
+    challenge = db.scalar(select(TwoFactorChallenge).where(TwoFactorChallenge.token_hash == token_hash))
+    if not challenge:
+        raise HTTPException(status_code=400, detail="Invalid or expired 2-step verification session")
+    expires_at = challenge.expires_at if challenge.expires_at.tzinfo else challenge.expires_at.replace(tzinfo=utcnow().tzinfo)
+    if expires_at < utcnow():
+        db.delete(challenge)
+        db.commit()
+        raise HTTPException(status_code=400, detail="Verification code has expired. Please log in again.")
+    if challenge.attempts >= 5:
+        db.delete(challenge)
+        db.commit()
+        raise HTTPException(status_code=429, detail="Too many invalid attempts. Please log in again.")
+
+    if not verify_2fa_code(data.code.strip(), challenge.code_hash):
+        challenge.attempts += 1
+        db.commit()
+        raise HTTPException(status_code=400, detail="Invalid verification code")
+
+    account = db.get(Account, challenge.account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    db.delete(challenge)
+    db.commit()
+
     return issue_session(account, request, response, db)
 
 
@@ -183,6 +264,9 @@ def google_login(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid Google credential token: {exc}") from exc
 
+    if not id_info.get("email_verified"):
+        raise HTTPException(status_code=400, detail="Google email address is not verified")
+
     email = id_info.get("email", "").lower().strip()
     if not email:
         raise HTTPException(status_code=400, detail="Google account has no email address")
@@ -199,7 +283,6 @@ def google_login(
         )
         account.addresses = [
             AccountAddress(address_id="home", label="Home", is_default=True),
-            AccountAddress(address_id="work", label="Work"),
         ]
         db.add(account)
         db.commit()
@@ -208,11 +291,30 @@ def google_login(
         account.must_change_password = False
         db.commit()
 
+    if account.role in (Role.ADMIN, Role.EMPLOYEE, Role.DELIVERY):
+        return initiate_2fa_challenge(account, db)
+
     return issue_session(account, request, response, db)
 
 
+_forgot_password_attempts: dict[str, list[float]] = defaultdict(list)
+
+
 @router.post("/forgot-password")
-def request_password_reset(data: PasswordResetRequest, db: DbSession):
+def request_password_reset(
+    data: PasswordResetRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: DbSession,
+):
+    ip_address = request.client.host if request.client else "unknown"
+    now = time.time()
+    recent_attempts = [t for t in _forgot_password_attempts[ip_address] if now - t < 300]
+    _forgot_password_attempts[ip_address] = recent_attempts
+    if len(recent_attempts) >= 5:
+        raise HTTPException(status_code=429, detail="Too many password reset requests. Please wait 5 minutes.")
+    _forgot_password_attempts[ip_address].append(now)
+
     email = data.email.lower().strip()
     account = db.scalar(select(Account).where(Account.email == email))
     if account:
@@ -233,14 +335,13 @@ def request_password_reset(data: PasswordResetRequest, db: DbSession):
                 expires_at=utcnow() + timedelta(minutes=10),
             )
             db.add(reset_code)
-            db.flush()
-            try:
-                sent = staff_account_notifier.send_password_reset_otp(name=account.name, email=account.email, otp=otp)
-                if not sent:
-                    db.delete(reset_code)
-            except Exception:
-                db.delete(reset_code)
             db.commit()
+            background_tasks.add_task(
+                staff_account_notifier.send_password_reset_otp,
+                name=account.name,
+                email=account.email,
+                otp=otp,
+            )
     return {"message": "If an active account uses that email, a password reset code has been sent."}
 
 
@@ -309,9 +410,8 @@ def update_profile(data: AccountProfileUpdate, account: CurrentAccount, db: DbSe
         ids = [item["id"] for item in addresses]
         if len(ids) != len(set(ids)):
             raise HTTPException(status_code=422, detail="Each saved address needs a unique id")
-        for address_id, label in (("home", "Home"), ("work", "Work")):
-            if address_id not in ids:
-                addresses.append({"id": address_id, "label": label, "house_number": "", "road": "", "area": "", "city": "", "pincode": "", "landmark": "", "latitude": None, "longitude": None, "is_default": False})
+        if "home" not in ids:
+            addresses.append({"id": "home", "label": "Home", "house_number": "", "road": "", "area": "", "city": "", "pincode": "", "landmark": "", "latitude": None, "longitude": None, "is_default": False})
         defaults = [item for item in addresses if item.get("is_default")]
         if len(defaults) > 1:
             raise HTTPException(status_code=422, detail="Choose only one default delivery address")
@@ -370,7 +470,16 @@ def logout(
     db: DbSession,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)] = None,
 ):
-    token = request.cookies.get(SESSION_COOKIE_NAME)
+    cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
+    if cookie_token:
+        csrf_cookie = request.cookies.get(CSRF_COOKIE_NAME)
+        csrf_header = request.headers.get("x-csrf-token")
+        if not csrf_cookie or not csrf_header or not secrets.compare_digest(csrf_header, csrf_cookie):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="CSRF token missing or invalid",
+            )
+    token = cookie_token
     if not token and credentials and credentials.scheme.casefold() == "bearer":
         token = credentials.credentials
     if token:

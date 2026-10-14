@@ -4,11 +4,10 @@ import { Link } from 'react-router-dom'
 import { importLibrary, setOptions } from '@googlemaps/js-api-loader'
 import { api, formatSavedAddress, type Account, type SavedAddress } from '../api'
 import { useAuth } from '../state'
-import { Button, Loading, Notice, PageTitle } from '../components'
+import { Button, Loading, Notice, PageTitle, PhoneInput, formatPhoneWithPrefix, isValidIndianMobile } from '../components'
 
 const defaults = (): SavedAddress[] => [
   { id: 'home', label: 'Home', house_number: '', road: '', area: '', city: '', pincode: '', landmark: '', latitude: null, longitude: null, is_default: true },
-  { id: 'work', label: 'Work', house_number: '', road: '', area: '', city: '', pincode: '', landmark: '', latitude: null, longitude: null, is_default: false },
 ]
 function homeForProfile(role: string) {
   if (role === 'ADMIN') return '/admin'
@@ -120,7 +119,7 @@ function AddressMap({ address, onSave, onClose }: { address: SavedAddress; onSav
 export default function Profile() {
   const { account, loading, updateAccount } = useAuth()
   const isCustomer = account?.role === 'USER'
-  const [form, setForm] = useState({ name: account?.name || '', email: account?.email || '', phone: account?.phone || '' })
+  const [form, setForm] = useState({ name: account?.name || '', email: account?.email || '', phone: formatPhoneWithPrefix(account?.phone) })
   const [addresses, setAddresses] = useState<SavedAddress[]>(account?.addresses?.length ? account.addresses : defaults())
   const [activeAddress, setActiveAddress] = useState('home')
   const [mapAddress, setMapAddress] = useState<string | null>(null)
@@ -129,14 +128,16 @@ export default function Profile() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [addressToDelete, setAddressToDelete] = useState<SavedAddress | null>(null)
   const savedProfile = useRef('')
 
   useEffect(() => {
     if (loading || !account) return
-    setForm({ name: account.name, email: account.email, phone: account.phone || '' })
+    const formattedPhone = formatPhoneWithPrefix(account.phone)
+    setForm({ name: account.name, email: account.email, phone: formattedPhone })
     const saved = account.addresses?.length ? account.addresses : defaults()
     setAddresses(saved.some((item) => item.is_default) ? saved : saved.map((item, index) => ({ ...item, is_default: index === 0 })))
-    savedProfile.current = JSON.stringify({ form: { name: account.name, email: account.email, phone: account.phone || '' }, addresses: saved.some((item) => item.is_default) ? saved : saved.map((item, index) => ({ ...item, is_default: index === 0 })) })
+    savedProfile.current = JSON.stringify({ form: { name: account.name, email: account.email, phone: formattedPhone }, addresses: saved.some((item) => item.is_default) ? saved : saved.map((item, index) => ({ ...item, is_default: index === 0 })) })
     if (!saved.some((item) => item.id === activeAddress)) setActiveAddress(saved[0]?.id || 'home')
   }, [loading, account])
 
@@ -145,6 +146,10 @@ export default function Profile() {
 
   async function saveProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setError(''); setNotice('')
+    if (!isValidIndianMobile(form.phone)) {
+      setError('Please enter a valid 10-digit mobile number.')
+      return
+    }
     const savedAddressId = activeAddress
     const incomplete = isCustomer ? addresses.find((item) => (item.latitude != null || item.longitude != null) && (item.latitude == null || item.longitude == null || !item.house_number?.trim() || !item.road?.trim() || !item.area?.trim() || !item.city?.trim() || !(item.pincode || item.postal_code)?.trim())) : undefined
     if (incomplete) {
@@ -156,8 +161,9 @@ export default function Profile() {
     const normalized = isCustomer ? addresses.map(({ postal_code, ...item }) => ({ ...item, pincode: item.pincode || postal_code || '' })) : undefined
     try {
       const updated = await api<Account>('/auth/profile', { method: 'PATCH', body: JSON.stringify({ ...form, phone: form.phone || null, ...(normalized ? { addresses: normalized } : {}) }) })
-      updateAccount(updated); setForm({ name: updated.name, email: updated.email, phone: updated.phone || '' }); if (isCustomer) setAddresses(updated.addresses)
-      savedProfile.current = JSON.stringify({ form: { name: updated.name, email: updated.email, phone: updated.phone || '' }, addresses: isCustomer ? updated.addresses : addresses })
+      const updatedPhone = formatPhoneWithPrefix(updated.phone)
+      updateAccount(updated); setForm({ name: updated.name, email: updated.email, phone: updatedPhone }); if (isCustomer) setAddresses(updated.addresses)
+      savedProfile.current = JSON.stringify({ form: { name: updated.name, email: updated.email, phone: updatedPhone }, addresses: isCustomer ? updated.addresses : addresses })
       if (updated.addresses.some((item) => item.id === savedAddressId)) setActiveAddress(savedAddressId)
       setNotice(isCustomer ? 'Profile and saved addresses updated.' : 'Profile updated.')
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not save your profile.') }
@@ -186,6 +192,18 @@ export default function Profile() {
     setAddresses((items) => [...items, { id, label: 'New address', house_number: '', road: '', area: '', city: '', pincode: '', landmark: '', latitude: null, longitude: null, is_default: false }]); setActiveAddress(id)
   }
 
+  function confirmDeleteAddress(addressId: string) {
+    let remaining = addresses.filter((item) => item.id !== addressId)
+    if (!remaining.some((item) => item.is_default) && remaining.length) {
+      remaining = remaining.map((item, index) => ({ ...item, is_default: index === 0 }))
+    }
+    setAddresses(remaining)
+    if (activeAddress === addressId) {
+      setActiveAddress(remaining[0]?.id || 'home')
+    }
+    setAddressToDelete(null)
+  }
+
   if (loading) return <main className="customer-page profile-page"><Loading label="Loading your profile…" /></main>
   return <main className="customer-page profile-page">
     <PageTitle eyebrow={`${account?.role || 'YOUR'} KEBABZILLA ACCOUNT`} title="Edit profile" description="Update your personal details and password." action={<Link className="button button-secondary" to={account && account.role !== 'USER' ? homeForProfile(account.role) : '/'}><ArrowLeft size={15} /> Back</Link>} />
@@ -196,12 +214,50 @@ export default function Profile() {
       <div className="profile-form-grid">
         <label className="field-label"><span>Name <sup className="field-required">*</sup></span><input required minLength={2} maxLength={120} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
         <label className="field-label"><span>Email address <sup className="field-required">*</sup></span><input required type="email" maxLength={255} value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} /></label>
-        <label className="field-label"><span>Mobile number <sup className="field-required">*</sup></span><input required type="tel" maxLength={32} value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} /></label>
+        <label className="field-label"><span>Mobile number <sup className="field-required">*</sup></span><PhoneInput required value={form.phone} onChange={(val) => setForm({ ...form, phone: val })} /></label>
       </div>
-      {isCustomer && <><div className="profile-card-heading profile-address-heading"><span><h2>Saved addresses</h2><small>Select a tab to edit that address. Home and Work are included by default.</small></span><Button type="button" variant="secondary" onClick={addAddress}><Plus size={15} /> Add address</Button></div>
-      <div className="address-tabs" role="tablist" aria-label="Saved addresses">{addresses.map((item) => <button type="button" role="tab" aria-selected={selectedAddress?.id === item.id} className={`address-tab ${selectedAddress?.id === item.id ? 'active' : ''}`} key={item.id} onClick={() => setActiveAddress(item.id)}>{item.label}{item.is_default && <Star size={12} fill="currentColor" />}</button>)}</div>
+      {isCustomer && <><div className="profile-card-heading profile-address-heading"><span><h2>Saved addresses</h2><small>Select a tab to edit that address. Home is included by default.</small></span></div>
+      <div className="address-tabs" role="tablist" aria-label="Saved addresses">
+        {addresses.map((item) => {
+          const isHome = item.id === 'home' || item.label.trim().toLowerCase() === 'home'
+          return (
+            <div
+              key={item.id}
+              role="tab"
+              aria-selected={selectedAddress?.id === item.id}
+              className={`address-tab ${selectedAddress?.id === item.id ? 'active' : ''}`}
+              onClick={() => setActiveAddress(item.id)}
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  setActiveAddress(item.id)
+                }
+              }}
+            >
+              <span>{item.label}</span>
+              {item.is_default && <Star size={12} fill="currentColor" />}
+              {!isHome && (
+                <button
+                  type="button"
+                  className="address-tab-delete-btn"
+                  aria-label={`Delete ${item.label}`}
+                  title={`Delete ${item.label}`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setAddressToDelete(item)
+                  }}
+                >
+                  <X size={12} strokeWidth={2.4} />
+                </button>
+              )}
+            </div>
+          )
+        })}
+        <button type="button" className="address-add-button" onClick={addAddress} title="Add address" aria-label="Add address"><Plus size={16} /></button>
+      </div>
       {selectedAddress && <article className="saved-address-card" key={selectedAddress.id}>
-        <div className="saved-address-title"><label className="field-label"><span>Address name <sup className="field-required">*</sup></span><input required maxLength={40} value={selectedAddress.label} onChange={(event) => editAddress(selectedAddress.id, { label: event.target.value })} /></label><div className="address-card-actions">{!selectedAddress.is_default && <button className="text-button address-default-button" type="button" onClick={() => setDefaultAddress(selectedAddress.id)}><Star size={14} /> Set as default</button>}{selectedAddress.id !== 'home' && selectedAddress.id !== 'work' && <button className="icon-button danger-icon" type="button" aria-label="Delete address" title="Delete address" onClick={() => { let remaining = addresses.filter((item) => item.id !== selectedAddress.id); if (!remaining.some((item) => item.is_default) && remaining.length) remaining = remaining.map((item, index) => ({ ...item, is_default: index === 0 })); setAddresses(remaining); setActiveAddress(remaining[0]?.id || 'home') }}><Trash2 size={16} /></button>}</div></div>
+        <div className="saved-address-title"><label className="field-label"><span>Address name <sup className="field-required">*</sup></span><input required maxLength={40} value={selectedAddress.label} onChange={(event) => editAddress(selectedAddress.id, { label: event.target.value })} /></label><div className="address-card-actions">{!selectedAddress.is_default && <button className="text-button address-default-button" type="button" onClick={() => setDefaultAddress(selectedAddress.id)}><Star size={14} /> Set as default</button>}{selectedAddress.id !== 'home' && selectedAddress.label.trim().toLowerCase() !== 'home' && <button className="icon-button danger-icon" type="button" aria-label="Delete address" title="Delete address" onClick={() => setAddressToDelete(selectedAddress)}><Trash2 size={16} /></button>}</div></div>
         {selectedAddress.latitude != null && selectedAddress.longitude != null ? <>
         <div className="saved-address-location"><div><span className="saved-address-location-label">Saved location</span><strong>{formatSavedAddress(selectedAddress) || 'Pinned location'}</strong></div><div className="address-location-actions"><Button type="button" variant="secondary" onClick={() => setEditingAddress(editingAddress === selectedAddress.id ? null : selectedAddress.id)}>{editingAddress === selectedAddress.id ? 'Done' : 'Edit'}</Button>{editingAddress === selectedAddress.id && <Button type="button" variant="secondary" onClick={() => setMapAddress(selectedAddress.id)}><MapPin size={15} /> Edit pin</Button>}</div></div>
         <div className={`address-edit-panel ${editingAddress === selectedAddress.id ? 'address-edit-panel-open' : ''}`} aria-hidden={editingAddress !== selectedAddress.id} inert={editingAddress !== selectedAddress.id}>
@@ -232,5 +288,58 @@ export default function Profile() {
       <div className="profile-save-row"><Button type="submit" variant="secondary" disabled={busy}><Check size={15} /> Update password</Button></div>
     </form>
     {isCustomer && mapAddress && addresses.find((item) => item.id === mapAddress) && <AddressMap address={addresses.find((item) => item.id === mapAddress)!} onClose={() => setMapAddress(null)} onSave={(latitude, longitude, parts) => { editAddress(mapAddress, { ...parts, latitude, longitude }); setEditingAddress(mapAddress) }} />}
+    {addressToDelete && (
+      <div
+        className="modal-backdrop"
+        onMouseDown={(e) => {
+          if (e.target === e.currentTarget) setAddressToDelete(null)
+        }}
+      >
+        <section className="modal-card address-delete-modal" role="dialog" aria-modal="true" aria-labelledby="delete-addr-title">
+          <div className="modal-heading">
+            <div>
+              <span className="eyebrow" style={{ color: '#b4483a' }}>WARNING · DELETE ADDRESS</span>
+              <h2 id="delete-addr-title">Delete {addressToDelete.label}?</h2>
+            </div>
+            <button
+              className="icon-button"
+              type="button"
+              onClick={() => setAddressToDelete(null)}
+              aria-label="Close"
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <div className="address-delete-modal-body">
+            <p>
+              Are you sure you want to delete <strong>{addressToDelete.label}</strong>? This action cannot be undone.
+              {formatSavedAddress(addressToDelete) && (
+                <span className="address-delete-preview" style={{ display: 'block', marginTop: '6px' }}>
+                  <small style={{ color: 'var(--muted)' }}>
+                    {formatSavedAddress(addressToDelete)}
+                  </small>
+                </span>
+              )}
+            </p>
+            <div className="address-delete-modal-actions">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setAddressToDelete(null)}
+              >
+                Cancel
+              </Button>
+              <button
+                type="button"
+                className="button button-danger"
+                onClick={() => confirmDeleteAddress(addressToDelete.id)}
+              >
+                <Trash2 size={15} /> Delete address
+              </button>
+            </div>
+          </div>
+        </section>
+      </div>
+    )}
   </main>
 }

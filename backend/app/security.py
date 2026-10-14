@@ -134,3 +134,56 @@ def decode_access_token(token: str) -> int:
         raise jwt.InvalidTokenError("Wrong token type")
     return int(payload["sub"])
 
+
+import phonenumbers
+import re
+
+def normalize_phone_e164(phone: str | None, default_region: str = "IN") -> str | None:
+    if not phone:
+        return None
+    phone_clean = phone.strip()
+    if not phone_clean or phone_clean == "+91":
+        return None
+    try:
+        parsed = phonenumbers.parse(phone_clean, default_region)
+        if phonenumbers.is_valid_number(parsed):
+            nat = str(parsed.national_number)
+            if len(nat) == 10:
+                return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
+    except Exception:
+        pass
+    # Strict 10-digit extraction
+    digits = re.sub(r"\D", "", phone_clean)
+    if digits.startswith("91") and len(digits) == 12:
+        digits = digits[2:]
+    elif digits.startswith("0") and len(digits) == 11:
+        digits = digits[1:]
+    if len(digits) == 10:
+        return f"+91{digits}"
+    raise ValueError("Mobile number must be a valid 10-digit number")
+
+
+def generate_2fa_code() -> str:
+    """Generate a secure 6-digit numeric verification code."""
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+def hash_2fa_code(code: str) -> str:
+    """Hash the 2FA code with HMAC-SHA256 using the JWT secret."""
+    import hmac
+    return hmac.new(settings.jwt_secret.encode(), code.encode(), hashlib.sha256).hexdigest()
+
+
+def verify_2fa_code(code: str, hashed: str) -> bool:
+    """Constant-time comparison for 2FA verification."""
+    expected = hash_2fa_code(code)
+    return secrets.compare_digest(expected, hashed)
+
+
+def generate_2fa_temp_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def hash_2fa_temp_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { forwardRef, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { ArrowLeft, ArrowRight, Calendar, Check, ChevronDown, CircleAlert, Clock, ImageOff, LoaderCircle, Minus, Plus, Search, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
@@ -563,3 +563,176 @@ export function MenuImageCarousel({ images, alt, className = '' }: { images: str
 }
 
 export function HeroArrow() { return <ArrowRight size={17} /> }
+
+export function formatPhoneWithPrefix(value: string | null | undefined): string {
+  if (!value) return '+91'
+  const trimmed = value.trim()
+  if (!trimmed || trimmed === '+91') return '+91'
+  let digits = trimmed.replace(/^\+91/, '').replace(/\D/g, '')
+  if (digits.length > 10) {
+    if (digits.startsWith('91') && digits.length === 12) {
+      digits = digits.slice(2, 12)
+    } else if (digits.startsWith('0') && digits.length === 11) {
+      digits = digits.slice(1, 11)
+    } else {
+      digits = digits.slice(0, 10)
+    }
+  }
+  return `+91${digits}`
+}
+
+export function extractPhoneDigits(value: string | null | undefined): string {
+  if (!value) return ''
+  return value.replace(/^\+91/, '').replace(/\D/g, '').slice(0, 10)
+}
+
+export function isValidIndianMobile(value: string | null | undefined): boolean {
+  return extractPhoneDigits(value).length === 10
+}
+
+export interface PhoneInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'type'> {
+  value: string
+  onChange: (value: string) => void
+}
+
+export const PhoneInput = forwardRef<HTMLInputElement, PhoneInputProps>(function PhoneInput(
+  { value, onChange, className = '', required, onKeyDown, onClick, onSelect, onFocus, onPaste, ...props },
+  forwardedRef,
+) {
+  const innerRef = useRef<HTMLInputElement>(null)
+  const inputRef = (forwardedRef as React.RefObject<HTMLInputElement>) || innerRef
+
+  const displayVal = formatPhoneWithPrefix(value)
+
+  const ensureCaretPosition = () => {
+    const input = inputRef.current
+    if (!input) return
+    if (input.selectionStart !== null && input.selectionStart < 3) {
+      input.setSelectionRange(3, Math.max(3, input.selectionEnd || 3))
+    }
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    const input = e.currentTarget
+    const start = input.selectionStart ?? 0
+    const end = input.selectionEnd ?? 0
+
+    if (e.key === 'Backspace') {
+      if (start <= 3 && end <= 3) {
+        e.preventDefault()
+        return
+      }
+      if (start < 3 && end > 3) {
+        e.preventDefault()
+        const remainingDigits = displayVal.slice(end)
+        onChange(`+91${remainingDigits}`)
+        requestAnimationFrame(() => {
+          input.setSelectionRange(3, 3)
+        })
+        return
+      }
+    }
+
+    if (e.key === 'Delete') {
+      if (start < 3 && end <= 3) {
+        e.preventDefault()
+        return
+      }
+      if (start < 3 && end > 3) {
+        e.preventDefault()
+        const remainingDigits = displayVal.slice(end)
+        onChange(`+91${remainingDigits}`)
+        requestAnimationFrame(() => {
+          input.setSelectionRange(3, 3)
+        })
+        return
+      }
+    }
+
+    if ((e.key === 'ArrowLeft' || e.key === 'Home') && !e.shiftKey) {
+      if (start <= 3) {
+        e.preventDefault()
+        input.setSelectionRange(3, 3)
+        return
+      }
+    }
+
+    // Single character typing
+    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      if (!/\d/.test(e.key)) {
+        e.preventDefault()
+        return
+      }
+      const digits = displayVal.slice(3)
+      if (digits.length >= 10 && start === end) {
+        e.preventDefault()
+        return
+      }
+    }
+
+    onKeyDown?.(e)
+  }
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    e.preventDefault()
+    const input = e.currentTarget
+    const start = input.selectionStart ?? 3
+    const end = input.selectionEnd ?? 3
+    const pasted = e.clipboardData.getData('text')
+    let pastedDigits = pasted.replace(/\D/g, '')
+    if (pastedDigits.startsWith('91') && pastedDigits.length === 12) {
+      pastedDigits = pastedDigits.slice(2)
+    } else if (pastedDigits.startsWith('0') && pastedDigits.length === 11) {
+      pastedDigits = pastedDigits.slice(1)
+    }
+
+    const currentDigits = displayVal.slice(3)
+    const relStart = Math.max(0, start - 3)
+    const relEnd = Math.max(0, end - 3)
+    const newDigits = (currentDigits.slice(0, relStart) + pastedDigits + currentDigits.slice(relEnd)).slice(0, 10)
+    onChange(`+91${newDigits}`)
+    const newPos = Math.min(13, 3 + relStart + pastedDigits.length)
+    requestAnimationFrame(() => {
+      input.setSelectionRange(newPos, newPos)
+    })
+    onPaste?.(e)
+  }
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value
+    const next = formatPhoneWithPrefix(raw)
+    onChange(next)
+  }
+
+  return (
+    <input
+      {...props}
+      ref={inputRef}
+      type="tel"
+      autoComplete="tel"
+      required={required}
+      maxLength={13}
+      minLength={required ? 13 : undefined}
+      pattern={required ? "[+]91[0-9]{10}" : "([+]91[0-9]{10})|([+]91)?"}
+      title="Mobile number must be a valid 10-digit number starting with +91"
+      className={className}
+      value={displayVal}
+      onChange={handleChange}
+      onKeyDown={handleKeyDown}
+      onPaste={handlePaste}
+      onFocus={(e) => {
+        ensureCaretPosition()
+        onFocus?.(e)
+      }}
+      onClick={(e) => {
+        ensureCaretPosition()
+        onClick?.(e)
+      }}
+      onSelect={(e) => {
+        ensureCaretPosition()
+        onSelect?.(e)
+      }}
+    />
+  )
+})
+

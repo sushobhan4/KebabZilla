@@ -178,7 +178,7 @@ def delete_category(category_id: int, db: DbSession):
 @router.get("", response_model=list[MenuItemOut])
 def list_menu(db: DbSession):
     now = datetime.now(timezone.utc)
-    query = select(MenuItem).where(MenuItem.is_available.is_(True)).order_by(MenuItem.category_id, MenuItem.name)
+    query = select(MenuItem).where(MenuItem.is_available.is_(True), MenuItem.is_customizable.is_(False)).order_by(MenuItem.category_id, MenuItem.name)
     items = db.scalars(query).all()
     counts = dict(db.execute(
         select(OrderItem.menu_item_id, func.sum(OrderItem.quantity))
@@ -209,7 +209,7 @@ def list_menu(db: DbSession):
 
 @router.get("/manage", response_model=list[MenuItemOut], dependencies=[Depends(require_roles(Role.ADMIN))])
 def list_all_menu(db: DbSession):
-    return db.scalars(select(MenuItem).order_by(MenuItem.category_id, MenuItem.name)).all()
+    return db.scalars(select(MenuItem).where(MenuItem.is_customizable.is_(False)).order_by(MenuItem.category_id, MenuItem.name)).all()
 
 
 @router.post("", response_model=MenuItemOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_roles(Role.ADMIN))])

@@ -92,11 +92,10 @@ def resolve_categories(
 
 
 def get_next_menu_id(db: Session) -> int:
-    """Return the next unique ID in the unified menu sequence across regular and custom items."""
-    from app.models import MenuItem, CustomMenuItem
-    max_menu = db.scalar(select(func.coalesce(func.max(MenuItem.id), 0))) or 0
-    max_custom = db.scalar(select(func.coalesce(func.max(CustomMenuItem.id), 0))) or 0
-    return max(max_menu, max_custom) + 1
+    """Return the next unique ID in the unified menu sequence."""
+    from app.models import MenuItem
+    max_id = db.scalar(select(func.coalesce(func.max(MenuItem.id), 0))) or 0
+    return max_id + 1
 
 
 def restaurant_settings(db: Session) -> RestaurantSettings:
@@ -230,14 +229,12 @@ def assemble_order(
     for line in lines:
         mid = line.menu_item_id
         cid = getattr(line, "custom_menu_item_id", None)
-        is_custom = cid in custom_by_id or (mid not in std_by_id and mid in custom_by_id)
-        actual_cid = cid if cid in custom_by_id else (mid if is_custom else None)
-        actual_mid = mid if mid in std_by_id else None
+        item_id = mid or cid
 
         var_name = getattr(line, "variation_name", None)
-        if not var_name and not is_custom and actual_mid and getattr(line, "customizations", None):
+        if not var_name and item_id and getattr(line, "customizations", None) and item_id in std_by_id:
             for c in line.customizations:
-                if any(v.get("name", "").lower() == c.get("name", "").lower() for v in (std_by_id[actual_mid].variations or [])):
+                if any(v.get("name", "").lower() == c.get("name", "").lower() for v in (std_by_id[item_id].variations or [])):
                     var_name = c.get("name")
                     break
 
@@ -245,8 +242,7 @@ def assemble_order(
 
         order_items.append(
             OrderItem(
-                menu_item_id=actual_mid,
-                custom_menu_item_id=actual_cid,
+                menu_item_id=item_id,
                 variation_name=var_name,
                 quantity=line.quantity,
                 unit_price_paise=unit_price,
@@ -277,11 +273,19 @@ def assemble_order(
 
 
 def _next_order_id(db: Session, prefix: str) -> str:
-    latest = db.scalar(select(func.max(Order.order_id)).where(Order.order_id.like(f"{prefix}%")))
-    sequence = int(latest[-3:]) + 1 if latest and latest[-3:].isdigit() else 1
-    if sequence > 999:
-        raise HTTPException(status_code=503, detail="Daily order number limit reached")
-    return f"{prefix}{sequence:03d}"
+    orders = db.scalars(select(Order.order_id).where(Order.order_id.like(f"{prefix}%"))).all()
+    max_seq = 0
+    prefix_len = len(prefix)
+    for oid in orders:
+        suffix = oid[prefix_len:]
+        if suffix.isdigit():
+            val = int(suffix)
+            if val > max_seq:
+                max_seq = val
+    next_seq = max_seq + 1
+    # Initially 3 digits (e.g. 001..999). Expands dynamically to 4+ digits upon overflow
+    digits = max(3, len(str(next_seq)))
+    return f"{prefix}{next_seq:0{digits}d}"
 
 
 def _effective_price(item: MenuItem) -> int:

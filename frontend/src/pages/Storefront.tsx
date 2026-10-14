@@ -26,7 +26,13 @@ export default function Storefront() {
   const [category, setCategory] = useState('All')
   const [menuSearch, setMenuSearch] = useState('')
   const [menuSort, setMenuSort] = useState<'popular_desc' | 'popular_asc' | 'price_asc' | 'price_desc'>('popular_desc')
-  const [cart, setCart] = useState<CartLine[]>([])
+  const [cart, setCart] = useState<CartLine[]>(() => {
+    try {
+      const saved = localStorage.getItem('kz_active_cart')
+      if (saved) return JSON.parse(saved) as CartLine[]
+    } catch {}
+    return []
+  })
   const [activeDetailItem, setActiveDetailItem] = useState<MenuItem | null>(null)
   const [customizingModalItem, setCustomizingModalItem] = useState<MenuItem | null>(null)
   const [variationModalItem, setVariationModalItem] = useState<MenuItem | null>(null)
@@ -182,29 +188,120 @@ export default function Storefront() {
           popularity_count: (ci as any).popularity_count || 0,
         }
       })
-      setMenu([...items, ...mappedCustom])
+      const fullMenu = [...items, ...mappedCustom]
+      setMenu(fullMenu)
       setRestaurant(config)
+
+      if (account?.role === 'USER') {
+        api<SavedCartItem[]>('/cart').then((saved) => {
+          if (saved.length > 0) {
+            const restored = cartLinesFromSaved(saved, fullMenu)
+            setCart(restored)
+            try {
+              localStorage.setItem('kz_active_cart', JSON.stringify(restored))
+            } catch {}
+          } else {
+            try {
+              const local = localStorage.getItem('kz_active_cart')
+              if (local) {
+                const parsed = JSON.parse(local) as CartLine[]
+                if (parsed.length > 0) {
+                  setCart(parsed)
+                  persistCart(parsed)
+                }
+              }
+            } catch {}
+          }
+        }).catch(() => undefined)
+      }
     }).catch((err) => setError(err instanceof Error ? err.message : 'We could not load the menu.')).finally(() => setLoading(false))
   }, [])
 
-  const cartLinesFromSaved = useCallback((saved: SavedCartItem[]) => saved.flatMap((savedItem) => {
-    const item = menu.find((menuItem) => menuItem.id === savedItem.menu_item_id && !menuItem.is_custom)
-    return item && item.is_available ? [{ item, quantity: savedItem.quantity, lineKey: String(item.id), unit_price_paise: priceFor(item) }] : []
-  }), [menu])
+  const priceFor = (item: MenuItem) => item.discounted_price_paise ?? (item.discount_percent ? Math.round(item.price_paise * (100 - item.discount_percent) / 100) : item.price_paise)
 
-  const mergeSavedCartWithCustom = useCallback((saved: SavedCartItem[], currentCart: CartLine[]) => {
-    const customLines = currentCart.filter((line) => line.custom_menu_item_id || line.customizations?.length || line.variation_name || line.item.is_custom)
-    const stdLines = cartLinesFromSaved(saved)
-    return [...stdLines, ...customLines]
-  }, [cartLinesFromSaved])
+  const persistCart = useCallback((nextCart: CartLine[]) => {
+    try {
+      if (nextCart.length > 0) {
+        localStorage.setItem('kz_active_cart', JSON.stringify(nextCart))
+      } else {
+        localStorage.removeItem('kz_active_cart')
+      }
+    } catch {}
+
+    if (account?.role !== 'USER') return
+
+    cartSync.current = cartSync.current.catch(() => undefined).then(async () => {
+      const payload = nextCart.map((line) => ({
+        menu_id: line.item.id,
+        variation_name: line.variation_name || null,
+        quantity: line.quantity,
+        unit_price_paise: line.unit_price_paise ?? priceFor(line.item),
+        customizations: line.customizations || [],
+      }))
+      await api<SavedCartItem[]>('/cart', {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      })
+    }).catch((err) => setError(err instanceof Error ? err.message : 'Could not save your cart.'))
+  }, [account?.role])
+
+  const cartLinesFromSaved = useCallback((saved: SavedCartItem[], availableMenu: MenuItem[]): CartLine[] => {
+    if (!availableMenu.length) return []
+    return saved.flatMap((savedItem) => {
+      const itemId = savedItem.menu_id || savedItem.menu_item_id
+      if (!itemId) return []
+      const item = availableMenu.find((m) => m.id === itemId)
+      if (!item || !item.is_available) return []
+
+      const customizations = savedItem.customizations || []
+      const unitPrice = savedItem.unit_price_paise ?? priceFor(item)
+      const lineKey = customizations.length > 0
+        ? `custom-${item.id}-${customizations.map((o) => `${o.name}:${o.extra_paise}`).sort().join('|')}`
+        : savedItem.variation_name
+          ? `${item.id}-${savedItem.variation_name}`
+          : String(item.id)
+
+      return [{
+        item,
+        quantity: savedItem.quantity,
+        customizations,
+        variation_name: savedItem.variation_name || undefined,
+        unit_price_paise: unitPrice,
+        lineKey,
+        custom_menu_item_id: item.is_custom ? item.id : undefined,
+      }]
+    })
+  }, [])
 
   useEffect(() => {
-    if (account?.role !== 'USER') {
+    if (account && account.role !== 'USER') {
       setCart([])
+      localStorage.removeItem('kz_active_cart')
       return
     }
-    api<SavedCartItem[]>('/cart').then((saved) => setCart((old) => mergeSavedCartWithCustom(saved, old))).catch((err) => setError(err instanceof Error ? err.message : 'Could not restore your saved cart.'))
-  }, [account?.id, account?.role, mergeSavedCartWithCustom])
+    if (account?.role === 'USER' && menu.length > 0) {
+      api<SavedCartItem[]>('/cart').then((saved) => {
+        if (saved.length > 0) {
+          const restored = cartLinesFromSaved(saved, menu)
+          setCart(restored)
+          try {
+            localStorage.setItem('kz_active_cart', JSON.stringify(restored))
+          } catch {}
+        } else {
+          try {
+            const local = localStorage.getItem('kz_active_cart')
+            if (local) {
+              const parsed = JSON.parse(local) as CartLine[]
+              if (parsed.length > 0) {
+                setCart(parsed)
+                persistCart(parsed)
+              }
+            }
+          } catch {}
+        }
+      }).catch((err) => setError(err instanceof Error ? err.message : 'Could not restore your saved cart.'))
+    }
+  }, [account?.id, account?.role, menu, cartLinesFromSaved, persistCart])
 
   useEffect(() => {
     if (!account || addressInitializedFor === account.id) return
@@ -227,7 +324,6 @@ export default function Storefront() {
     }
     return ['All', ...set]
   }, [menu])
-  const priceFor = (item: MenuItem) => item.discounted_price_paise ?? (item.discount_percent ? Math.round(item.price_paise * (100 - item.discount_percent) / 100) : item.price_paise)
   const visibleMenu = useMemo(() => {
     const query = menuSearch.trim().toLocaleLowerCase()
     return menu.filter((item) => {
@@ -376,25 +472,30 @@ export default function Storefront() {
     }
 
     setCart((old) => {
+      let next: CartLine[]
       if (qty <= 0) {
-        return old.filter((l) => l.lineKey !== (replaceKey || key))
-      }
-      if (replaceKey) {
+        next = old.filter((l) => l.lineKey !== (replaceKey || key))
+      } else if (replaceKey) {
         const withoutOld = old.filter((l) => l.lineKey !== replaceKey)
         const existing = withoutOld.find((l) => l.lineKey === key)
         if (existing) {
-          return withoutOld.map((l) => l.lineKey === key ? { ...l, quantity: l.quantity + qty } : l)
+          next = withoutOld.map((l) => l.lineKey === key ? { ...l, quantity: l.quantity + qty } : l)
+        } else {
+          next = old.map((l) => l.lineKey === replaceKey ? { ...l, lineKey: key, customizations: options, unit_price_paise: unitPrice, quantity: qty } : l)
         }
-        return old.map((l) => l.lineKey === replaceKey ? { ...l, lineKey: key, customizations: options, unit_price_paise: unitPrice, quantity: qty } : l)
+      } else {
+        const existing = old.find((l) => l.lineKey === key)
+        if (existing) {
+          next = old.map((l) => l.lineKey === key ? { ...l, quantity: qty } : l)
+        } else {
+          next = [
+            ...old,
+            { item, quantity: qty, customizations: options, unit_price_paise: unitPrice, lineKey: key, custom_menu_item_id: item.custom_menu_item_id || item.id },
+          ]
+        }
       }
-      const existing = old.find((l) => l.lineKey === key)
-      if (existing) {
-        return old.map((l) => l.lineKey === key ? { ...l, quantity: qty } : l)
-      }
-      return [
-        ...old,
-        { item, quantity: qty, customizations: options, unit_price_paise: unitPrice, lineKey: key, custom_menu_item_id: item.custom_menu_item_id || item.id },
-      ]
+      persistCart(next)
+      return next
     })
     revealCartSummary()
   }
@@ -422,14 +523,8 @@ export default function Storefront() {
       }
     }
     setSelectedOptions(initial)
-    const initialQty = existingLine ? existingLine.quantity : 1
-    setModalQuantity(initialQty)
-    const optionsList = Object.values(initial).filter(Boolean)
-    const initialKey = existingLine
-      ? existingLine.lineKey
-      : `custom-${item.id}-${optionsList.map((o) => `${o.name}:${o.extra_paise}`).sort().join('|')}`
-    setActiveCustomLineKey(initialKey)
-    applyCustomToCart(item, optionsList, initialQty, existingLine?.lineKey)
+    setModalQuantity(existingLine ? existingLine.quantity : 1)
+    setActiveCustomLineKey(existingLine ? existingLine.lineKey : null)
   }
 
   function onSelectCustomOption(sectionName: string, opt: CustomMenuSectionOption, isSelected: boolean, isRequired: boolean) {
@@ -442,34 +537,31 @@ export default function Storefront() {
       nextOptions = { ...selectedOptions, [sectionName]: opt }
     }
     setSelectedOptions(nextOptions)
-    const optionsList = Object.values(nextOptions).filter(Boolean)
-    const newLineKey = `custom-${customizingModalItem.id}-${optionsList.map((o) => `${o.name}:${o.extra_paise}`).sort().join('|')}`
-    applyCustomToCart(customizingModalItem, optionsList, modalQuantity, activeCustomLineKey)
-    setActiveCustomLineKey(newLineKey)
   }
 
-  function onCustomModalQtyChange(nextQty: number) {
+  function confirmCustomItemAdd() {
     if (!customizingModalItem) return
-    if (nextQty <= 0) {
-      applyCustomToCart(customizingModalItem, Object.values(selectedOptions).filter(Boolean), 0, activeCustomLineKey)
-      setCustomizingModalItem(null)
-      setActiveCustomLineKey(null)
-      return
+    for (const sec of customizingModalItem.custom_sections || []) {
+      if (sec.required !== false && (!selectedOptions[sec.name] || !selectedOptions[sec.name].name)) {
+        setError(`Please select an option for ${sec.name}`)
+        return
+      }
     }
-    setModalQuantity(nextQty)
-    applyCustomToCart(customizingModalItem, Object.values(selectedOptions).filter(Boolean), nextQty, activeCustomLineKey)
+    const optionsList = Object.values(selectedOptions).filter(Boolean)
+    applyCustomToCart(customizingModalItem, optionsList, modalQuantity || 1, activeCustomLineKey)
+    setCustomizingModalItem(null)
+    setActiveCustomLineKey(null)
+    setError('')
   }
 
   function handleCustomItemAddOrIncrement(item: MenuItem) {
     if (orderingClosed || item.is_paused) return
     const currentQty = quantityFor(item.id, Boolean(item.is_custom))
     if (currentQty > 0) {
-      const saved = getLastCustomization(item.id)
-      if (saved) {
-        setRepeatPromptItem(item)
-        return
-      }
+      setRepeatPromptItem(item)
+      return
     }
+    setActiveDetailItem(null)
     openCustomizationModal(item)
   }
 
@@ -482,34 +574,48 @@ export default function Storefront() {
     }
     const key = `custom-${item.id}-${saved.options.map((o) => `${o.name}:${o.extra_paise}`).sort().join('|')}`
     setCart((old) => {
+      let next: CartLine[]
       const found = old.find((l) => l.lineKey === key)
       if (found) {
-        return old.map((l) => l.lineKey === key ? { ...l, quantity: l.quantity + 1 } : l)
+        next = old.map((l) => l.lineKey === key ? { ...l, quantity: l.quantity + 1 } : l)
+      } else {
+        next = [
+          ...old,
+          {
+            item,
+            quantity: 1,
+            customizations: saved.options,
+            unit_price_paise: saved.unit_price_paise,
+            lineKey: key,
+            custom_menu_item_id: item.custom_menu_item_id || item.id,
+          },
+        ]
       }
-      return [
-        ...old,
-        {
-          item,
-          quantity: 1,
-          customizations: saved.options,
-          unit_price_paise: saved.unit_price_paise,
-          lineKey: key,
-          custom_menu_item_id: item.custom_menu_item_id || item.id,
-        },
-      ]
+      persistCart(next)
+      return next
     })
     revealCartSummary()
   }
 
   function decrementCustomItem(item: MenuItem) {
+    const lines = cart.filter((l) => l.item.id === item.id)
+    if (lines.length > 1) {
+      setActiveDetailItem(null)
+      setCartOpen(true)
+      return
+    }
     setCart((old) => {
-      const lines = old.filter((l) => l.item.id === item.id && Boolean(l.item.is_custom))
-      if (!lines.length) return old
-      const targetLine = lines[lines.length - 1]
+      const currentLines = old.filter((l) => l.item.id === item.id && Boolean(l.item.is_custom))
+      if (!currentLines.length) return old
+      const targetLine = currentLines[0]
+      let next: CartLine[]
       if (targetLine.quantity > 1) {
-        return old.map((l) => l.lineKey === targetLine.lineKey ? { ...l, quantity: l.quantity - 1 } : l)
+        next = old.map((l) => l.lineKey === targetLine.lineKey ? { ...l, quantity: l.quantity - 1 } : l)
+      } else {
+        next = old.filter((l) => l.lineKey !== targetLine.lineKey)
       }
-      return old.filter((l) => l.lineKey !== targetLine.lineKey)
+      persistCart(next)
+      return next
     })
   }
 
@@ -564,41 +670,46 @@ export default function Storefront() {
     }
 
     setCart((old) => {
+      let next: CartLine[]
       if (qty <= 0) {
-        return old.filter((l) => l.lineKey !== (replaceKey || key))
-      }
-      if (replaceKey) {
+        next = old.filter((l) => l.lineKey !== (replaceKey || key))
+      } else if (replaceKey) {
         const withoutOld = old.filter((l) => l.lineKey !== replaceKey)
         const existing = withoutOld.find((l) => l.lineKey === key)
         if (existing) {
-          return withoutOld.map((l) => (l.lineKey === key ? { ...l, quantity: l.quantity + qty } : l))
+          next = withoutOld.map((l) => (l.lineKey === key ? { ...l, quantity: l.quantity + qty } : l))
+        } else {
+          next = old.map((l) =>
+            l.lineKey === replaceKey
+              ? {
+                  ...l,
+                  lineKey: key,
+                  variation_name: variation.name,
+                  unit_price_paise: unitPrice,
+                  quantity: qty,
+                }
+              : l,
+          )
         }
-        return old.map((l) =>
-          l.lineKey === replaceKey
-            ? {
-                ...l,
-                lineKey: key,
-                variation_name: variation.name,
-                unit_price_paise: unitPrice,
-                quantity: qty,
-              }
-            : l,
-        )
+      } else {
+        const existing = old.find((l) => l.lineKey === key)
+        if (existing) {
+          next = old.map((l) => (l.lineKey === key ? { ...l, quantity: qty } : l))
+        } else {
+          next = [
+            ...old,
+            {
+              item,
+              quantity: qty,
+              variation_name: variation.name,
+              unit_price_paise: unitPrice,
+              lineKey: key,
+            },
+          ]
+        }
       }
-      const existing = old.find((l) => l.lineKey === key)
-      if (existing) {
-        return old.map((l) => (l.lineKey === key ? { ...l, quantity: qty } : l))
-      }
-      return [
-        ...old,
-        {
-          item,
-          quantity: qty,
-          variation_name: variation.name,
-          unit_price_paise: unitPrice,
-          lineKey: key,
-        },
-      ]
+      persistCart(next)
+      return next
     })
     revealCartSummary()
   }
@@ -607,12 +718,10 @@ export default function Storefront() {
     if (orderingClosed || item.is_paused) return
     const currentQty = quantityFor(item.id, Boolean(item.is_custom))
     if (currentQty > 0) {
-      const saved = getLastVariation(item.id)
-      if (saved) {
-        setRepeatVariationPromptItem(item)
-        return
-      }
+      setRepeatVariationPromptItem(item)
+      return
     }
+    setActiveDetailItem(null)
     openVariationModal(item)
   }
 
@@ -628,33 +737,47 @@ export default function Storefront() {
     const disc = item.discount_percent || 0
     const unitPrice = disc ? Math.round((variation.price_paise * (100 - disc)) / 100) : variation.price_paise
     setCart((old) => {
+      let next: CartLine[]
       const found = old.find((l) => l.lineKey === lineKey)
       if (found) {
-        return old.map((l) => (l.lineKey === lineKey ? { ...l, quantity: l.quantity + 1 } : l))
+        next = old.map((l) => (l.lineKey === lineKey ? { ...l, quantity: l.quantity + 1 } : l))
+      } else {
+        next = [
+          ...old,
+          {
+            item,
+            quantity: 1,
+            variation_name: variation.name,
+            unit_price_paise: unitPrice,
+            lineKey,
+          },
+        ]
       }
-      return [
-        ...old,
-        {
-          item,
-          quantity: 1,
-          variation_name: variation.name,
-          unit_price_paise: unitPrice,
-          lineKey,
-        },
-      ]
+      persistCart(next)
+      return next
     })
     revealCartSummary()
   }
 
   function decrementVariationItem(item: MenuItem) {
+    const lines = cart.filter((l) => l.item.id === item.id)
+    if (lines.length > 1) {
+      setActiveDetailItem(null)
+      setCartOpen(true)
+      return
+    }
     setCart((old) => {
-      const lines = old.filter((l) => l.item.id === item.id && !l.item.is_custom)
-      if (!lines.length) return old
-      const targetLine = lines[lines.length - 1]
+      const currentLines = old.filter((l) => l.item.id === item.id && !l.item.is_custom)
+      if (!currentLines.length) return old
+      const targetLine = currentLines[0]
+      let next: CartLine[]
       if (targetLine.quantity > 1) {
-        return old.map((l) => (l.lineKey === targetLine.lineKey ? { ...l, quantity: l.quantity - 1 } : l))
+        next = old.map((l) => (l.lineKey === targetLine.lineKey ? { ...l, quantity: l.quantity - 1 } : l))
+      } else {
+        next = old.filter((l) => l.lineKey !== targetLine.lineKey)
       }
-      return old.filter((l) => l.lineKey !== targetLine.lineKey)
+      persistCart(next)
+      return next
     })
   }
 
@@ -665,34 +788,26 @@ export default function Storefront() {
       : null
     const chosenVar = matched || item.variations?.[0] || null
     setSelectedVariation(chosenVar)
-    const initialQty = existingLine ? existingLine.quantity : 1
-    setModalQuantity(initialQty)
-    const initialKey = existingLine ? existingLine.lineKey : (chosenVar ? `${item.id}-${chosenVar.name}` : null)
-    setActiveVariationLineKey(initialKey)
-    if (chosenVar) {
-      applyVariationToCart(item, chosenVar, initialQty, existingLine?.lineKey)
-    }
+    setModalQuantity(existingLine ? existingLine.quantity : 1)
+    setActiveVariationLineKey(existingLine ? existingLine.lineKey : null)
     setError('')
   }
 
   function onSelectVariation(variation: MenuItemVariation) {
     if (!variationModalItem) return
     setSelectedVariation(variation)
-    const newKey = `${variationModalItem.id}-${variation.name}`
-    applyVariationToCart(variationModalItem, variation, modalQuantity, activeVariationLineKey)
-    setActiveVariationLineKey(newKey)
   }
 
-  function onVariationModalQtyChange(nextQty: number) {
-    if (!variationModalItem || !selectedVariation) return
-    if (nextQty <= 0) {
-      applyVariationToCart(variationModalItem, selectedVariation, 0, activeVariationLineKey)
-      setVariationModalItem(null)
-      setActiveVariationLineKey(null)
+  function confirmVariationAdd() {
+    if (!variationModalItem) return
+    if (!selectedVariation) {
+      setError('Please choose a portion')
       return
     }
-    setModalQuantity(nextQty)
-    applyVariationToCart(variationModalItem, selectedVariation, nextQty, activeVariationLineKey)
+    applyVariationToCart(variationModalItem, selectedVariation, modalQuantity || 1, activeVariationLineKey)
+    setVariationModalItem(null)
+    setActiveVariationLineKey(null)
+    setError('')
   }
 
   const detailImages = useMemo(() => {
@@ -762,10 +877,13 @@ export default function Storefront() {
     if (orderingClosed) return
     revealCartSummary()
     setCart((old) => {
-      if (!quantity) return old.filter((l) => l.lineKey !== lineKey)
-      return old.map((l) => l.lineKey === lineKey ? { ...l, quantity } : l)
+      const next = !quantity
+        ? old.filter((l) => l.lineKey !== lineKey)
+        : old.map((l) => l.lineKey === lineKey ? { ...l, quantity } : l)
+      persistCart(next)
+      return next
     })
-  }, [orderingClosed])
+  }, [orderingClosed, persistCart])
 
   const setStandardQuantity = useCallback((item: MenuItem, quantity: number) => {
     if (orderingClosed || item.is_paused) return
@@ -773,16 +891,16 @@ export default function Storefront() {
     revealCartSummary()
     setCart((old) => {
       const found = old.find((line) => line.lineKey === lineKey)
-      if (!quantity) return old.filter((line) => line.lineKey !== lineKey)
       const unitPrice = priceFor(item)
-      return found ? old.map((line) => line.lineKey === lineKey ? { ...line, quantity } : line) : [...old, { item, quantity, lineKey, unit_price_paise: unitPrice }]
+      const next = !quantity
+        ? old.filter((line) => line.lineKey !== lineKey)
+        : found
+          ? old.map((line) => line.lineKey === lineKey ? { ...line, quantity } : line)
+          : [...old, { item, quantity, lineKey, unit_price_paise: unitPrice }]
+      persistCart(next)
+      return next
     })
-    if (account?.role !== 'USER') return
-    cartSync.current = cartSync.current.catch(() => undefined).then(async () => {
-      const saved = await api<SavedCartItem[]>(`/cart/items/${item.id}`, { method: 'PUT', body: JSON.stringify({ quantity }) })
-      setCart((old) => mergeSavedCartWithCustom(saved, old))
-    }).catch((err) => setError(err instanceof Error ? err.message : 'Could not save your cart.'))
-  }, [account?.role, mergeSavedCartWithCustom, orderingClosed])
+  }, [orderingClosed, persistCart])
 
 
   const quantityFor = (itemId: number, isCustom = false) => cart.filter((line) => line.item.id === itemId && Boolean(line.item.is_custom) === isCustom).reduce((sum, line) => sum + line.quantity, 0)
@@ -812,6 +930,18 @@ export default function Storefront() {
     setBusy(true)
     setError('')
     try {
+      let formattedScheduledFor: string | null = null
+      if (scheduledFor) {
+        let val = scheduledFor.trim()
+        if (!val.includes('T') && val.includes(':')) {
+          const istFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' })
+          val = `${istFormatter.format(new Date())}T${val}`
+        }
+        if (!val.includes('+')) {
+          val = `${val.length === 16 ? val + ':00' : val}+05:30`
+        }
+        formattedScheduledFor = val
+      }
       const order = await api<Order>('/orders', {
         method: 'POST',
         body: JSON.stringify({
@@ -824,7 +954,7 @@ export default function Storefront() {
           })),
           payment_method: paymentMethod,
           address: address.trim(), latitude: deliveryLocation.latitude, longitude: deliveryLocation.longitude, notes: notes.trim(),
-          scheduled_for: scheduledFor ? (scheduledFor.includes('+') ? scheduledFor : `${scheduledFor}:00+05:30`) : null,
+          scheduled_for: formattedScheduledFor,
         }),
       })
       if (paymentMethod === 'RAZORPAY' && order.checkout) {
@@ -834,6 +964,7 @@ export default function Storefront() {
               await verifyRazorpayPayment(payment)
               setSuccess({ ...order, payment_status: 'PAID' })
               setCart([])
+              localStorage.removeItem('kz_active_cart')
             } catch (err) {
               setError(err instanceof Error ? err.message : 'Payment verification could not be confirmed.')
             }
@@ -851,6 +982,7 @@ export default function Storefront() {
       }
       setSuccess(order)
       setCart([])
+      localStorage.removeItem('kz_active_cart')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'We could not place your order. Please try again.')
     } finally {
@@ -947,7 +1079,14 @@ export default function Storefront() {
                   }}
                 />
               ) : (
-                <button className="add-food" onClick={() => handleCustomItemAddOrIncrement(item)} aria-label={`Customize ${item.name}`}><Plus size={14} /> ADD</button>
+                <button
+                  type="button"
+                  className="add-food"
+                  onClick={() => handleCustomItemAddOrIncrement(item)}
+                  aria-label={`Customize ${item.name}`}
+                >
+                  <Sparkles size={13} /> Customize
+                </button>
               )
             ) : item.variations && item.variations.length > 0 ? (
               quantityFor(item.id, Boolean(item.is_custom)) > 0 ? (
@@ -960,12 +1099,26 @@ export default function Storefront() {
                   }}
                 />
               ) : (
-                <button className="add-food" onClick={() => handleVariationItemAddOrIncrement(item)} aria-label={`Choose portion for ${item.name}`}><Plus size={14} /> ADD</button>
+                <button
+                  type="button"
+                  className="add-food"
+                  onClick={() => handleVariationItemAddOrIncrement(item)}
+                  aria-label={`Choose portion for ${item.name}`}
+                >
+                  <Sparkles size={13} /> Choose
+                </button>
               )
             ) : quantityFor(item.id, Boolean(item.is_custom)) ? (
               <QuantityPicker small quantity={quantityFor(item.id, Boolean(item.is_custom))} onChange={(quantity) => setStandardQuantity(item, quantity)} />
             ) : (
-              <button className="add-food" onClick={() => setStandardQuantity(item, 1)} aria-label={`Add ${item.name}`}><Plus size={14} /> ADD</button>
+              <button
+                type="button"
+                className="add-food"
+                onClick={() => setStandardQuantity(item, 1)}
+                aria-label={`Add ${item.name}`}
+              >
+                <Plus size={14} /> ADD
+              </button>
             )}
           </div>
         </div>
@@ -975,7 +1128,7 @@ export default function Storefront() {
     <section className="story-banner"><div className="story-mark"><Flame size={25} /></div><div><div className="eyebrow light-eyebrow">THE ZILLA WAY</div><h2>Good food is meant<br />to bring people <em>closer.</em></h2><p>From our charcoal grill to your table, every bite starts with the good stuff.</p></div><div className="story-seal"><span>100%</span><small>GOOD<br />TASTE</small><span>✦</span></div><div className="story-pattern">✳ &nbsp;· &nbsp;✦ &nbsp;· &nbsp;✳</div></section>
     <section className="store-bottom"><div><div className="eyebrow">COME BY, SAY HI</div><h2>Or let us bring it <em>to your table.</em></h2><div className="store-bottom-details">{restaurant?.address ? (<a href={restaurant.latitude != null && restaurant.longitude != null ? `https://www.google.com/maps/search/?api=1&query=${restaurant.latitude},${restaurant.longitude}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(restaurant.address)}`} target="_blank" rel="noreferrer" className="store-address-link" title="Open exact location in Google Maps" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: 'inherit', textDecoration: 'none', cursor: 'pointer' }}><MapPin size={15} /> <span>{restaurant.address}</span></a>) : (<span>Restaurant location has not been added yet.</span>)}{((restaurant?.phones && restaurant.phones.length > 0) ? restaurant.phones : (restaurant?.phone ? restaurant.phone.split(',').map((p) => p.trim()).filter(Boolean) : [])).map((phoneNum, idx) => (<span key={idx} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><Phone size={15} /> <a href={`tel:${phoneNum}`} style={{ color: 'inherit', textDecoration: 'none' }}>{phoneNum}</a></span>))}</div></div>{restaurant?.latitude != null && restaurant.longitude != null ? <a className="store-bottom-map" href={`https://www.google.com/maps/search/?api=1&query=${restaurant.latitude},${restaurant.longitude}`} target="_blank" rel="noreferrer"><span className="map-mini"><MapPin size={26} /></span><span><strong>Find KebabZilla</strong><small>Open directions in Maps</small></span><ArrowRight size={17} /></a> : <div className="store-bottom-map"><span className="map-mini"><MapPin size={26} /></span><span><strong>Location details</strong><small>Pin location coming soon</small></span></div>}</section>
 
-    {cartOpen && <div className="cart-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setCartOpen(false) }}><aside className="cart-panel" aria-label="Your basket" onMouseDown={(event) => event.stopPropagation()}><div className="cart-panel-scroll"><div className="cart-header"><div><span className="cart-icon"><ShoppingBag size={17} /></span><span><strong>Your order</strong><small>{totalItems} delicious thing{totalItems === 1 ? '' : 's'}</small></span></div><button className="cart-close" aria-label="Close cart" onClick={() => setCartOpen(false)}><X size={17} /></button></div>{cart.length ? <><div className="cart-items">{cart.map((line) => { const unitPrice = line.unit_price_paise ?? priceFor(line.item); const customSummary = (line.customizations || []).map((o) => o.name).join(', '); const hasVariations = (line.item.variations?.length || 0) > 0; return <div className="cart-line" key={line.lineKey}><span className="cart-line-name">{line.item.name}{line.variation_name && <small className="cart-custom-desc">Portion: {line.variation_name}</small>}{customSummary && <small className="cart-custom-desc">{customSummary}</small>}{(line.item.is_custom || hasVariations) && <button type="button" className="cart-edit-link" onClick={() => { if (line.item.is_custom) { openCustomizationModal(line.item, line) } else { openVariationModal(line.item, line) } }} aria-label={`Edit ${line.item.name}`}><Edit3 size={11} /> {line.item.is_custom ? 'Edit customization' : 'Change portion'}</button>}<small>{formatINR(unitPrice)} each</small></span><QuantityPicker small quantity={line.quantity} onChange={(next) => setLineQuantity(line.lineKey, next)} /><strong>{formatINR(unitPrice * line.quantity)}</strong></div> })}</div>
+    {cartOpen && <div className="cart-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setCartOpen(false) }}><aside className="cart-panel" aria-label="Your basket" onMouseDown={(event) => event.stopPropagation()}><div className="cart-header"><div><span className="cart-icon"><ShoppingBag size={17} /></span><span><strong>Your order</strong><small>{totalItems} delicious thing{totalItems === 1 ? '' : 's'}</small></span></div><button className="cart-close" aria-label="Close cart" onClick={() => setCartOpen(false)}><X size={17} /></button></div><div className="cart-panel-scroll">{cart.length ? <><div className="cart-items">{cart.map((line) => { const unitPrice = line.unit_price_paise ?? priceFor(line.item); const customSummary = (line.customizations || []).map((o) => o.name).join(', '); const hasVariations = (line.item.variations?.length || 0) > 0; return <div className="cart-line" key={line.lineKey}><span className="cart-line-name">{line.item.name}{line.variation_name && <small className="cart-custom-desc">Portion: {line.variation_name}</small>}{customSummary && <small className="cart-custom-desc">{customSummary}</small>}{(line.item.is_custom || hasVariations) && <button type="button" className="cart-edit-link" onClick={() => { if (line.item.is_custom) { openCustomizationModal(line.item, line) } else { openVariationModal(line.item, line) } }} aria-label={`Edit ${line.item.name}`}><Edit3 size={11} /> {line.item.is_custom ? 'Edit customization' : 'Change portion'}</button>}<small>{formatINR(unitPrice)} each</small></span><QuantityPicker small quantity={line.quantity} onChange={(next) => setLineQuantity(line.lineKey, next)} /><strong>{formatINR(unitPrice * line.quantity)}</strong></div> })}</div>
       <div className="cart-totals">
         <div>
           <span>Subtotal</span>
@@ -1093,24 +1246,45 @@ export default function Storefront() {
             </label>
           )}
         </div>
-        <div className="payment-choices">
-          <button className={paymentMethod === 'RAZORPAY' ? 'selected' : ''} onClick={() => setPaymentMethod('RAZORPAY')}>
-            <span className="radio-dot" /> Pay online
-          </button>
-          <button className={paymentMethod === 'CASH' ? 'selected' : ''} onClick={() => setPaymentMethod('CASH')}>
-            <span className="radio-dot" /> Cash on delivery
-          </button>
-        </div>
-        {error && <Notice>{error}</Notice>}
-        <Button className="checkout-button" disabled={busy || !restaurant?.accepting_orders} onClick={placeOrder}>
-          {busy ? 'Just a second…' : <>Place order · {formatINR(payable)} <ArrowRight size={16} /></>}
-        </Button>
-        <div className="checkout-secure">
-          <ShieldCheck size={14} /> {paymentMethod === 'RAZORPAY' ? 'Secure checkout by Razorpay' : 'Pay when your food arrives'}
-        </div>
       </div> : <div className="cart-signin"><p>One tiny step before the first bite.</p><Link className="button button-dark" to="/login">Sign in to check out <ArrowRight size={16} /></Link><span>New here? <Link to="/register">Create an account</Link></span></div>}
       {subtotal < (restaurant?.minimum_order_paise || 0) && <div className="minimum-note">Add {formatINR((restaurant?.minimum_order_paise || 0) - subtotal)} to meet our minimum.</div>}
-      </> : <div className="cart-empty"><p>Your cart is empty.</p><button className="text-button" onClick={() => { setCartOpen(false); document.querySelector('.menu-section')?.scrollIntoView({ behavior: 'smooth' }) }}>Browse the menu</button></div>}</div></aside></div>}
+      </> : <div className="cart-empty"><p>Your cart is empty.</p><button className="text-button" onClick={() => { setCartOpen(false); document.querySelector('.menu-section')?.scrollIntoView({ behavior: 'smooth' }) }}>Browse the menu</button></div>}</div>
+      {cart.length > 0 && (
+        <div className="cart-sticky-bottom">
+          {account ? (
+            <>
+              {error && <Notice>{error}</Notice>}
+              <div className="cart-action-row">
+                <div className="cart-payment-select-wrap">
+                  <RoundedSelect
+                    value={paymentMethod}
+                    onChange={(val) => setPaymentMethod(val as 'RAZORPAY' | 'CASH')}
+                    className="cart-payment-select"
+                    ariaLabel="Select payment method"
+                    options={[
+                      { value: 'RAZORPAY', label: 'Pay online' },
+                      { value: 'CASH', label: 'Pay on delivery' },
+                    ]}
+                  />
+                </div>
+                <Button className="checkout-button" disabled={busy || !restaurant?.accepting_orders} onClick={placeOrder}>
+                  {busy ? 'Just a second…' : <>Place order · {formatINR(payable)} <ArrowRight size={16} /></>}
+                </Button>
+              </div>
+              <div className="checkout-secure">
+                <ShieldCheck size={14} /> {paymentMethod === 'RAZORPAY' ? 'Secure checkout by Razorpay' : 'Pay when your food arrives'}
+              </div>
+            </>
+          ) : (
+            <div className="cart-action-row">
+              <Link className="button button-dark checkout-button" to="/login" style={{ width: '100%', justifyContent: 'center' }}>
+                Sign in to check out <ArrowRight size={16} />
+              </Link>
+            </div>
+          )}
+        </div>
+      )}
+    </aside></div>}
     {cart.length > 0 && <button className={`floating-cart visible ${cartExpanded ? 'expanded' : 'compact'}`} onClick={() => setCartOpen(true)} aria-label={`Open cart, ${totalItems} item${totalItems === 1 ? '' : 's'}, total ${formatINR(payable)}`}><span className="cart-summary-icon"><ShoppingBag size={18} /></span><span className="cart-summary-copy"><strong>{totalItems} item{totalItems === 1 ? '' : 's'} added</strong><small>Tap to review your order</small></span><span className="cart-summary-total"><small>ORDER TOTAL</small><strong>{formatINR(payable)}</strong></span><ArrowRight size={17} /></button>}
 
     {activeDetailItem && (() => {
@@ -1244,7 +1418,7 @@ export default function Storefront() {
                         onClick={() => handleCustomItemAddOrIncrement(activeDetailItem)}
                         aria-label={`Customize ${activeDetailItem.name}`}
                       >
-                        <Plus size={14} /> ADD
+                        <Sparkles size={13} /> Customize
                       </button>
                     )
                   ) : isVariations ? (
@@ -1264,7 +1438,7 @@ export default function Storefront() {
                         onClick={() => handleVariationItemAddOrIncrement(activeDetailItem)}
                         aria-label={`Choose portion for ${activeDetailItem.name}`}
                       >
-                        <Plus size={14} /> ADD
+                        <Sparkles size={13} /> Choose
                       </button>
                     )
                   ) : currentQty > 0 ? (
@@ -1353,10 +1527,13 @@ export default function Storefront() {
               <span>TOTAL</span>
               <strong>{formatINR(modalTotalPrice)}</strong>
             </div>
-            <QuantityPicker
-              quantity={modalQuantity}
-              onChange={onCustomModalQtyChange}
-            />
+            <button
+              type="button"
+              className="food-detail-footer-btn"
+              onClick={confirmCustomItemAdd}
+            >
+              <Plus size={16} /> {activeCustomLineKey ? 'Update item' : 'Add to cart'}
+            </button>
           </div>
         </section>
       </div>
@@ -1399,7 +1576,7 @@ export default function Storefront() {
                   openCustomizationModal(it)
                 }}
               >
-                <Sparkles size={15} /> I'll choose
+                <Sparkles size={15} /> Make a second choice
               </button>
               <button
                 type="button"
@@ -1466,10 +1643,13 @@ export default function Storefront() {
               <span>TOTAL</span>
               <strong>{formatINR(variationModalTotalPrice)}</strong>
             </div>
-            <QuantityPicker
-              quantity={modalQuantity}
-              onChange={onVariationModalQtyChange}
-            />
+            <button
+              type="button"
+              className="food-detail-footer-btn"
+              onClick={confirmVariationAdd}
+            >
+              <Plus size={16} /> {activeVariationLineKey ? 'Update item' : 'Add to cart'}
+            </button>
           </div>
         </section>
       </div>
@@ -1511,7 +1691,7 @@ export default function Storefront() {
                   openVariationModal(it)
                 }}
               >
-                <Sparkles size={15} /> I'll choose
+                <Sparkles size={15} /> Make a second choice
               </button>
               <button
                 type="button"

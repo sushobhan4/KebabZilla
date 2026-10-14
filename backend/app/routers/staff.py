@@ -21,6 +21,7 @@ from app.models import (
 )
 from app.schemas import DraftInput, OrderCreate, OrderStatusUpdate
 from app.schemas import MenuItemOut, MenuPauseInput
+from app.security import normalize_phone_e164
 from app.config import settings
 from app.services import assemble_order, order_payload, order_total_paise, restaurant_settings, transition_order
 
@@ -165,6 +166,12 @@ def update_status(order_id: str, data: OrderStatusUpdate, actor: CurrentAccount,
 def walk_in_order(data: OrderCreate, actor: CurrentAccount, db: DbSession, customer_name: str = Query(min_length=2, max_length=120), phone: str | None = None):
     if data.payment_method != PaymentMethod.CASH:
         raise HTTPException(status_code=400, detail="Walk-in billing currently supports cash payments")
+    normalized_phone = None
+    if phone and phone.strip() and phone.strip() != "+91":
+        try:
+            normalized_phone = normalize_phone_e164(phone)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     order = assemble_order(
         db,
         customer=None,
@@ -177,7 +184,7 @@ def walk_in_order(data: OrderCreate, actor: CurrentAccount, db: DbSession, custo
         check_minimum=False,
         enforce_opening_hours=False,
         customer_name=customer_name.strip(),
-        customer_phone=phone,
+        customer_phone=normalized_phone,
     )
     db.add(AdminEvent(event_type="walk_in_order", message=f"Walk-in order {order.order_id} created by {actor.name}", actor_id=actor.id, details={"order_id": order.order_id}))
     order.status = OrderStatus.DELIVERED

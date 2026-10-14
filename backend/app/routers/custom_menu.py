@@ -17,7 +17,7 @@ def list_custom_menu(db: DbSession):
     now = datetime.now(timezone.utc)
     items = db.scalars(
         select(CustomMenuItem)
-        .where(CustomMenuItem.is_available.is_(True))
+        .where(CustomMenuItem.is_available.is_(True), CustomMenuItem.is_customizable.is_(True))
         .order_by(CustomMenuItem.category_id, CustomMenuItem.name)
     ).all()
     discounts = db.scalars(select(MenuDiscount)).all() if items else []
@@ -27,8 +27,8 @@ def list_custom_menu(db: DbSession):
         ends_at = discount.ends_at if discount.ends_at.tzinfo else discount.ends_at.replace(tzinfo=timezone.utc)
         if starts_at <= now < ends_at:
             for link in discount.items:
-                if link.custom_menu_item_id is not None:
-                    active[link.custom_menu_item_id] = discount
+                if link.menu_item_id is not None:
+                    active[link.menu_item_id] = discount
 
     results = []
     for item in items:
@@ -36,7 +36,7 @@ def list_custom_menu(db: DbSession):
         if item.id in active:
             d = active[item.id]
             res["discount_percent"] = d.discount_percent
-            res["discounted_base_price_paise"] = max(1, (item.base_price_paise * (100 - d.discount_percent) + 50) // 100)
+            res["discounted_base_price_paise"] = max(1, (item.price_paise * (100 - d.discount_percent) + 50) // 100)
             res["discount_campaign_name"] = d.campaign_name
         results.append(res)
     return results
@@ -46,6 +46,7 @@ def list_custom_menu(db: DbSession):
 def list_all_custom_menu(db: DbSession):
     return db.scalars(
         select(CustomMenuItem)
+        .where(CustomMenuItem.is_customizable.is_(True))
         .order_by(CustomMenuItem.category_id, CustomMenuItem.name)
     ).all()
 
@@ -65,11 +66,12 @@ def create_custom_menu_item(data: CustomMenuItemInput, actor: CurrentAccount, db
         name=data.name,
         description=data.description,
         category_id=resolved_cats[0].id if resolved_cats else None,
-        base_price_paise=data.base_price_paise,
+        price_paise=data.base_price_paise,
         image_urls=data.image_urls,
         is_vegetarian=data.is_vegetarian,
         is_available=data.is_available,
         is_featured=data.is_featured,
+        is_customizable=True,
     )
     item.categories = resolved_cats
     for idx, sec in enumerate(data.sections):
@@ -114,7 +116,7 @@ def update_custom_menu_item(item_id: int, data: CustomMenuItemInput, actor: Curr
     item.description = data.description
     item.category_id = resolved_cats[0].id if resolved_cats else None
     item.categories = resolved_cats
-    item.base_price_paise = data.base_price_paise
+    item.price_paise = data.base_price_paise
     item.image_urls = data.image_urls
     item.is_vegetarian = data.is_vegetarian
     item.is_available = data.is_available

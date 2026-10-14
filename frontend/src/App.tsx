@@ -1,20 +1,21 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Link, Navigate, NavLink, Route, Routes, useNavigate } from 'react-router-dom'
+import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { Activity, ArrowLeft, BarChart3, ClipboardList, CookingPot, LayoutDashboard, LogIn, LogOut, Menu as MenuIcon, PackageCheck, Plus, Settings, Users, X, Send, Percent, ChevronDown, ChevronLeft, ChevronRight, Phone, MapPin } from 'lucide-react'
 import { useAuth, useRestaurant } from './state'
 import type { Role } from './api'
 import { Brand, Button, Notice } from './components'
 import Storefront from './pages/Storefront'
-import OrdersPage from './pages/Orders'
-import Operations from './pages/Operations'
-import Delivery from './pages/Delivery'
-import Admin from './pages/Admin'
-import AuthPage from './pages/AuthPage'
-import Profile from './pages/Profile'
-import ForcedPasswordChange from './pages/ForcedPasswordChange'
 import { getPreference, setPreference } from './cookies'
 import { CookieConsentBanner, CookiePolicyModal, CookiePreferencesModal, PrivacyPolicyModal, DataPolicyModal } from './components/CookieConsent'
+
+const OrdersPage = lazy(() => import('./pages/Orders'))
+const Operations = lazy(() => import('./pages/Operations'))
+const Delivery = lazy(() => import('./pages/Delivery'))
+const Admin = lazy(() => import('./pages/Admin'))
+const AuthPage = lazy(() => import('./pages/AuthPage'))
+const Profile = lazy(() => import('./pages/Profile'))
+const ForcedPasswordChange = lazy(() => import('./pages/ForcedPasswordChange'))
 
 type NavItem = { to: string; label: string; icon: ReactNode; end?: boolean; tone?: 'employee' | 'delivery' }
 
@@ -66,6 +67,8 @@ function AppHeader() {
   const { account, signOut } = useAuth()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
+  const profileWrapRef = useRef<HTMLDivElement>(null)
+  const location = useLocation()
   const [quickItems, setQuickItems] = useState<string[]>(() => account ? savedQuickPaths(account.role) : [])
   const [quickExpanded, setQuickExpanded] = useState(false)
   const [tabsOverflow, setTabsOverflow] = useState(false)
@@ -81,6 +84,29 @@ function AppHeader() {
   const tabWasDragged = useRef(false)
   const navigate = useNavigate()
   const items = account ? navFor(account.role) : []
+
+  useEffect(() => {
+    setProfileOpen(false)
+  }, [location.pathname])
+
+  useEffect(() => {
+    if (!profileOpen) return
+    const handleClickOutside = (event: PointerEvent) => {
+      const target = event.target as Node
+      if (profileWrapRef.current && !profileWrapRef.current.contains(target)) {
+        setProfileOpen(false)
+      }
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setProfileOpen(false)
+    }
+    document.addEventListener('pointerdown', handleClickOutside)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handleClickOutside)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [profileOpen])
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth <= 700)
     window.addEventListener('resize', handleResize)
@@ -261,7 +287,7 @@ function AppHeader() {
       <div className="header-account" ref={headerAccountRef}>
         {account ? (
           <>
-            <div className="profile-menu-wrap">
+            <div className="profile-menu-wrap" ref={profileWrapRef}>
               <button className="account-chip" aria-expanded={profileOpen} onClick={() => setProfileOpen((open) => !open)}>
                 <span className="avatar">{account.name.slice(0, 1).toUpperCase()}</span>
                 <span className="account-name">{account.name.split(' ')[0]}</span>
@@ -395,26 +421,44 @@ export default function App() {
       ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(restaurant.address)}`
       : null
 
-  if (account?.must_change_password) return <div className="app-shell"><AppHeader /><div className="app-main"><Routes><Route path="/change-password" element={<ForcedPasswordChange />} /><Route path="*" element={<Navigate to="/change-password" replace />} /></Routes></div></div>
+  if (account?.must_change_password) {
+    return (
+      <div className="app-shell">
+        <AppHeader />
+        <div className="app-main">
+          <Suspense fallback={<div className="app-loading" style={{ minHeight: '60vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '0.75rem' }}><Activity className="spin" size={24} /><span>Loading…</span></div>}>
+            <Routes>
+              <Route path="/change-password" element={<ForcedPasswordChange />} />
+              <Route path="*" element={<Navigate to="/change-password" replace />} />
+            </Routes>
+          </Suspense>
+        </div>
+      </div>
+    )
+  }
   return <div className="app-shell">
     <AppHeader />
     {notice && <div className="global-notice"><Notice tone="success" onDismiss={() => setNotice(null)}>{notice}</Notice></div>}
-    <div className="app-main"><Routes>
-      <Route path="/" element={<Storefront />} />
-      <Route path="/login" element={account ? <Navigate to={homeFor(account.role)} replace /> : <AuthPage mode="login" />} />
-      <Route path="/register" element={account ? <Navigate to={homeFor(account.role)} replace /> : <AuthPage mode="register" />} />
-      <Route path="/forgot-password" element={account ? <Navigate to={homeFor(account.role)} replace /> : <AuthPage mode="recovery" />} />
-      <Route path="/recovery" element={account ? <Navigate to={homeFor(account.role)} replace /> : <AuthPage mode="recovery" />} />
-      <Route path="/reset-password" element={account ? <Navigate to={homeFor(account.role)} replace /> : <AuthPage mode="recovery" />} />
-      <Route path="/activate" element={account ? <Navigate to={homeFor(account.role)} replace /> : <AuthPage mode="recovery" />} />
-      <Route path="/workspace" element={account ? <Navigate to={homeFor(account.role)} replace /> : <Navigate to="/login" replace />} />
-      <Route path="/orders" element={<RoleGuard roles={['USER']}><OrdersPage /></RoleGuard>} />
-      <Route path="/profile" element={<RoleGuard roles={['USER', 'ADMIN', 'EMPLOYEE', 'DELIVERY']}><Profile /></RoleGuard>} />
-      <Route path="/ops/*" element={<RoleGuard roles={['EMPLOYEE', 'ADMIN']}><WorkspaceLayout><Operations /></WorkspaceLayout></RoleGuard>} />
-      <Route path="/delivery/*" element={<RoleGuard roles={['DELIVERY', 'ADMIN']}><WorkspaceLayout><Delivery /></WorkspaceLayout></RoleGuard>} />
-      <Route path="/admin/*" element={<RoleGuard roles={['ADMIN']}><WorkspaceLayout><Admin /></WorkspaceLayout></RoleGuard>} />
-      <Route path="*" element={<NotFound />} />
-    </Routes></div>
+    <div className="app-main">
+      <Suspense fallback={<div className="app-loading" style={{ minHeight: '60vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '0.75rem' }}><Activity className="spin" size={24} /><span>Loading…</span></div>}>
+        <Routes>
+          <Route path="/" element={<Storefront />} />
+          <Route path="/login" element={account ? <Navigate to={homeFor(account.role)} replace /> : <AuthPage mode="login" />} />
+          <Route path="/register" element={account ? <Navigate to={homeFor(account.role)} replace /> : <AuthPage mode="register" />} />
+          <Route path="/forgot-password" element={account ? <Navigate to={homeFor(account.role)} replace /> : <AuthPage mode="recovery" />} />
+          <Route path="/recovery" element={account ? <Navigate to={homeFor(account.role)} replace /> : <AuthPage mode="recovery" />} />
+          <Route path="/reset-password" element={account ? <Navigate to={homeFor(account.role)} replace /> : <AuthPage mode="recovery" />} />
+          <Route path="/activate" element={account ? <Navigate to={homeFor(account.role)} replace /> : <AuthPage mode="recovery" />} />
+          <Route path="/workspace" element={account ? <Navigate to={homeFor(account.role)} replace /> : <Navigate to="/login" replace />} />
+          <Route path="/orders" element={<RoleGuard roles={['USER']}><OrdersPage /></RoleGuard>} />
+          <Route path="/profile" element={<RoleGuard roles={['USER', 'ADMIN', 'EMPLOYEE', 'DELIVERY']}><Profile /></RoleGuard>} />
+          <Route path="/ops/*" element={<RoleGuard roles={['EMPLOYEE', 'ADMIN']}><WorkspaceLayout><Operations /></WorkspaceLayout></RoleGuard>} />
+          <Route path="/delivery/*" element={<RoleGuard roles={['DELIVERY', 'ADMIN']}><WorkspaceLayout><Delivery /></WorkspaceLayout></RoleGuard>} />
+          <Route path="/admin/*" element={<RoleGuard roles={['ADMIN']}><WorkspaceLayout><Admin /></WorkspaceLayout></RoleGuard>} />
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </Suspense>
+    </div>
     <footer className="app-footer">
       <div className="footer-identity-col">
         <Brand compact showTagline={false} />

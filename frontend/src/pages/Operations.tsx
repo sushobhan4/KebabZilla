@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react
 import { ArrowRight, BadgeIndianRupee, Check, CircleCheck, ClipboardList, CookingPot, Flame, Plus, ReceiptText, Save, Trash2, Truck, UserRound, Search, Sparkles, X } from 'lucide-react'
 import { Link, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { api, formatINR, friendlyDate, getCustomItemLowestPrice, type CustomMenuItem, type CustomMenuSectionOption, type MenuItem, type MenuItemVariation, type Order } from '../api'
-import { Badge, Button, EmptyState, Loading, MenuImageCarousel, Notice, PageTitle, QuantityPicker, StatusBadge } from '../components'
+import { Badge, Button, EmptyState, Loading, MenuImageCarousel, Notice, PageTitle, PhoneInput, QuantityPicker, StatusBadge, formatPhoneWithPrefix, isValidIndianMobile } from '../components'
 
 function Queue() {
   const [orders, setOrders] = useState<Order[]>([])
@@ -306,7 +306,7 @@ function Billing() {
   const [selectedOptions, setSelectedOptions] = useState<Record<string, CustomMenuSectionOption>>({})
   const [selectedVariation, setSelectedVariation] = useState<MenuItemVariation | null>(null)
   const [name, setName] = useState('')
-  const [phone, setPhone] = useState('')
+  const [phone, setPhone] = useState('+91')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [invoice, setInvoice] = useState<Order | null>(null)
@@ -369,7 +369,7 @@ function Billing() {
       return item ? { item, quantity: line.quantity, lineKey: String(item.id), unit_price_paise: item.discounted_price_paise ?? item.price_paise } : null
     }).filter(Boolean) as BillingCartLine[])
     setName(draft.customer_name || '')
-    setPhone(draft.phone || '')
+    setPhone(draft.phone ? formatPhoneWithPrefix(draft.phone) : '+91')
     navigate(location.pathname, { replace: true, state: null })
   }, [location.pathname, menu, navigate, state])
 
@@ -499,10 +499,16 @@ function Billing() {
     event.preventDefault()
     if (!name.trim()) { setError('Enter the customer’s name to create this bill.'); return }
     if (!cart.length) { setError('Add at least one menu item to create a bill.'); return }
+    const phoneDigits = phone.replace(/^\+91/, '').replace(/\D/g, '')
+    if (phoneDigits.length > 0 && !isValidIndianMobile(phone)) {
+      setError('Customer phone must be a valid 10-digit number.')
+      return
+    }
+    const finalPhone = phoneDigits.length === 10 ? `+91${phoneDigits}` : ''
     setBusy(true)
     setError('')
     try {
-      const result = await api<Order>(`/staff/walk-in?customer_name=${encodeURIComponent(name)}${phone ? `&phone=${encodeURIComponent(phone)}` : ''}`, {
+      const result = await api<Order>(`/staff/walk-in?customer_name=${encodeURIComponent(name)}${finalPhone ? `&phone=${encodeURIComponent(finalPhone)}` : ''}`, {
         method: 'POST',
         body: JSON.stringify({
           items: cart.map((line) => ({
@@ -533,7 +539,7 @@ function Billing() {
           <div><h2>New bill</h2><small>Cash · Dine-in</small></div>
         </div>
         <label className="field-label">Customer name<input required maxLength={120} value={name} onChange={(event) => setName(event.target.value)} /></label>
-        <label className="field-label">Phone <span className="field-optional">optional</span><input type="tel" maxLength={32} value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Customer phone" /></label>
+        <label className="field-label">Phone <span className="field-optional">optional</span><PhoneInput value={phone} onChange={(val) => setPhone(val)} placeholder="+91" /></label>
         <div className="ticket-items">
           {cart.map((line) => {
             const unitPrice = line.unit_price_paise ?? line.item.price_paise;

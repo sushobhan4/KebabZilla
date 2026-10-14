@@ -95,7 +95,7 @@ def switch_to_cash(order_id: str, account: CurrentAccount, db: DbSession):
 @router.post("/{order_id}/abandon")
 def abandon_order(order_id: str, account: CurrentAccount, db: DbSession):
     order = db.scalar(select(Order).where(Order.order_id == order_id, Order.customer_id == account.id))
-    if order:
+    if order and order.status == OrderStatus.PLACED:
         payment = db.get(Payment, order.order_id)
         if payment and payment.status != PaymentStatus.PAID:
             transition_order(order, OrderStatus.CANCELLED)
@@ -123,7 +123,10 @@ async def cancel_order(order_id: str, account: CurrentAccount, db: DbSession):
             db.commit()
         return order_payload(order)
     if order.status != OrderStatus.PLACED:
-        raise HTTPException(status_code=409, detail="Orders can only be cancelled before the restaurant accepts them")
+        raise HTTPException(
+            status_code=409,
+            detail="Orders in preparation cannot be cancelled online. To cancel this order, please call the restaurant directly.",
+        )
     payment = db.get(Payment, order.order_id)
     if payment and payment.status == PaymentStatus.PAID:
         if payment is None or payment.method != PaymentMethod.RAZORPAY:

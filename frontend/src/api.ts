@@ -148,8 +148,13 @@ export function getMenuItemLowestPrice(item: MenuItem): number {
   return item.price_paise
 }
 export type SavedCartItem = {
-  menu_item_id: number
+  id?: number
+  menu_id?: number | null
+  menu_item_id?: number | null
+  variation_name?: string | null
   quantity: number
+  unit_price_paise?: number
+  customizations?: CustomMenuSectionOption[]
 }
 export type Order = {
   order_id: string

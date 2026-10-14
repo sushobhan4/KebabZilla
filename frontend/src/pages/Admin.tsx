@@ -72,10 +72,13 @@ import {
   MenuImageCarousel,
   Notice,
   PageTitle,
+  PhoneInput,
   RoundedDatePicker,
   RoundedSelect,
   RoundedTimePicker,
   StatusBadge,
+  formatPhoneWithPrefix,
+  isValidIndianMobile,
 } from "../components";
 
 type Report = {
@@ -867,31 +870,9 @@ function Team() {
   const [form, setForm] = useState({
     name: "",
     email: "",
-    phone: "",
+    phone: "+91",
     role: "EMPLOYEE" as Role,
   });
-  const [expiryPreset, setExpiryPreset] = useState("30");
-  const [customExpiryValue, setCustomExpiryValue] = useState(30);
-  const [customExpiryUnit, setCustomExpiryUnit] = useState<"minutes" | "hours">("minutes");
-
-  const effectiveExpiryMinutes = useMemo(() => {
-    if (expiryPreset !== "custom") {
-      return parseInt(expiryPreset, 10) || 30;
-    }
-    const val = Number(customExpiryValue) || 30;
-    if (customExpiryUnit === "hours") {
-      return Math.max(30, Math.round(val * 60));
-    }
-    return Math.max(30, Math.round(val));
-  }, [expiryPreset, customExpiryValue, customExpiryUnit]);
-
-  const durationDescription = useMemo(() => {
-    if (effectiveExpiryMinutes % 60 === 0) {
-      const h = effectiveExpiryMinutes / 60;
-      return h === 1 ? "1 hour" : `${h} hours`;
-    }
-    return `${effectiveExpiryMinutes} minutes`;
-  }, [effectiveExpiryMinutes]);
 
   const [provisioned, setProvisioned] = useState<ProvisionedAccount | null>(null);
   const refresh = useCallback(
@@ -933,26 +914,24 @@ function Team() {
   async function createPerson(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
+    if (!isValidIndianMobile(form.phone)) {
+      setError("Mobile number must be a valid 10-digit number.");
+      return;
+    }
     setBusyId(-1);
     try {
       const created = await api<ProvisionedAccount>("/admin/accounts", {
         method: "POST",
-        body: JSON.stringify({
-          ...form,
-          invite_expiry_minutes: effectiveExpiryMinutes,
-        }),
+        body: JSON.stringify(form),
       });
       setCreating(false);
       setProvisioned(created);
       setForm({
         name: "",
         email: "",
-        phone: "",
+        phone: "+91",
         role: "EMPLOYEE",
       });
-      setExpiryPreset("30");
-      setCustomExpiryValue(30);
-      setCustomExpiryUnit("minutes");
       setQ("");
       setRole("ALL");
       setPage(0);
@@ -998,9 +977,9 @@ function Team() {
       {error && <Notice onDismiss={() => setError("")}>{error}</Notice>}
       {provisioned && <Notice tone="info" onDismiss={() => setProvisioned(null)}>
         {provisioned.notification_status === "EMAIL_SENT" ? (
-          <><strong>{provisioned.name}&apos;s account is ready.</strong> A secure activation link was sent to <strong>{provisioned.email}</strong>. The link is active for the requested duration. They can set their password or sign in with Google.</>
+          <><strong>{provisioned.name}&apos;s account has been created.</strong> A notification email was sent to <strong>{provisioned.email}</strong>. When logging in, they can simply click &apos;Forgot password?&apos; on the sign-in page to set their password, or sign in directly with Google.</>
         ) : (
-          <><strong>{provisioned.name}&apos;s account was created.</strong> However, the activation email could not be sent (SMTP not configured or delivery error). For security reasons, the activation link was expired immediately. You can re-invite them or reset their password once email delivery is active.</>
+          <><strong>{provisioned.name}&apos;s account was created.</strong> (Notification email could not be sent: SMTP not configured or delivery error). They can set their password at any time by clicking &apos;Forgot password?&apos; on the sign-in page.</>
         )}
       </Notice>}
       <div className="team-metrics">
@@ -1203,75 +1182,20 @@ function Team() {
               </label>
               <label className="field-label">
                 Mobile number
-                <input
-                  type="tel"
+                <PhoneInput
                   required
                   value={form.phone}
-                  onChange={(event) =>
-                    setForm({ ...form, phone: event.target.value })
+                  onChange={(val) =>
+                    setForm({ ...form, phone: val })
                   }
-                  placeholder="+91 98765 43210"
                 />
               </label>
-              <div className="modal-two-col">
-                <label className="field-label">
-                  Role
-                  <RoundedSelect value={form.role} onChange={(next) => setForm({ ...form, role: next as Role })} options={provisionableRoles.map((r) => ({ value: r, label: formatStatus(r) }))} />
-                </label>
-                <label className="field-label">
-                  Link active duration
-                  <RoundedSelect
-                    value={expiryPreset}
-                    onChange={(next) => setExpiryPreset(next)}
-                    options={[
-                      { value: "30", label: "30 minutes (Default / Lowest)" },
-                      { value: "60", label: "1 hour" },
-                      { value: "120", label: "2 hours" },
-                      { value: "360", label: "6 hours" },
-                      { value: "1440", label: "24 hours (1 day)" },
-                      { value: "2880", label: "48 hours (2 days)" },
-                      { value: "custom", label: "Custom duration…" },
-                    ]}
-                  />
-                </label>
-              </div>
-              {expiryPreset === "custom" && (
-                <div className="modal-two-col">
-                  <label className="field-label">
-                    Custom duration
-                    <input
-                      type="number"
-                      required
-                      min={customExpiryUnit === "minutes" ? 30 : 1}
-                      step={customExpiryUnit === "minutes" ? 1 : 0.5}
-                      value={customExpiryValue}
-                      onChange={(e) => setCustomExpiryValue(Math.max(1, Number(e.target.value)))}
-                      placeholder={customExpiryUnit === "minutes" ? "Min 30" : "Min 1"}
-                    />
-                  </label>
-                  <label className="field-label">
-                    Unit
-                    <RoundedSelect
-                      value={customExpiryUnit}
-                      onChange={(next) => {
-                        const unit = next as "minutes" | "hours";
-                        setCustomExpiryUnit(unit);
-                        if (unit === "minutes" && customExpiryValue < 30) {
-                          setCustomExpiryValue(30);
-                        } else if (unit === "hours" && customExpiryValue < 1) {
-                          setCustomExpiryValue(1);
-                        }
-                      }}
-                      options={[
-                        { value: "minutes", label: "Minutes (min 30)" },
-                        { value: "hours", label: "Hours" },
-                      ]}
-                    />
-                  </label>
-                </div>
-              )}
+              <label className="field-label">
+                Role
+                <RoundedSelect value={form.role} onChange={(next) => setForm({ ...form, role: next as Role })} options={provisionableRoles.map((r) => ({ value: r, label: formatStatus(r) }))} />
+              </label>
               <Notice tone="info">
-                A secure account activation link will be sent to the person&apos;s email address. They will be able to set their password or sign in directly with Google. The link will remain active for <strong>{durationDescription}</strong> (minimum 30 minutes).
+                An email notification will be sent to the user letting them know their account has been created. To set their password for the first time, they simply click &apos;Forgot password?&apos; on the sign-in page to receive an OTP and choose their password.
               </Notice>
               <div className="modal-actions">
                 <Button variant="secondary" onClick={() => setCreating(false)}>
@@ -4611,8 +4535,8 @@ function SettingsPage() {
           ? settings.phones
           : settings.phone
             ? settings.phone.split(",").map((p: string) => p.trim()).filter(Boolean)
-            : [""];
-        const finalPhones = phonesList.length > 0 ? phonesList : [""];
+            : ["+91"];
+        const finalPhones = phonesList.length > 0 ? phonesList.map(formatPhoneWithPrefix) : ["+91"];
         setPhoneNumbers(finalPhones);
 
         const formData: Restaurant = {
@@ -4722,8 +4646,8 @@ function SettingsPage() {
         ? updated.phones
         : updated.phone
           ? updated.phone.split(",").map((p: string) => p.trim()).filter(Boolean)
-          : [""];
-      const finalPhones = phonesList.length > 0 ? phonesList : [""];
+          : ["+91"];
+      const finalPhones = phonesList.length > 0 ? phonesList.map(formatPhoneWithPrefix) : ["+91"];
       setPhoneNumbers(finalPhones);
 
       const formData: Restaurant = {
@@ -4878,8 +4802,8 @@ function SettingsPage() {
         ? updated.phones
         : updated.phone
           ? updated.phone.split(",").map((p: string) => p.trim()).filter(Boolean)
-          : [""];
-      const finalPhones = phonesList.length > 0 ? phonesList : [""];
+          : ["+91"];
+      const finalPhones = phonesList.length > 0 ? phonesList.map(formatPhoneWithPrefix) : ["+91"];
       setPhoneNumbers(finalPhones);
 
       const formData: Restaurant = {
@@ -4915,6 +4839,17 @@ function SettingsPage() {
   function handleFormSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!form || !isDirty) return;
+
+    for (let i = 0; i < phoneNumbers.length; i++) {
+      const p = phoneNumbers[i];
+      const digits = p.replace(/^\+91/, '').replace(/\D/g, '');
+      if (i === 0 || digits.length > 0) {
+        if (!isValidIndianMobile(p)) {
+          setError(`Mobile number ${i + 1} must be a valid 10-digit number.`);
+          return;
+        }
+      }
+    }
 
     let initial: { form?: Restaurant; schedules?: CustomSchedule[]; phoneNumbers?: string[] } = {};
     try {
@@ -5131,7 +5066,7 @@ function SettingsPage() {
                         background: "transparent",
                         padding: "2px 6px",
                       }}
-                      onClick={() => setPhoneNumbers((prev) => [...prev, ""])}
+                      onClick={() => setPhoneNumbers((prev) => [...prev, "+91"])}
                     >
                       <Plus size={14} /> Add mobile number
                     </button>
@@ -5139,13 +5074,10 @@ function SettingsPage() {
                   <div className="restaurant-phones-grid">
                     {phoneNumbers.map((phone, idx) => (
                       <div key={idx} className="restaurant-phone-item">
-                        <input
+                        <PhoneInput
                           required={idx === 0}
-                          maxLength={32}
-                          placeholder={idx === 0 ? "Primary mobile number" : `Mobile number ${idx + 1}`}
                           value={phone}
-                          onChange={(e) => {
-                            const val = e.target.value;
+                          onChange={(val) => {
                             setPhoneNumbers((prev) => {
                               const next = [...prev];
                               next[idx] = val;

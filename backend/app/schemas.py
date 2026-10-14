@@ -6,6 +6,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field, field
 
 from app.config import settings
 from app.models import OrderStatus, PaymentMethod, PaymentStatus, Role
+from app.security import normalize_phone_e164
 
 
 class ORMModel(BaseModel):
@@ -17,6 +18,13 @@ class AccountCreate(BaseModel):
     email: EmailStr
     phone: str | None = Field(default=None, max_length=32)
     password: str = Field(min_length=10, max_length=128)
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, value: str | None) -> str | None:
+        if not value:
+            return None
+        return normalize_phone_e164(value)
 
 
 class AdminAccountCreate(BaseModel):
@@ -30,7 +38,7 @@ class AdminAccountCreate(BaseModel):
     email: EmailStr
     phone: str = Field(min_length=3, max_length=32)
     role: Role
-    invite_expiry_minutes: int = Field(default=30, ge=30, description="Invite link expiry in minutes (minimum 30)")
+    invite_expiry_minutes: int | None = Field(default=None, description="Legacy field (optional)")
 
     @field_validator("name")
     @classmethod
@@ -46,7 +54,10 @@ class AdminAccountCreate(BaseModel):
         value = value.strip()
         if not value:
             raise ValueError("A mobile number is required")
-        return value
+        normalized = normalize_phone_e164(value)
+        if not normalized:
+            raise ValueError("A valid mobile number is required")
+        return normalized
 
     @field_validator("invite_expiry_minutes")
     @classmethod
@@ -177,10 +188,40 @@ class AccountProfileUpdate(BaseModel):
     phone: str | None = Field(default=None, max_length=32)
     addresses: list[SavedAddressInput] | None = Field(default=None, max_length=12)
 
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, value: str | None) -> str | None:
+        if not value:
+            return None
+        return normalize_phone_e164(value)
+
 
 class PasswordUpdate(BaseModel):
     current_password: str | None = None
     new_password: str = Field(min_length=10, max_length=128)
+
+
+class TwoFactorVerifyRequest(BaseModel):
+    temp_token: str = Field(min_length=16, max_length=128)
+    code: str = Field(min_length=6, max_length=10)
+
+
+class CartItemInput(BaseModel):
+    menu_id: int | None = None
+    menu_item_id: int | None = None
+    custom_menu_item_id: int | None = None
+    variation_name: str | None = Field(default=None, max_length=60)
+    quantity: int = Field(ge=0, le=99)
+    unit_price_paise: int | None = Field(default=None, ge=0)
+    customizations: list[dict] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_menu_id(cls, data: object) -> object:
+        if isinstance(data, dict):
+            if not data.get("menu_id"):
+                data["menu_id"] = data.get("menu_item_id") or data.get("custom_menu_item_id")
+        return data
 
 
 class CartItemUpdate(BaseModel):
@@ -188,8 +229,29 @@ class CartItemUpdate(BaseModel):
 
 
 class CartItemOut(ORMModel):
-    menu_item_id: int
+    id: int
+    menu_id: int
+    variation_name: str | None = None
     quantity: int
+    unit_price_paise: int = 0
+    customizations: list[dict] = Field(default_factory=list)
+    menu_item_id: int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_menu_id(cls, data: object) -> object:
+        if hasattr(data, "menu_id"):
+            m_id = getattr(data, "menu_id")
+            return {
+                "id": getattr(data, "id"),
+                "menu_id": m_id,
+                "menu_item_id": m_id,
+                "variation_name": getattr(data, "variation_name", None),
+                "quantity": getattr(data, "quantity"),
+                "unit_price_paise": getattr(data, "unit_price_paise", 0),
+                "customizations": getattr(data, "customizations", None) or [],
+            }
+        return data
 
 
 class AccountsPageOut(BaseModel):
@@ -201,10 +263,14 @@ class AccountsPageOut(BaseModel):
 
 
 class TokenOut(BaseModel):
-    access_token: str
+    access_token: str | None = None
     token_type: str = "bearer"
-    expires_in: int
-    account: AccountOut
+    expires_in: int | None = None
+    account: AccountOut | None = None
+    requires_2fa: bool = False
+    temp_token: str | None = None
+    email: str | None = None
+    role: Role | None = None
 
 
 class MenuItemVariationInput(BaseModel):
@@ -245,7 +311,10 @@ class MenuItemOut(ORMModel):
     is_available: bool
     is_paused: bool = False
     is_featured: bool
+    is_customizable: bool = False
+    base_price_paise: int | None = None
     variations: list[dict] = Field(default_factory=list)
+    sections: list[dict] = Field(default_factory=list)
     discount_campaign_name: str | None = None
     popularity_count: int = 0
 
@@ -256,6 +325,22 @@ class MenuItemOut(ORMModel):
             import json
             data = dict(value.__dict__)
             data["image_url"] = (value.image_urls or [None])[0]
+            data["is_customizable"] = bool(getattr(value, "is_customizable", False))
+            data["base_price_paise"] = getattr(value, "base_price_paise", None)
+            if hasattr(value, "sections") and value.sections:
+                data["sections"] = [
+                    {
+                        "id": s.id,
+                        "name": s.name,
+                        "position": s.position,
+                        "required": s.required,
+                        "options": s.options or [],
+                        "section_type": getattr(s, "section_type", "CUSTOM"),
+                    }
+                    for s in value.sections
+                ]
+            else:
+                data["sections"] = []
             cats = getattr(value, "categories", []) or []
             cat_names = [c.name for c in cats if getattr(c, "name", None)]
             cat_ids = [c.id for c in cats if getattr(c, "id", None) is not None]
@@ -341,6 +426,20 @@ class OrderCreate(BaseModel):
         return self
     scheduled_for: datetime | None = None
 
+    @field_validator("scheduled_for", mode="before")
+    @classmethod
+    def parse_scheduled_for(cls, value):
+        if not value or not isinstance(value, str):
+            return value
+        val = value.strip()
+        if not val:
+            return None
+        if "T" not in val and ":" in val:
+            from zoneinfo import ZoneInfo
+            now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+            val = f"{now_ist.strftime('%Y-%m-%d')}T{val}"
+        return val
+
     @field_validator("items")
     @classmethod
     def unique_items(cls, items: list[OrderLineInput]) -> list[OrderLineInput]:
@@ -411,6 +510,28 @@ class RestaurantSettingsInput(BaseModel):
     driver_geofence_meters: int = Field(default=500, ge=50, le=50000)
     haversine_routing_factor: float = Field(default=1.3, ge=1.0, le=4.0)
 
+    @field_validator("phone", mode="before")
+    @classmethod
+    def validate_phone_str(cls, value: str) -> str:
+        if not value:
+            return value
+        parts = [p.strip() for p in value.split(",") if p.strip() and p.strip() != "+91"]
+        normalized = [normalize_phone_e164(p) for p in parts]
+        return ", ".join(filter(None, normalized))
+
+    @field_validator("phones", mode="before")
+    @classmethod
+    def validate_phones_list(cls, value: list[str]) -> list[str]:
+        if not value:
+            return []
+        normalized = []
+        for p in value:
+            if p and p.strip() and p.strip() != "+91":
+                norm = normalize_phone_e164(p)
+                if norm:
+                    normalized.append(norm)
+        return normalized
+
 
 class RestaurantSettingsOut(ORMModel):
     id: int
@@ -446,6 +567,23 @@ class RestaurantSettingsOut(ORMModel):
         phones = [p.strip() for p in raw_phone.split(",") if p.strip()]
         data["phones"] = phones
         return data
+
+
+class PublicRestaurantOut(ORMModel):
+    restaurant_name: str
+    tagline: str
+    phone: str
+    phones: list[str] = Field(default_factory=list)
+    address: str
+    latitude: float | None = None
+    longitude: float | None = None
+    minimum_order_paise: int
+    delivery_radius_km: float
+    free_delivery_radius_km: float
+    delivery_fee_per_km_paise: int
+    accepting_orders: bool
+    is_restaurant_open: bool
+    weekly_schedule: dict = Field(default_factory=dict)
 
 
 class DriverDutyInput(BaseModel):
@@ -582,6 +720,11 @@ class CustomMenuItemOut(ORMModel):
     def derive_custom_fields(cls, value):
         if hasattr(value, "image_urls"):
             data = dict(value.__dict__)
+            base_price = getattr(value, "base_price_paise", None)
+            if base_price is None:
+                base_price = getattr(value, "price_paise", 0)
+            data["base_price_paise"] = base_price
+            data["price_paise"] = getattr(value, "price_paise", base_price)
             data["image_url"] = (value.image_urls or [None])[0]
             cats = getattr(value, "categories", []) or []
             cat_names = [c.name for c in cats if getattr(c, "name", None)]
@@ -613,6 +756,8 @@ class CustomMenuItemOut(ORMModel):
             data["lowest_price_paise"] = lowest
             return data
         elif isinstance(value, dict):
+            if "base_price_paise" not in value and "price_paise" in value:
+                value["base_price_paise"] = value["price_paise"]
             value["is_paused"] = bool(value.get("is_paused") or value.get("paused_by_id") is not None)
             cats = value.get("categories") or []
             if not cats and value.get("category"):

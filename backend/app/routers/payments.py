@@ -26,6 +26,8 @@ async def verify_checkout(data: VerifyPayment, account: CurrentAccount, db: DbSe
     order = db.get(Order, payment.order_id)
     if not order or order.customer_id != account.id:
         raise HTTPException(status_code=404, detail="Payment session not found")
+    if payment.status in {PaymentStatus.REFUND_PENDING, PaymentStatus.REFUNDED}:
+        return {"status": payment.status, "order_id": order.order_id}
     if payment.status == PaymentStatus.PAID:
         if order.status == OrderStatus.CANCELLED and payment.method == PaymentMethod.RAZORPAY:
             await issue_razorpay_refund(order, payment)
@@ -51,7 +53,7 @@ async def verify_checkout(data: VerifyPayment, account: CurrentAccount, db: DbSe
     payment.status = PaymentStatus.PAID
     if order.customer_id:
         db.query(CartItem).filter(CartItem.customer_id == order.customer_id).delete(synchronize_session=False)
-    if order.status == OrderStatus.CANCELLED:
+    if order.status == OrderStatus.CANCELLED and payment.status not in {PaymentStatus.REFUND_PENDING, PaymentStatus.REFUNDED}:
         await issue_razorpay_refund(order, payment)
     db.commit()
     return {"status": payment.status, "order_id": order.order_id}
