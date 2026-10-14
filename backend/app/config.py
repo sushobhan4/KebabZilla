@@ -50,6 +50,38 @@ class Settings(BaseSettings):
     gcs_project_id: str = "kebabzilla"
     gcs_menu_images_folder: str = "menuImages"
 
+    @model_validator(mode="before")
+    @classmethod
+    def map_legacy_env_aliases(cls, data: dict) -> dict:
+        import os
+        alias_map = {
+            "jwt_secret": ["JWTsecret", "jwtSecret", "JWT_SECRET"],
+            "database_url": ["databaseURL", "databaseUrl", "DATABASE_URL"],
+            "cors_origins": ["corsOrigins", "CORS_ORIGINS"],
+            "gcs_bucket_name": ["GCSbucket", "gcsBucket", "GCS_BUCKET_NAME"],
+            "gcs_project_id": ["GCSprojectID", "gcsProjectID", "GCS_PROJECT_ID"],
+            "google_client_id": ["googleClientID", "GOOGLE_CLIENT_ID"],
+            "google_client_secret": ["googleClientSecret", "GOOGLE_CLIENT_SECRET"],
+            "google_maps_api_key": ["googleMapAPIkey", "googleMapsApiKey", "GOOGLE_MAPS_API_KEY"],
+            "razorpay_key_id": ["razorpayKeyID", "razorpayKeyId", "RAZORPAY_KEY_ID"],
+            "razorpay_key_secret": ["razorpayKeySecret", "RAZORPAY_KEY_SECRET"],
+            "seed_admin_email": ["seedAdminEmail", "SEED_ADMIN_EMAIL"],
+            "seed_admin_password": ["seedAdminPassword", "SEED_ADMIN_PASSWORD"],
+            "smtp_email": ["SMTPemail", "smtpEmail", "SMTP_EMAIL"],
+            "smtp_password": ["SMTPpassword", "smtpPassword", "SMTP_PASSWORD"],
+        }
+        res = dict(data) if isinstance(data, dict) else {}
+        for field, aliases in alias_map.items():
+            if res.get(field) is None:
+                for alias in aliases:
+                    if alias in res and res[alias] is not None:
+                        res[field] = res[alias]
+                        break
+                    elif alias in os.environ and os.environ[alias]:
+                        res[field] = os.environ[alias]
+                        break
+        return res
+
     @field_validator("database_url", mode="before")
     @classmethod
     def normalize_database_url(cls, value: object) -> object:
