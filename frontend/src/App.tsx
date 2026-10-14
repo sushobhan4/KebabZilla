@@ -8,6 +8,7 @@ import { Brand, Button, Notice } from './components'
 import Storefront from './pages/Storefront'
 import { getPreference, setPreference } from './cookies'
 import { CookieConsentBanner, CookiePolicyModal, CookiePreferencesModal, PrivacyPolicyModal, DataPolicyModal } from './components/CookieConsent'
+import { liquidGlassManager } from './vendor/liquidGlassManager'
 
 const OrdersPage = lazy(() => import('./pages/Orders'))
 const Operations = lazy(() => import('./pages/Operations'))
@@ -408,6 +409,13 @@ export default function App() {
   const [cookiePreferencesOpen, setCookiePreferencesOpen] = useState(false)
   const [privacyPolicyOpen, setPrivacyPolicyOpen] = useState(false)
   const [dataPolicyOpen, setDataPolicyOpen] = useState(false)
+
+  useEffect(() => {
+    liquidGlassManager.start()
+    return () => {
+      liquidGlassManager.stop()
+    }
+  }, [])
 
   const phoneList = (restaurant?.phones && restaurant.phones.length > 0)
     ? restaurant.phones

@@ -52,8 +52,9 @@ export function RoundedSelect({ value, options, onChange, className = '', disabl
       const menuHeight = Math.min(menuElement.scrollHeight, 280)
       const placeAbove = availableBelow < menuHeight && availableAbove > availableBelow
       const maxHeight = Math.max(80, Math.min(280, placeAbove ? availableAbove : availableBelow))
-      const width = Math.min(Math.max(triggerRect.width, menuElement.scrollWidth), window.innerWidth - viewportPadding * 2)
-      const left = Math.max(viewportPadding, Math.min(triggerRect.left, window.innerWidth - width - viewportPadding))
+      const width = Math.min(Math.max(triggerRect.width, menuElement.scrollWidth, 180), window.innerWidth - viewportPadding * 2)
+      const preferredLeft = triggerRect.left + width <= window.innerWidth - viewportPadding ? triggerRect.left : triggerRect.right - width
+      const left = Math.max(viewportPadding, Math.min(preferredLeft, window.innerWidth - width - viewportPadding))
       const top = placeAbove
         ? Math.max(viewportPadding, triggerRect.top - 7 - Math.min(menuHeight, maxHeight))
         : Math.min(window.innerHeight - viewportPadding, triggerRect.bottom + 7)
@@ -63,8 +64,8 @@ export function RoundedSelect({ value, options, onChange, className = '', disabl
         top,
         left,
         right: 'auto',
-        width: Math.round(triggerRect.width),
-        minWidth: Math.round(triggerRect.width),
+        width: Math.round(width),
+        minWidth: Math.round(width),
         maxWidth: window.innerWidth - viewportPadding * 2,
         maxHeight,
         zIndex: 1000,

@@ -5,6 +5,7 @@ import { api, formatINR, formatSavedAddress, getCustomItemLowestPrice, getMenuIt
 import { useAuth } from '../state'
 import { Button, EmptyState, Loading, Notice, QuantityPicker, RoundedSelect, RoundedTimePicker } from '../components'
 import { launchCheckout, verifyRazorpayPayment } from '../payments'
+import { liquidGlassManager } from '../vendor/liquidGlassManager'
 
 type CartLine = {
   item: MenuItem
@@ -33,6 +34,10 @@ export default function Storefront() {
     } catch {}
     return []
   })
+
+  useEffect(() => {
+    liquidGlassManager.invalidateAll()
+  }, [category, menuSearch, menuSort])
   const [activeDetailItem, setActiveDetailItem] = useState<MenuItem | null>(null)
   const [customizingModalItem, setCustomizingModalItem] = useState<MenuItem | null>(null)
   const [variationModalItem, setVariationModalItem] = useState<MenuItem | null>(null)
@@ -1007,7 +1012,7 @@ export default function Storefront() {
     <section className="menu-section" id="menu"><div className="menu-intro"><div><h2>Menu</h2><p>Choose what you’d like to order.</p></div></div>
       {error && <Notice onDismiss={() => setError('')}>{error}</Notice>}
       {orderingClosed && <Notice tone="info">We’re taking a short breather. Ordering will be back soon.</Notice>}
-      <div className="menu-tabs">{categories.map((name) => <button className={`menu-tab ${category === name ? 'active' : ''}`} key={name} onClick={() => setCategory(name)}>{name}</button>)}</div>
+      <div className="menu-tabs">{categories.map((name) => <button className={`menu-tab ${category === name ? 'active' : ''}`} key={name} onClick={() => { setCategory(name); liquidGlassManager.invalidateAll(); }}>{name}</button>)}</div>
       <div className="storefront-sticky-controls">
         <div className="menu-discovery-controls">
           <label className="menu-search">
