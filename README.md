@@ -71,3 +71,32 @@ For production delivery OTPs, configure a transactional SMS adapter using `DELIV
 Password recovery sends a six-digit, single-use code by SMTP. Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`, and `SMTP_FROM_NAME` in the API environment before enabling the Forgot password flow. Codes expire after 10 minutes and are stored only as hashes.
 
 All money values are integer paise. Menu prices are tax-inclusive; scheduled discounts are stored in `menu_discounts` and applied only while their campaign is active. Ended discount campaigns are retained for history and cannot be edited or deleted. The API re-prices order lines from the menu at submission time and validates every state change server-side.
+
+## Fleet Dispatch & ALNS Optimization Engine
+
+The backend includes a high-performance Adaptive Large Neighborhood Search (ALNS) metaheuristic dispatch engine (`backend/app/clustering.py`) for multi-stop 2-wheeler delivery batching:
+
+- **Mathematical Objectives**: Minimizes total fleet travel distance and maximum dispatch makespan while strictly enforcing vehicle capacity (`max_orders_per_driver`) and hot food customer delivery SLA windows (`customer_sla_minutes`).
+- **Route Matrix & Distance Fallbacks**: Precomputes Google Routes API distance/duration matrices, with high-speed Haversine and configurable routing factor (`haversine_routing_factor`, default `1.3627`) fallback models.
+- **ALNS Iteration Controls**: Supports an automated low-latency profile (220 cycles) or manual administrator override (10–5000 cycles).
+- **Dynamic Speed Auto-Calibration**: Automatically stamps `delivery_started_at` when an order transitions to `OUT_FOR_DELIVERY` and `delivered_at` upon OTP verification. Recalculates actual 2-wheeler average delivery speed after every delivery and saves it to the database, while offering an interactive `±10 km/h` fine-tuning slider in the admin console.
+- **Driver Geofence**: Enforces rider proximity checks (`driver_geofence_meters`, default 500m) before batch assignment.
+- **Fleet Availability**: Active clocked-in drivers ready for dispatch are surfaced directly in the Admin Overview metrics dashboard.
+
+## Checkout & Delivery Fee Calculation
+
+The Checkout configuration governs order acceptance and delivery fee pricing:
+
+- **Minimum Order Amount**: Minimum cart subtotal required to place a delivery order.
+- **Maximum Delivery Radius**: Hard geofence limit beyond which delivery orders are rejected.
+- **Free Delivery Radius & Fee per km**: Configurable radius within which delivery is free, along with standard per-km delivery rates.
+- **Charge from 0 km Beyond Free Radius**: Configurable toggle rule:
+  - *Disabled (default)*: Customers pay only for the incremental distance beyond the free radius (e.g. at 2 km with 1 km free @ ₹10/km, fee is `(2 - 1) × ₹10 = ₹10`).
+  - *Enabled*: Orders within the free radius are free; once exceeded, full distance from 0 km is charged (e.g. at 2 km, fee is `2 × ₹10 = ₹20`).
+
+## High-Performance Caching Layer
+
+An in-memory thread-safe TTL cache layer (`backend/app/cache.py`) eliminates redundant database queries for high-frequency public and operational endpoints:
+
+- Caches public restaurant metadata, published menu categories and items, delivery recommended batches, staff live queues, and admin configuration.
+- Proactively invalidated on state mutations (e.g., order transitions, menu edits, discount campaign activations, driver duty toggles) ensuring sub-millisecond read latency without stale data.

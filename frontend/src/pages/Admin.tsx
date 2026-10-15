@@ -180,7 +180,7 @@ function Overview() {
         api<PageData<Account>>("/admin/accounts?limit=5"),
         api<Report>("/admin/reports/sales?period=week"),
         api<typeof events>("/admin/events?limit=12"),
-        api<Restaurant>("/admin/settings"),
+        api<Restaurant>("/admin/settings").catch(() => null as unknown as Restaurant),
       ])
         .then(([ordersData, people, sales, log, settingsData]) => {
           setOrders(ordersData.items);
@@ -5461,84 +5461,88 @@ function SettingsPage() {
                     }
                   />
                 </label>
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "8px",
-                    padding: "12px 16px",
-                    border: "1px solid #e8e5dd",
-                    borderRadius: "14px",
-                    background: "#fff",
-                    boxSizing: "border-box",
-                  }}
-                >
+                <div className="settings-centered-field full-field">
                   <div
+                    className="settings-centered-box"
                     style={{
                       display: "flex",
-                      flexDirection: "row",
-                      alignItems: "center",
-                      justifyContent: "space-between",
+                      flexDirection: "column",
+                      gap: "8px",
+                      padding: "12px 16px",
+                      border: "1px solid #e8e5dd",
+                      borderRadius: "14px",
+                      background: "#fff",
+                      boxSizing: "border-box",
+                      width: "100%",
                     }}
                   >
-                    <div>
-                      <span
-                        style={{
-                          fontSize: "0.95rem",
-                          fontWeight: 600,
-                          color: "#29332f",
-                          textAlign: "left",
-                          display: "block",
-                        }}
-                      >
-                        Charge from 0 km beyond free radius
-                      </span>
-                      <small style={{ color: "#777", fontSize: "0.8rem" }}>
-                        {form.charge_from_zero_beyond_free_radius
-                          ? "Charge full distance from 0 km once the free radius is exceeded."
-                          : "Charge only the incremental distance beyond the free radius."}
-                      </small>
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "row",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      <div>
+                        <span
+                          style={{
+                            fontSize: "0.95rem",
+                            fontWeight: 600,
+                            color: "#29332f",
+                            textAlign: "left",
+                            display: "block",
+                          }}
+                        >
+                          Charge from 0 km beyond free radius
+                        </span>
+                        <small style={{ color: "#777", fontSize: "0.8rem" }}>
+                          {form.charge_from_zero_beyond_free_radius
+                            ? "Charge full distance from 0 km once the free radius is exceeded."
+                            : "Charge only the incremental distance beyond the free radius."}
+                        </small>
+                      </div>
+                      <label className="toggle-switch" style={{ margin: 0, flexShrink: 0 }}>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(form.charge_from_zero_beyond_free_radius)}
+                          onChange={(event) =>
+                            change("charge_from_zero_beyond_free_radius", event.target.checked)
+                          }
+                        />
+                        <span />
+                      </label>
                     </div>
-                    <label className="toggle-switch" style={{ margin: 0, flexShrink: 0 }}>
-                      <input
-                        type="checkbox"
-                        checked={Boolean(form.charge_from_zero_beyond_free_radius)}
-                        onChange={(event) =>
-                          change("charge_from_zero_beyond_free_radius", event.target.checked)
-                        }
-                      />
-                      <span />
-                    </label>
-                  </div>
-                  <div
-                    style={{
-                      marginTop: "4px",
-                      padding: "8px 12px",
-                      borderRadius: "8px",
-                      background: "#fbfaf8",
-                      border: "1px dashed #e8e5dd",
-                      fontSize: "0.8rem",
-                      color: "#555",
-                      lineHeight: 1.4,
-                    }}
-                  >
-                    {form.charge_from_zero_beyond_free_radius ? (
-                      <span>
-                        <strong>Active rule:</strong> Up to{" "}
-                        <strong>{form.free_delivery_radius_km || 0} km</strong> is free.
-                        Beyond {form.free_delivery_radius_km || 0} km, full distance is charged
-                        from 0 km (e.g. at 2 km, customer pays 2 × ₹{form.delivery_fee_per_km_paise || 10} ={" "}
-                        <strong>₹{2 * (form.delivery_fee_per_km_paise || 10)}</strong>).
-                      </span>
-                    ) : (
-                      <span>
-                        <strong>Active rule:</strong> Up to{" "}
-                        <strong>{form.free_delivery_radius_km || 0} km</strong> is free.
-                        Beyond {form.free_delivery_radius_km || 0} km, only excess distance is charged
-                        (e.g. at 2 km with 1 km free, customer pays (2 - 1) × ₹{form.delivery_fee_per_km_paise || 10} ={" "}
-                        <strong>₹{(2 - 1) * (form.delivery_fee_per_km_paise || 10)}</strong>).
-                      </span>
-                    )}
+                    <div
+                      style={{
+                        marginTop: "4px",
+                        padding: "8px 12px",
+                        borderRadius: "8px",
+                        background: "#fbfaf8",
+                        border: "1px dashed #e8e5dd",
+                        fontSize: "0.8rem",
+                        color: "#555",
+                        lineHeight: 1.4,
+                      }}
+                    >
+                      {form.charge_from_zero_beyond_free_radius ? (
+                        <span>
+                          <strong>Active rule:</strong> Up to{" "}
+                          <strong>{form.free_delivery_radius_km || 0} km</strong> is free.
+                          Beyond {form.free_delivery_radius_km || 0} km, full distance is charged
+                          from 0 km (e.g. at 2 km, customer pays 2 × ₹{form.delivery_fee_per_km_paise || 10} ={" "}
+                          <strong>₹{2 * (form.delivery_fee_per_km_paise || 10)}</strong>).
+                        </span>
+                      ) : (
+                        <span>
+                          <strong>Active rule:</strong> Up to{" "}
+                          <strong>{form.free_delivery_radius_km || 0} km</strong> is free.
+                          Beyond {form.free_delivery_radius_km || 0} km, only excess distance is charged
+                          (e.g. at 2 km with 1 km free, customer pays (2 - 1) × ₹{form.delivery_fee_per_km_paise || 10} ={" "}
+                          <strong>₹{(2 - 1) * (form.delivery_fee_per_km_paise || 10)}</strong>).
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -5588,9 +5592,9 @@ function SettingsPage() {
                   </small>
                 </label>
 
-                {/* Row 2: Routing Factor (centered) */}
+                {/* Row 2: Routing Factor (full width) */}
                 <div className="settings-centered-field full-field">
-                  <label className="field-label" style={{ width: "100%", maxWidth: "calc(50% - 7px)" }}>
+                  <label className="field-label">
                     Routing Factor
                     <input
                       type="number"
@@ -5795,6 +5799,9 @@ function SettingsPage() {
                         )
                       }
                     />
+                    <small style={{ color: "#777", fontSize: "0.8rem", marginTop: "2px" }}>
+                      Maximum radius around the restaurant for driver order assignment (default: 500m).
+                    </small>
                   </label>
                 )}
 

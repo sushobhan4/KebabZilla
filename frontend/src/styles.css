@@ -1166,7 +1166,7 @@ select:focus-visible {
 .food-card {
   width: calc((100% - 2 * var(--food-grid-gap, 17px)) / 3);
   max-width: calc((100% - 2 * var(--food-grid-gap, 17px)) / 3);
-  flex: 0 0 calc((100% - 2 * var(--food-grid-gap, 17px)) / 3);
+  flex: 0 1 calc((100% - 2 * var(--food-grid-gap, 17px)) / 3);
   box-sizing: border-box;
   overflow: hidden;
   border: 1px solid #ebe8e0;
@@ -1310,6 +1310,9 @@ select:focus-visible {
 }
 .food-card-content {
   padding: 15px 16px 14px;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
 }
 .food-card-title-row {
   display: flex;
@@ -1368,7 +1371,7 @@ select:focus-visible {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-top: 14px;
+  margin-top: auto;
   padding-top: 11px;
   border-top: 1px solid #f0eee8;
 }
@@ -4817,6 +4820,7 @@ select:focus-visible {
   .settings-save-button {
     width: 100%;
     max-width: 400px;
+    min-width: 0 !important;
     padding: 11px 20px !important;
     font-size: 0.88rem !important;
   }
@@ -5020,13 +5024,15 @@ select:focus-visible {
   justify-content: center;
   width: 100%;
 }
-.settings-centered-field > .field-label {
+.settings-centered-field > .field-label,
+.settings-centered-field > .settings-centered-box {
   width: 100%;
-  max-width: calc(50% - 7px);
+  max-width: 100%;
 }
 @media (max-width: 760px) {
-  .settings-centered-field > .field-label {
-    max-width: 100%;
+  .settings-centered-field > .field-label,
+  .settings-centered-field > .settings-centered-box {
+    max-width: 100% !important;
   }
 }
 .settings-fields-compact {
@@ -5174,7 +5180,8 @@ select:focus-visible {
     font-size: 178px;
   }
   .food-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    --food-grid-gap: 17px;
+    gap: 17px;
   }
   .workspace-layout {
     grid-template-columns: 205px minmax(0, 1fr);
@@ -5292,7 +5299,7 @@ select:focus-visible {
   .food-card {
     width: calc((100% - 17px) / 2);
     max-width: calc((100% - 17px) / 2);
-    flex: 0 0 calc((100% - 17px) / 2);
+    flex: 0 1 calc((100% - 17px) / 2);
   }
   .food-image {
     height: 170px;
@@ -5619,7 +5626,7 @@ select:focus-visible {
   .food-card {
     width: calc((100% - 9px) / 2);
     max-width: calc((100% - 9px) / 2);
-    flex: 0 0 calc((100% - 9px) / 2);
+    flex: 0 1 calc((100% - 9px) / 2);
   }
   .food-image {
     height: 128px;
@@ -8661,7 +8668,7 @@ body {
   .food-card {
     width: calc((100% - 34px) / 3);
     max-width: calc((100% - 34px) / 3);
-    flex: 0 0 calc((100% - 34px) / 3);
+    flex: 0 1 calc((100% - 34px) / 3);
   }
   .admin-order-summary {
     min-width: 620px;
@@ -8733,7 +8740,7 @@ body {
   .food-card {
     width: calc((100% - 10px) / 2);
     max-width: calc((100% - 10px) / 2);
-    flex: 0 0 calc((100% - 10px) / 2);
+    flex: 0 1 calc((100% - 10px) / 2);
   }
   .food-image {
     height: clamp(112px, 32vw, 155px);
@@ -8821,7 +8828,7 @@ body {
   .food-card {
     width: calc((100% - 8px) / 2);
     max-width: calc((100% - 8px) / 2);
-    flex: 0 0 calc((100% - 8px) / 2);
+    flex: 0 1 calc((100% - 8px) / 2);
   }
   .food-card-content {
     padding: 9px;
