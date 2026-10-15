@@ -59,6 +59,22 @@ if settings.database_url.startswith("sqlite"):
         except Exception:
             pass
         cursor.close()
+else:
+    def ensure_postgres_schema():
+        try:
+            with engine.connect() as conn:
+                with conn.begin():
+                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS average_delivery_speed_kmh FLOAT DEFAULT 30.0;")
+                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS customer_sla_minutes FLOAT DEFAULT 36.0;")
+                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS alns_max_iterations_mode VARCHAR(10) DEFAULT 'AUTO';")
+                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS alns_max_iterations INTEGER DEFAULT 220;")
+                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS max_orders_per_driver INTEGER DEFAULT 5;")
+                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS charge_from_zero_beyond_free_radius BOOLEAN DEFAULT FALSE;")
+                    conn.exec_driver_sql("ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_started_at TIMESTAMPTZ;")
+        except Exception:
+            pass
+
+    ensure_postgres_schema()
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
