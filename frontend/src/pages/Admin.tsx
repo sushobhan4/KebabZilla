@@ -169,6 +169,7 @@ function Overview() {
     useState<PageData<Account> | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [restaurantSettings, setRestaurantSettings] = useState<Restaurant | null>(null);
   const [events, setEvents] = useState<
     { id: number; message: string; actor_name: string; created_at: string }[]
   >([]);
@@ -179,13 +180,15 @@ function Overview() {
         api<PageData<Account>>("/admin/accounts?limit=5"),
         api<Report>("/admin/reports/sales?period=week"),
         api<typeof events>("/admin/events?limit=12"),
+        api<Restaurant>("/admin/settings"),
       ])
-        .then(([ordersData, people, sales, log]) => {
+        .then(([ordersData, people, sales, log, settingsData]) => {
           setOrders(ordersData.items);
           setOrderSummary(ordersData);
           setAccountSummary(people);
           setReport(sales);
           setEvents(log);
+          setRestaurantSettings(settingsData);
         })
         .catch((err) =>
           setError(
@@ -312,6 +315,27 @@ function Overview() {
           <div className="admin-stat-foot">
             <span>Out with a rider</span>
             <span className="stat-highlight">Being delivered</span>
+          </div>
+        </div>
+        <div className="admin-stat-card">
+          <div className="admin-stat-top">
+            <span className="admin-stat-icon stat-icon-soft-green">
+              <Truck size={18} />
+            </span>
+            <Link className="stat-open-link" to="/admin/team">
+              <ArrowRight size={15} />
+            </Link>
+          </div>
+          <div className="admin-stat-number">
+            {restaurantSettings?.available_drivers_ready ?? 0}
+          </div>
+          <div className="admin-stat-foot">
+            <span>Available drivers</span>
+            <span className="stat-highlight">
+              {(restaurantSettings?.available_drivers_ready ?? 0) > 0
+                ? `${restaurantSettings?.available_drivers_ready} ready to deliver`
+                : "0 drivers ready"}
+            </span>
           </div>
         </div>
       </section>
@@ -5523,146 +5547,71 @@ function SettingsPage() {
             <section className="admin-panel settings-card">
               <h2>Fleet dispatch settings</h2>
               <div className="settings-fields">
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "12px 16px",
-                    minHeight: "56px",
-                    border: "1px solid #e8e5dd",
-                    borderRadius: "14px",
-                    background: "#fbfaf8",
-                    boxSizing: "border-box",
-                  }}
-                >
-                  <div>
-                    <span
-                      style={{
-                        fontSize: "0.95rem",
-                        fontWeight: 600,
-                        color: "#29332f",
-                        textAlign: "left",
-                        display: "block",
-                      }}
-                    >
-                      Max Available Drivers
-                    </span>
-                    <small style={{ color: "#777", fontSize: "0.8rem" }}>
-                      Reads all available drivers who are currently ready to deliver.
-                    </small>
-                  </div>
-                  <span
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "6px",
-                      padding: "4px 12px",
-                      borderRadius: "999px",
-                      background:
-                        (form.available_drivers_ready ?? 0) > 0
-                          ? "#e7f6ec"
-                          : "#fef3e7",
-                      color:
-                        (form.available_drivers_ready ?? 0) > 0
-                          ? "#1b6338"
-                          : "#995300",
-                      fontSize: "0.85rem",
-                      fontWeight: 700,
-                    }}
-                  >
-                    <span
-                      style={{
-                        width: "8px",
-                        height: "8px",
-                        borderRadius: "50%",
-                        background:
-                          (form.available_drivers_ready ?? 0) > 0
-                            ? "#2b7a4b"
-                            : "#d97706",
-                      }}
-                    />
-                    {form.available_drivers_ready ?? 0} driver{(form.available_drivers_ready ?? 0) === 1 ? "" : "s"} ready
-                  </span>
-                </div>
-
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "12px 16px",
-                    minHeight: "56px",
-                    border: "1px solid #e8e5dd",
-                    borderRadius: "12px",
-                    background: "#fff",
-                    boxSizing: "border-box",
-                    margin: 0,
-                  }}
-                >
-                  <span
-                    style={{
-                      fontSize: "0.95rem",
-                      fontWeight: 600,
-                      color: "#29332f",
-                      textAlign: "left",
-                    }}
-                  >
-                    Delivery Driver Geofence
-                  </span>
-                  <label className="toggle-switch" style={{ margin: 0, flexShrink: 0 }}>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(form.enforce_driver_geofence)}
-                      onChange={(event) =>
-                        change("enforce_driver_geofence", event.target.checked)
-                      }
-                    />
-                    <span />
-                  </label>
-                </div>
-                {form.enforce_driver_geofence ? (
-                  <label className="field-label" style={{ margin: 0, textAlign: "left" }}>
-                    Allowed Distance from Shop (in m)
-                    <input
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={form.driver_geofence_meters || 500}
-                      onChange={(event) =>
-                        change(
-                          "driver_geofence_meters",
-                          Number(event.target.value),
-                        )
-                      }
-                    />
-                  </label>
-                ) : (
-                  <div />
-                )}
-
+                {/* Row 1: Max Delivery per Delivery Guy followed by Customer SLA */}
                 <label className="field-label">
-                  Routing Factor
+                  Max Delivery per Delivery Guy (Orders at Once)
                   <input
                     type="number"
                     min="1"
-                    max="4"
-                    step="any"
-                    value={form.haversine_routing_factor ?? 1.3627}
+                    max="20"
+                    step="1"
+                    value={form.max_orders_per_driver ?? 5}
                     onChange={(event) =>
                       change(
-                        "haversine_routing_factor",
+                        "max_orders_per_driver",
+                        Math.max(1, Math.min(20, Number(event.target.value))),
+                      )
+                    }
+                  />
+                  <small style={{ color: "#777", fontSize: "0.8rem", marginTop: "2px" }}>
+                    Max number of orders a delivery rider can take at once on a single dispatch trip (default: 5).
+                  </small>
+                </label>
+
+                <label className="field-label">
+                  Customer SLA (in minutes)
+                  <input
+                    type="number"
+                    min="5"
+                    max="180"
+                    step="1"
+                    value={form.customer_sla_minutes ?? 36.0}
+                    onChange={(event) =>
+                      change(
+                        "customer_sla_minutes",
                         Number(event.target.value),
                       )
                     }
                   />
                   <small style={{ color: "#777", fontSize: "0.8rem", marginTop: "2px" }}>
-                    Road distance multiplier for actual street distance fallback (default: 1.3627).
+                    Target maximum customer wait time window for hot food arrival (default: 36 mins).
                   </small>
                 </label>
 
+                {/* Row 2: Routing Factor (centered) */}
+                <div className="settings-centered-field full-field">
+                  <label className="field-label" style={{ width: "100%", maxWidth: "calc(50% - 7px)" }}>
+                    Routing Factor
+                    <input
+                      type="number"
+                      min="1"
+                      max="4"
+                      step="any"
+                      value={form.haversine_routing_factor ?? 1.3627}
+                      onChange={(event) =>
+                        change(
+                          "haversine_routing_factor",
+                          Number(event.target.value),
+                        )
+                      }
+                    />
+                    <small style={{ color: "#777", fontSize: "0.8rem", marginTop: "2px" }}>
+                      Road distance multiplier for actual street distance fallback (default: 1.3627).
+                    </small>
+                  </label>
+                </div>
+
+                {/* Row 3: Average Delivery Speed (takes full width) */}
                 {(() => {
                   const baseSpeed = Number(storedBaseSpeed || 30.0);
                   const minSpeed = Math.max(5, Math.round((baseSpeed - 10) * 10) / 10);
@@ -5672,6 +5621,7 @@ function SettingsPage() {
 
                   return (
                     <div
+                      className="full-field"
                       style={{
                         display: "flex",
                         flexDirection: "column",
@@ -5681,6 +5631,7 @@ function SettingsPage() {
                         borderRadius: "14px",
                         background: "#fff",
                         boxSizing: "border-box",
+                        width: "100%",
                       }}
                     >
                       <div
@@ -5790,151 +5741,165 @@ function SettingsPage() {
                   );
                 })()}
 
-                <label className="field-label">
-                  Customer SLA (in minutes)
-                  <input
-                    type="number"
-                    min="5"
-                    max="180"
-                    step="1"
-                    value={form.customer_sla_minutes ?? 36.0}
-                    onChange={(event) =>
-                      change(
-                        "customer_sla_minutes",
-                        Number(event.target.value),
-                      )
-                    }
-                  />
-                  <small style={{ color: "#777", fontSize: "0.8rem", marginTop: "2px" }}>
-                    Target maximum customer wait time window for hot food arrival (default: 36 mins).
-                  </small>
-                </label>
-
-                <label className="field-label">
-                  Max Delivery per Delivery Guy (Orders at Once)
-                  <input
-                    type="number"
-                    min="1"
-                    max="20"
-                    step="1"
-                    value={form.max_orders_per_driver ?? 5}
-                    onChange={(event) =>
-                      change(
-                        "max_orders_per_driver",
-                        Math.max(1, Math.min(20, Number(event.target.value))),
-                      )
-                    }
-                  />
-                  <small style={{ color: "#777", fontSize: "0.8rem", marginTop: "2px" }}>
-                    Max number of orders a delivery rider can take at once on a single dispatch trip (default: 5).
-                  </small>
-                </label>
-
+                {/* Row 4: Delivery Driver Geofence followed by Allowed Distance if toggle on; full width if off */}
                 <div
+                  className={form.enforce_driver_geofence ? "" : "full-field"}
                   style={{
                     display: "flex",
-                    flexDirection: "column",
-                    gap: "8px",
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
                     padding: "12px 16px",
+                    minHeight: "56px",
+                    border: "1px solid #e8e5dd",
+                    borderRadius: "12px",
+                    background: "#fff",
+                    boxSizing: "border-box",
+                    margin: 0,
+                    width: "100%",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: "0.95rem",
+                      fontWeight: 600,
+                      color: "#29332f",
+                      textAlign: "left",
+                    }}
+                  >
+                    Delivery Driver Geofence
+                  </span>
+                  <label className="toggle-switch" style={{ margin: 0, flexShrink: 0 }}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(form.enforce_driver_geofence)}
+                      onChange={(event) =>
+                        change("enforce_driver_geofence", event.target.checked)
+                      }
+                    />
+                    <span />
+                  </label>
+                </div>
+                {form.enforce_driver_geofence && (
+                  <label className="field-label" style={{ margin: 0, textAlign: "left" }}>
+                    Allowed Distance from Shop (in m)
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={form.driver_geofence_meters || 500}
+                      onChange={(event) =>
+                        change(
+                          "driver_geofence_meters",
+                          Number(event.target.value),
+                        )
+                      }
+                    />
+                  </label>
+                )}
+
+                {/* Row 5: ALNS Max Iterations (takes full width) */}
+                <div
+                  className="full-field"
+                  style={{
+                    display: "flex",
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "12px 16px",
+                    minHeight: "56px",
                     border: "1px solid #e8e5dd",
                     borderRadius: "14px",
                     background: "#fff",
                     boxSizing: "border-box",
+                    width: "100%",
                   }}
                 >
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "row",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                    }}
-                  >
-                    <div>
-                      <span
-                        style={{
-                          fontSize: "0.95rem",
-                          fontWeight: 600,
-                          color: "#29332f",
-                          textAlign: "left",
-                          display: "block",
-                        }}
-                      >
-                        ALNS Max Iterations
-                      </span>
-                      <small style={{ color: "#777", fontSize: "0.8rem" }}>
-                        {(form.alns_max_iterations_mode || "AUTO") === "MANUAL"
-                          ? `Manual custom value (${form.alns_max_iterations || 220} iterations)`
-                          : "Auto mode (220 iterations balanced for low latency)"}
-                      </small>
-                    </div>
-
-                    <div
+                  <div>
+                    <span
                       style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        padding: "3px",
-                        background: "#f0ede6",
-                        borderRadius: "999px",
-                        gap: "2px",
+                        fontSize: "0.95rem",
+                        fontWeight: 600,
+                        color: "#29332f",
+                        textAlign: "left",
+                        display: "block",
                       }}
                     >
-                      <button
-                        type="button"
-                        style={{
-                          border: "none",
-                          borderRadius: "999px",
-                          padding: "5px 14px",
-                          fontSize: "0.82rem",
-                          fontWeight: 600,
-                          cursor: "pointer",
-                          background:
-                            (form.alns_max_iterations_mode || "AUTO") === "AUTO"
-                              ? "#2b7a4b"
-                              : "transparent",
-                          color:
-                            (form.alns_max_iterations_mode || "AUTO") === "AUTO"
-                              ? "#ffffff"
-                              : "#555555",
-                          transition: "all 0.16s ease",
-                        }}
-                        onClick={() => change("alns_max_iterations_mode", "AUTO")}
-                      >
-                        Auto
-                      </button>
-                      <button
-                        type="button"
-                        style={{
-                          border: "none",
-                          borderRadius: "999px",
-                          padding: "5px 14px",
-                          fontSize: "0.82rem",
-                          fontWeight: 600,
-                          cursor: "pointer",
-                          background:
-                            form.alns_max_iterations_mode === "MANUAL"
-                              ? "#2b7a4b"
-                              : "transparent",
-                          color:
-                            form.alns_max_iterations_mode === "MANUAL"
-                              ? "#ffffff"
-                              : "#555555",
-                          transition: "all 0.16s ease",
-                        }}
-                        onClick={() => change("alns_max_iterations_mode", "MANUAL")}
-                      >
-                        Manual
-                      </button>
-                    </div>
+                      ALNS Max Iterations
+                    </span>
+                    <small style={{ color: "#777", fontSize: "0.8rem" }}>
+                      {(form.alns_max_iterations_mode || "AUTO") === "MANUAL"
+                        ? `Manual custom mode (${form.alns_max_iterations || 220} iterations)`
+                        : "Auto mode (220 iterations balanced for low latency)"}
+                    </small>
                   </div>
 
-                  {form.alns_max_iterations_mode === "MANUAL" && (
+                  <div
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      padding: "3px",
+                      background: "#f0ede6",
+                      borderRadius: "999px",
+                      gap: "2px",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      style={{
+                        border: "none",
+                        borderRadius: "999px",
+                        padding: "5px 14px",
+                        fontSize: "0.82rem",
+                        fontWeight: 600,
+                        cursor: "pointer",
+                        background:
+                          (form.alns_max_iterations_mode || "AUTO") === "AUTO"
+                            ? "#2b7a4b"
+                            : "transparent",
+                        color:
+                          (form.alns_max_iterations_mode || "AUTO") === "AUTO"
+                            ? "#ffffff"
+                            : "#555555",
+                        transition: "all 0.16s ease",
+                      }}
+                      onClick={() => change("alns_max_iterations_mode", "AUTO")}
+                    >
+                      Auto
+                    </button>
+                    <button
+                      type="button"
+                      style={{
+                        border: "none",
+                        borderRadius: "999px",
+                        padding: "5px 14px",
+                        fontSize: "0.82rem",
+                        fontWeight: 600,
+                        cursor: "pointer",
+                        background:
+                          form.alns_max_iterations_mode === "MANUAL"
+                            ? "#2b7a4b"
+                            : "transparent",
+                        color:
+                          form.alns_max_iterations_mode === "MANUAL"
+                            ? "#ffffff"
+                            : "#555555",
+                        transition: "all 0.16s ease",
+                      }}
+                      onClick={() => change("alns_max_iterations_mode", "MANUAL")}
+                    >
+                      Manual
+                    </button>
+                  </div>
+                </div>
+
+                {/* Row 6: Custom iteration value (only when manual) */}
+                {form.alns_max_iterations_mode === "MANUAL" && (
+                  <div className="full-field">
                     <label
                       className="field-label"
                       style={{
-                        margin: "4px 0 0",
-                        borderTop: "1px dashed #e4dfd7",
-                        paddingTop: "10px",
+                        margin: 0,
                         textAlign: "left",
                       }}
                     >
@@ -5956,15 +5921,15 @@ function SettingsPage() {
                         Specify custom number of ALNS metaheuristic optimization cycles (10 - 5000).
                       </small>
                     </label>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             </section>
           </div>
         </div>
 
-        <div className="settings-pinned-bar">
-          <div className="settings-pinned-bar-content">
+        <div className="settings-pinned-bar" style={{ display: "flex", justifyContent: "center", alignItems: "center", width: "100%", left: 0, right: 0 }}>
+          <div className="settings-pinned-bar-content" style={{ display: "flex", justifyContent: "center", alignItems: "center", width: "100%" }}>
             <Button
               type="submit"
               disabled={busy || !isDirty}
