@@ -1,4 +1,5 @@
-export const API_BASE = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '')
+const rawBase = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '')
+export const API_BASE = rawBase.endsWith('/api/v1') ? rawBase : `${rawBase}/api/v1`
 
 let accessToken: string | null = null
 
