@@ -19,8 +19,8 @@ DEFAULT_MENU = [
 def main() -> None:
     with SessionLocal() as db:
         if settings.seed_admin_password:
-            if len(settings.seed_admin_password) < 12:
-                raise SystemExit("SEED_ADMIN_PASSWORD must be at least 12 characters")
+            if len(settings.seed_admin_password) < 8:
+                raise SystemExit("SEED_ADMIN_PASSWORD must be at least 8 characters")
             email = settings.seed_admin_email.lower().strip()
             account = db.scalar(select(Account).where(Account.email == email))
             if not account:
