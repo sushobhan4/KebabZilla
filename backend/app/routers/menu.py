@@ -30,6 +30,7 @@ from app.storage import (
     is_gcs_image_referenced,
     upload_menu_image,
 )
+from app.cache import PREFIX_MENU, cache, invalidate_menu_cache
 
 router = APIRouter(prefix="/menu", tags=["menu"])
 
@@ -155,6 +156,7 @@ def create_category(data: MenuCategoryInput, db: DbSession):
     db.add(category)
     db.commit()
     db.refresh(category)
+    invalidate_menu_cache()
     return category
 
 
@@ -172,11 +174,18 @@ def delete_category(category_id: int, db: DbSession):
     db.query(CustomMenuItem).filter(CustomMenuItem.category_id == category_id).update({CustomMenuItem.category_id: None}, synchronize_session=False)
     db.delete(category)
     db.commit()
+    invalidate_menu_cache()
     return {"affected_menus": affected}
 
 
 @router.get("", response_model=list[MenuItemOut])
-def list_menu(db: DbSession):
+def list_menu(db: DbSession, response: Response):
+    cache_key = f"{PREFIX_MENU}public_list"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        response.headers["Cache-Control"] = "public, max-age=15, stale-while-revalidate=30"
+        return cached
+
     now = datetime.now(timezone.utc)
     query = select(MenuItem).where(MenuItem.is_available.is_(True), MenuItem.is_customizable.is_(False)).order_by(MenuItem.category_id, MenuItem.name)
     items = db.scalars(query).all()
@@ -204,6 +213,9 @@ def list_menu(db: DbSession):
             result["discount_campaign_name"] = discount.campaign_name
         result["popularity_count"] = int(counts.get(item.id, 0) or 0)
         results.append(result)
+
+    cache.set(cache_key, results, ttl_seconds=20.0)
+    response.headers["Cache-Control"] = "public, max-age=15, stale-while-revalidate=30"
     return results
 
 
@@ -233,6 +245,7 @@ def create_menu_item(data: MenuItemInput, db: DbSession):
     db.add(item)
     db.commit()
     db.refresh(item)
+    invalidate_menu_cache()
     return item
 
 
@@ -270,6 +283,7 @@ def update_menu_item(item_id: int, data: MenuItemInput, db: DbSession):
     if removed_urls:
         cleanup_unreferenced_gcs_images(db, removed_urls, exclude_menu_item_id=item.id)
 
+    invalidate_menu_cache()
     return item
 
 
@@ -280,4 +294,5 @@ def archive_menu_item(item_id: int, db: DbSession):
         raise HTTPException(status_code=404, detail="Menu item not found")
     item.is_available = False
     db.commit()
+    invalidate_menu_cache()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

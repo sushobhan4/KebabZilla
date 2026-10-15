@@ -24,6 +24,13 @@ from app.schemas import MenuItemOut, MenuPauseInput
 from app.security import normalize_phone_e164
 from app.config import settings
 from app.services import assemble_order, order_payload, order_total_paise, restaurant_settings, transition_order
+from app.cache import (
+    PREFIX_ORDERS,
+    cache,
+    invalidate_delivery_cache,
+    invalidate_menu_cache,
+    invalidate_orders_cache,
+)
 
 router = APIRouter(prefix="/staff", tags=["staff operations"], dependencies=[Depends(require_roles(Role.ADMIN, Role.EMPLOYEE))])
 
@@ -73,6 +80,7 @@ def staff_pause_menu_item(item_id: int, data: MenuPauseInput, actor: CurrentAcco
     item.paused_by_id = actor.id
     db.add(AdminEvent(event_type="menu_paused", message=f"{item.name} paused by {actor.name} ({data.mode})", actor_id=actor.id, details={"menu_item_id": item.id, "menu_item_name": item.name, "mode": data.mode, "paused_until": until.isoformat()}))
     db.commit()
+    invalidate_menu_cache()
     return {"menu_item_id": item.id, "menu_item_name": item.name, "employee_name": actor.name, "paused_until": until}
 
 
@@ -84,6 +92,7 @@ def staff_resume_menu_item(item_id: int, actor: CurrentAccount, db: DbSession):
     item.paused_by_id = None
     db.add(AdminEvent(event_type="menu_resumed", message=f"{item.name} restored to menu by {actor.name}", actor_id=actor.id, details={"menu_item_id": item.id, "menu_item_name": item.name}))
     db.commit()
+    invalidate_menu_cache()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -115,6 +124,7 @@ def staff_pause_custom_menu_item(item_id: int, data: MenuPauseInput, actor: Curr
     item.paused_by_id = actor.id
     db.add(AdminEvent(event_type="custom_menu_paused", message=f"Custom item '{item.name}' paused by {actor.name} ({data.mode})", actor_id=actor.id, details={"custom_menu_item_id": item.id, "custom_menu_item_name": item.name, "mode": data.mode, "paused_until": until.isoformat()}))
     db.commit()
+    invalidate_menu_cache()
     return {"menu_item_id": f"custom-{item.id}", "menu_item_name": item.name, "employee_name": actor.name, "paused_until": until}
 
 
@@ -126,11 +136,17 @@ def staff_resume_custom_menu_item(item_id: int, actor: CurrentAccount, db: DbSes
     item.paused_by_id = None
     db.add(AdminEvent(event_type="custom_menu_resumed", message=f"Custom item '{item.name}' restored to menu by {actor.name}", actor_id=actor.id, details={"custom_menu_item_id": item.id, "custom_menu_item_name": item.name}))
     db.commit()
+    invalidate_menu_cache()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/orders")
 def staff_orders(db: DbSession, status_filter: OrderStatus | None = None):
+    cache_key = f"{PREFIX_ORDERS}staff_{status_filter.value if status_filter else 'all'}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     query = (
         select(Order)
         .outerjoin(Payment, Order.order_id == Payment.order_id)
@@ -140,7 +156,9 @@ def staff_orders(db: DbSession, status_filter: OrderStatus | None = None):
     )
     if status_filter:
         query = query.where(Order.status == status_filter)
-    return [order_payload(order) for order in db.scalars(query).all()]
+    payloads = [order_payload(order) for order in db.scalars(query).all()]
+    cache.set(cache_key, payloads, ttl_seconds=6.0)
+    return payloads
 
 
 @router.patch("/orders/{order_id}/status")
@@ -158,6 +176,8 @@ def update_status(order_id: str, data: OrderStatusUpdate, actor: CurrentAccount,
     transition_order(order, data.status)
     db.add(AdminEvent(event_type="order_status", message=f"Order {order.order_id} changed to {data.status.value} by {actor.name}", actor_id=actor.id, details={"order_id": order.order_id, "status": data.status.value}))
     db.commit()
+    invalidate_orders_cache()
+    invalidate_delivery_cache()
     return order_payload(order)
 
 
@@ -191,6 +211,8 @@ def walk_in_order(data: OrderCreate, actor: CurrentAccount, db: DbSession, custo
     order.delivered_at = utcnow()
     db.add(Payment(order_id=order.order_id, method=PaymentMethod.CASH, status=PaymentStatus.PAID, amount_paise=order_total_paise(order)))
     db.commit()
+    invalidate_orders_cache()
+    invalidate_delivery_cache()
     return order_payload(order)
 
 

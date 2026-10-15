@@ -303,7 +303,13 @@ class RestaurantSettings(Base):
     distance_calculation_mode: Mapped[str] = mapped_column(String(20), default="AUTO", server_default="AUTO")
     enforce_driver_geofence: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     driver_geofence_meters: Mapped[int] = mapped_column(Integer, default=500, server_default="500")
-    haversine_routing_factor: Mapped[float] = mapped_column(Float, default=1.3, server_default="1.3")
+    haversine_routing_factor: Mapped[float] = mapped_column(Float, default=1.3627, server_default="1.3627")
+    average_delivery_speed_kmh: Mapped[float] = mapped_column(Float, default=30.0, server_default="30.0")
+    customer_sla_minutes: Mapped[float] = mapped_column(Float, default=36.0, server_default="36.0")
+    alns_max_iterations_mode: Mapped[str] = mapped_column(String(10), default="AUTO", server_default="AUTO")
+    alns_max_iterations: Mapped[int] = mapped_column(Integer, default=220, server_default="220")
+    max_orders_per_driver: Mapped[int] = mapped_column(Integer, default=5, server_default="5")
+    charge_from_zero_beyond_free_radius: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
@@ -327,6 +333,7 @@ class Order(Base):
     delivery_otp_ciphertext: Mapped[str | None] = mapped_column(String(500), nullable=True)
     delivery_otp_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     delivery_otp_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    delivery_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

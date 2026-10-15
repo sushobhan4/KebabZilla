@@ -509,7 +509,13 @@ class RestaurantSettingsInput(BaseModel):
     distance_calculation_mode: str = Field(default="AUTO", pattern=r"^(AUTO|GOOGLE_MAPS|HAVERSINE)$")
     enforce_driver_geofence: bool = Field(default=False)
     driver_geofence_meters: int = Field(default=500, ge=50, le=50000)
-    haversine_routing_factor: float = Field(default=1.3, ge=1.0, le=4.0)
+    haversine_routing_factor: float = Field(default=1.3627, ge=1.0, le=4.0)
+    average_delivery_speed_kmh: float = Field(default=30.0, ge=5.0, le=120.0)
+    customer_sla_minutes: float = Field(default=36.0, ge=5.0, le=180.0)
+    alns_max_iterations_mode: str = Field(default="AUTO", pattern=r"^(AUTO|MANUAL)$")
+    alns_max_iterations: int = Field(default=220, ge=10, le=5000)
+    max_orders_per_driver: int = Field(default=5, ge=1, le=20)
+    charge_from_zero_beyond_free_radius: bool = Field(default=False)
 
     @field_validator("phone", mode="before")
     @classmethod
@@ -558,7 +564,13 @@ class RestaurantSettingsOut(ORMModel):
     distance_calculation_mode: str = "AUTO"
     enforce_driver_geofence: bool = False
     driver_geofence_meters: int = 500
-    haversine_routing_factor: float = 1.3
+    haversine_routing_factor: float = 1.3627
+    average_delivery_speed_kmh: float = 30.0
+    customer_sla_minutes: float = 36.0
+    alns_max_iterations_mode: str = "AUTO"
+    alns_max_iterations: int = 220
+    max_orders_per_driver: int = 5
+    available_drivers_ready: int = 0
 
     @model_validator(mode="before")
     @classmethod
@@ -585,6 +597,7 @@ class PublicRestaurantOut(ORMModel):
     accepting_orders: bool
     is_restaurant_open: bool
     weekly_schedule: dict = Field(default_factory=dict)
+    charge_from_zero_beyond_free_radius: bool = False
     google_client_id: str | None = None
     google_maps_api_key: str | None = None
 

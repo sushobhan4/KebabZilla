@@ -410,7 +410,9 @@ export default function Storefront() {
           let rawFeePaise = 0
           let roundOffPaise = 0
           if (distKm > restaurant.free_delivery_radius_km) {
-            const billableKm = distKm - restaurant.free_delivery_radius_km
+            const billableKm = restaurant.charge_from_zero_beyond_free_radius
+              ? distKm
+              : distKm - restaurant.free_delivery_radius_km
             const rawFeeInr = Math.round(billableKm * (restaurant.delivery_fee_per_km_paise / 100) * 100) / 100
             const roundedFeeInr = Math.ceil(rawFeeInr)
             roundOffPaise = Math.round((roundedFeeInr - rawFeeInr) * 100)

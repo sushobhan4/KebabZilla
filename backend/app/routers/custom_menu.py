@@ -7,13 +7,20 @@ from app.models import AdminEvent, CustomMenuItem, CustomMenuSection, MenuCatego
 from app.schemas import CustomMenuItemInput, CustomMenuItemOut
 from app.services import get_next_menu_id, resolve_categories
 from app.storage import cleanup_unreferenced_gcs_images
+from app.cache import PREFIX_MENU, cache, invalidate_menu_cache
 
 router = APIRouter(prefix="/custom-menu", tags=["custom menu"])
 
 
 @router.get("", response_model=list[CustomMenuItemOut])
-def list_custom_menu(db: DbSession):
+def list_custom_menu(db: DbSession, response: Response):
     """Public list of available custom menu items."""
+    cache_key = f"{PREFIX_MENU}custom_list"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        response.headers["Cache-Control"] = "public, max-age=15, stale-while-revalidate=30"
+        return cached
+
     now = datetime.now(timezone.utc)
     items = db.scalars(
         select(CustomMenuItem)
@@ -39,6 +46,8 @@ def list_custom_menu(db: DbSession):
             res["discounted_base_price_paise"] = max(1, (item.price_paise * (100 - d.discount_percent) + 50) // 100)
             res["discount_campaign_name"] = d.campaign_name
         results.append(res)
+    cache.set(cache_key, results, ttl_seconds=20.0)
+    response.headers["Cache-Control"] = "public, max-age=15, stale-while-revalidate=30"
     return results
 
 
@@ -93,6 +102,7 @@ def create_custom_menu_item(data: CustomMenuItemInput, actor: CurrentAccount, db
         details={"item_id": item.id, "name": item.name},
     ))
     db.commit()
+    invalidate_menu_cache()
     return item
 
 
@@ -147,6 +157,7 @@ def update_custom_menu_item(item_id: int, data: CustomMenuItemInput, actor: Curr
     if removed_urls:
         cleanup_unreferenced_gcs_images(db, removed_urls, exclude_custom_menu_item_id=item.id)
 
+    invalidate_menu_cache()
     return item
 
 
@@ -163,4 +174,5 @@ def archive_custom_menu_item(item_id: int, actor: CurrentAccount, db: DbSession)
         details={"item_id": item.id},
     ))
     db.commit()
+    invalidate_menu_cache()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

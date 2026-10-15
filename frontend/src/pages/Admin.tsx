@@ -4520,6 +4520,7 @@ function SettingsPage() {
   const [phoneNumbers, setPhoneNumbers] = useState<string[]>([""]);
   const [savedToastOpen, setSavedToastOpen] = useState(false);
   const initialSnapshot = useRef<string>("");
+  const [storedBaseSpeed, setStoredBaseSpeed] = useState<number>(30.0);
 
   const [confirmSaveOpen, setConfirmSaveOpen] = useState(false);
   const [settingsDiffs, setSettingsDiffs] = useState<{ label: string; from: string; to: string }[]>([]);
@@ -4532,6 +4533,7 @@ function SettingsPage() {
       .then((settings) => {
         const parsedScheds = parseSchedulesFromWeekly(settings.weekly_schedule);
         setSchedules(parsedScheds);
+        setStoredBaseSpeed(settings.average_delivery_speed_kmh ?? 30.0);
         const phonesList = (settings.phones && settings.phones.length > 0)
           ? settings.phones
           : settings.phone
@@ -4547,7 +4549,14 @@ function SettingsPage() {
           minimum_order_paise: settings.minimum_order_paise / 100,
           accepting_orders: settings.accepting_orders,
           distance_calculation_mode: settings.distance_calculation_mode || "AUTO",
-          haversine_routing_factor: settings.haversine_routing_factor ?? 1.3,
+          charge_from_zero_beyond_free_radius: Boolean(settings.charge_from_zero_beyond_free_radius),
+          haversine_routing_factor: settings.haversine_routing_factor ?? 1.3627,
+          average_delivery_speed_kmh: settings.average_delivery_speed_kmh ?? 30.0,
+          customer_sla_minutes: settings.customer_sla_minutes ?? 36.0,
+          alns_max_iterations_mode: settings.alns_max_iterations_mode || "AUTO",
+          alns_max_iterations: settings.alns_max_iterations || 220,
+          max_orders_per_driver: settings.max_orders_per_driver || 5,
+          available_drivers_ready: settings.available_drivers_ready ?? 0,
           enforce_driver_geofence: Boolean(settings.enforce_driver_geofence),
           driver_geofence_meters: settings.driver_geofence_meters || 500,
         };
@@ -4635,7 +4644,13 @@ function SettingsPage() {
           delivery_fee_per_km_paise: Math.round(form.delivery_fee_per_km_paise * 100),
           minimum_order_paise: Math.round(form.minimum_order_paise * 100),
           distance_calculation_mode: form.distance_calculation_mode || "AUTO",
-          haversine_routing_factor: Number(form.haversine_routing_factor) || 1.3,
+          charge_from_zero_beyond_free_radius: Boolean(form.charge_from_zero_beyond_free_radius),
+          haversine_routing_factor: Number(form.haversine_routing_factor) || 1.3627,
+          average_delivery_speed_kmh: Number(form.average_delivery_speed_kmh) || 30.0,
+          customer_sla_minutes: Number(form.customer_sla_minutes) || 36.0,
+          alns_max_iterations_mode: form.alns_max_iterations_mode || "AUTO",
+          alns_max_iterations: Number(form.alns_max_iterations) || 220,
+          max_orders_per_driver: Number(form.max_orders_per_driver) || 5,
           enforce_driver_geofence: Boolean(form.enforce_driver_geofence),
           driver_geofence_meters: Number(form.driver_geofence_meters) || 500,
         }),
@@ -4643,6 +4658,7 @@ function SettingsPage() {
 
       const parsedScheds = parseSchedulesFromWeekly(updated.weekly_schedule);
       setSchedules(parsedScheds);
+      setStoredBaseSpeed(updated.average_delivery_speed_kmh ?? 30.0);
       const phonesList = (updated.phones && updated.phones.length > 0)
         ? updated.phones
         : updated.phone
@@ -4657,7 +4673,14 @@ function SettingsPage() {
         delivery_fee_per_km_paise: updated.delivery_fee_per_km_paise / 100,
         minimum_order_paise: updated.minimum_order_paise / 100,
         distance_calculation_mode: updated.distance_calculation_mode || "AUTO",
-        haversine_routing_factor: updated.haversine_routing_factor ?? 1.3,
+        charge_from_zero_beyond_free_radius: Boolean(updated.charge_from_zero_beyond_free_radius),
+        haversine_routing_factor: updated.haversine_routing_factor ?? 1.3627,
+        average_delivery_speed_kmh: updated.average_delivery_speed_kmh ?? 30.0,
+        customer_sla_minutes: updated.customer_sla_minutes ?? 36.0,
+        alns_max_iterations_mode: updated.alns_max_iterations_mode || "AUTO",
+        alns_max_iterations: updated.alns_max_iterations || 220,
+        max_orders_per_driver: updated.max_orders_per_driver || 5,
+        available_drivers_ready: updated.available_drivers_ready ?? form.available_drivers_ready ?? 0,
         enforce_driver_geofence: Boolean(updated.enforce_driver_geofence),
         driver_geofence_meters: updated.driver_geofence_meters || 500,
       };
@@ -4792,13 +4815,20 @@ function SettingsPage() {
           delivery_fee_per_km_paise: Math.round(form.delivery_fee_per_km_paise * 100),
           minimum_order_paise: Math.round(form.minimum_order_paise * 100),
           distance_calculation_mode: form.distance_calculation_mode || "AUTO",
-          haversine_routing_factor: Number(form.haversine_routing_factor) || 1.3,
+          charge_from_zero_beyond_free_radius: Boolean(form.charge_from_zero_beyond_free_radius),
+          haversine_routing_factor: Number(form.haversine_routing_factor) || 1.3627,
+          average_delivery_speed_kmh: Number(form.average_delivery_speed_kmh) || 30.0,
+          customer_sla_minutes: Number(form.customer_sla_minutes) || 36.0,
+          alns_max_iterations_mode: form.alns_max_iterations_mode || "AUTO",
+          alns_max_iterations: Number(form.alns_max_iterations) || 220,
+          max_orders_per_driver: Number(form.max_orders_per_driver) || 5,
           enforce_driver_geofence: Boolean(form.enforce_driver_geofence),
           driver_geofence_meters: Number(form.driver_geofence_meters) || 500,
         }),
       });
       const parsedScheds = parseSchedulesFromWeekly(updated.weekly_schedule);
       setSchedules(parsedScheds);
+      setStoredBaseSpeed(updated.average_delivery_speed_kmh ?? 30.0);
       const phonesList = (updated.phones && updated.phones.length > 0)
         ? updated.phones
         : updated.phone
@@ -4813,7 +4843,14 @@ function SettingsPage() {
         delivery_fee_per_km_paise: updated.delivery_fee_per_km_paise / 100,
         minimum_order_paise: updated.minimum_order_paise / 100,
         distance_calculation_mode: updated.distance_calculation_mode || "AUTO",
-        haversine_routing_factor: updated.haversine_routing_factor ?? 1.3,
+        charge_from_zero_beyond_free_radius: Boolean(updated.charge_from_zero_beyond_free_radius),
+        haversine_routing_factor: updated.haversine_routing_factor ?? 1.3627,
+        average_delivery_speed_kmh: updated.average_delivery_speed_kmh ?? 30.0,
+        customer_sla_minutes: updated.customer_sla_minutes ?? 36.0,
+        alns_max_iterations_mode: updated.alns_max_iterations_mode || "AUTO",
+        alns_max_iterations: updated.alns_max_iterations || 220,
+        max_orders_per_driver: updated.max_orders_per_driver || 5,
+        available_drivers_ready: updated.available_drivers_ready ?? form.available_drivers_ready ?? 0,
         enforce_driver_geofence: Boolean(updated.enforce_driver_geofence),
         driver_geofence_meters: updated.driver_geofence_meters || 500,
       };
@@ -4921,11 +4958,47 @@ function SettingsPage() {
       });
     }
 
-    if (Number(form.haversine_routing_factor ?? 1.3) !== Number(oldF.haversine_routing_factor ?? 1.3)) {
+    if (Number(form.haversine_routing_factor ?? 1.3627) !== Number(oldF.haversine_routing_factor ?? 1.3627)) {
       diffs.push({
-        label: "Haversine routing factor",
-        from: String(oldF.haversine_routing_factor ?? 1.3),
-        to: String(form.haversine_routing_factor ?? 1.3),
+        label: "Routing factor",
+        from: String(oldF.haversine_routing_factor ?? 1.3627),
+        to: String(form.haversine_routing_factor ?? 1.3627),
+      });
+    }
+
+    if (Number(form.average_delivery_speed_kmh ?? 30.0) !== Number(oldF.average_delivery_speed_kmh ?? 30.0)) {
+      diffs.push({
+        label: "Average delivery speed",
+        from: `${oldF.average_delivery_speed_kmh ?? 30.0} km/h`,
+        to: `${form.average_delivery_speed_kmh ?? 30.0} km/h`,
+      });
+    }
+
+    if (Number(form.customer_sla_minutes ?? 36.0) !== Number(oldF.customer_sla_minutes ?? 36.0)) {
+      diffs.push({
+        label: "Customer SLA window",
+        from: `${oldF.customer_sla_minutes ?? 36.0} mins`,
+        to: `${form.customer_sla_minutes ?? 36.0} mins`,
+      });
+    }
+
+    const oldAlnsMode = oldF.alns_max_iterations_mode || "AUTO";
+    const newAlnsMode = form.alns_max_iterations_mode || "AUTO";
+    const oldAlnsIters = oldF.alns_max_iterations || 220;
+    const newAlnsIters = form.alns_max_iterations || 220;
+    if (oldAlnsMode !== newAlnsMode || (newAlnsMode === "MANUAL" && oldAlnsIters !== newAlnsIters)) {
+      diffs.push({
+        label: "ALNS max iterations",
+        from: oldAlnsMode === "AUTO" ? "Auto (220)" : `Manual (${oldAlnsIters})`,
+        to: newAlnsMode === "AUTO" ? "Auto (220)" : `Manual (${newAlnsIters})`,
+      });
+    }
+
+    if (Number(form.max_orders_per_driver ?? 5) !== Number(oldF.max_orders_per_driver ?? 5)) {
+      diffs.push({
+        label: "Max delivery orders per driver",
+        from: `${oldF.max_orders_per_driver ?? 5} orders`,
+        to: `${form.max_orders_per_driver ?? 5} orders`,
       });
     }
 
@@ -4958,6 +5031,14 @@ function SettingsPage() {
         label: "Delivery fee per km",
         from: `₹${oldF.delivery_fee_per_km_paise}`,
         to: `₹${form.delivery_fee_per_km_paise}`,
+      });
+    }
+
+    if (Boolean(form.charge_from_zero_beyond_free_radius) !== Boolean(oldF.charge_from_zero_beyond_free_radius)) {
+      diffs.push({
+        label: "Delivery fee beyond free radius",
+        from: oldF.charge_from_zero_beyond_free_radius ? "Charge full distance from 0 km" : "Charge extra distance only",
+        to: form.charge_from_zero_beyond_free_radius ? "Charge full distance from 0 km" : "Charge extra distance only",
       });
     }
 
@@ -5298,41 +5379,8 @@ function SettingsPage() {
             </section>
 
             <section className="admin-panel settings-card">
-              <h2>Checkout & delivery</h2>
+              <h2>Checkout</h2>
               <div className="settings-fields">
-                <label className="field-label">
-                  Distance Calculation Mode
-                  <RoundedSelect
-                    value={form.distance_calculation_mode || "AUTO"}
-                    onChange={(val) =>
-                      change(
-                        "distance_calculation_mode",
-                        val as "AUTO" | "GOOGLE_MAPS" | "HAVERSINE",
-                      )
-                    }
-                    options={[
-                      { value: "AUTO", label: "Auto" },
-                      { value: "GOOGLE_MAPS", label: "Google's API" },
-                      { value: "HAVERSINE", label: "Haversine" },
-                    ]}
-                  />
-                </label>
-                <label className="field-label">
-                  Routing Factor for Haversine
-                  <input
-                    type="number"
-                    min="1"
-                    max="4"
-                    step="any"
-                    value={form.haversine_routing_factor ?? 1.3}
-                    onChange={(event) =>
-                      change(
-                        "haversine_routing_factor",
-                        Number(event.target.value),
-                      )
-                    }
-                  />
-                </label>
                 <label className="field-label">
                   Minimum Order Amount
                   <input
@@ -5392,6 +5440,156 @@ function SettingsPage() {
                 <div
                   style={{
                     display: "flex",
+                    flexDirection: "column",
+                    gap: "8px",
+                    padding: "12px 16px",
+                    border: "1px solid #e8e5dd",
+                    borderRadius: "14px",
+                    background: "#fff",
+                    boxSizing: "border-box",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                    }}
+                  >
+                    <div>
+                      <span
+                        style={{
+                          fontSize: "0.95rem",
+                          fontWeight: 600,
+                          color: "#29332f",
+                          textAlign: "left",
+                          display: "block",
+                        }}
+                      >
+                        Charge from 0 km beyond free radius
+                      </span>
+                      <small style={{ color: "#777", fontSize: "0.8rem" }}>
+                        {form.charge_from_zero_beyond_free_radius
+                          ? "Charge full distance from 0 km once the free radius is exceeded."
+                          : "Charge only the incremental distance beyond the free radius."}
+                      </small>
+                    </div>
+                    <label className="toggle-switch" style={{ margin: 0, flexShrink: 0 }}>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(form.charge_from_zero_beyond_free_radius)}
+                        onChange={(event) =>
+                          change("charge_from_zero_beyond_free_radius", event.target.checked)
+                        }
+                      />
+                      <span />
+                    </label>
+                  </div>
+                  <div
+                    style={{
+                      marginTop: "4px",
+                      padding: "8px 12px",
+                      borderRadius: "8px",
+                      background: "#fbfaf8",
+                      border: "1px dashed #e8e5dd",
+                      fontSize: "0.8rem",
+                      color: "#555",
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    {form.charge_from_zero_beyond_free_radius ? (
+                      <span>
+                        <strong>Active rule:</strong> Up to{" "}
+                        <strong>{form.free_delivery_radius_km || 0} km</strong> is free.
+                        Beyond {form.free_delivery_radius_km || 0} km, full distance is charged
+                        from 0 km (e.g. at 2 km, customer pays 2 × ₹{form.delivery_fee_per_km_paise || 10} ={" "}
+                        <strong>₹{2 * (form.delivery_fee_per_km_paise || 10)}</strong>).
+                      </span>
+                    ) : (
+                      <span>
+                        <strong>Active rule:</strong> Up to{" "}
+                        <strong>{form.free_delivery_radius_km || 0} km</strong> is free.
+                        Beyond {form.free_delivery_radius_km || 0} km, only excess distance is charged
+                        (e.g. at 2 km with 1 km free, customer pays (2 - 1) × ₹{form.delivery_fee_per_km_paise || 10} ={" "}
+                        <strong>₹{(2 - 1) * (form.delivery_fee_per_km_paise || 10)}</strong>).
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="admin-panel settings-card">
+              <h2>Fleet dispatch settings</h2>
+              <div className="settings-fields">
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "12px 16px",
+                    minHeight: "56px",
+                    border: "1px solid #e8e5dd",
+                    borderRadius: "14px",
+                    background: "#fbfaf8",
+                    boxSizing: "border-box",
+                  }}
+                >
+                  <div>
+                    <span
+                      style={{
+                        fontSize: "0.95rem",
+                        fontWeight: 600,
+                        color: "#29332f",
+                        textAlign: "left",
+                        display: "block",
+                      }}
+                    >
+                      Max Available Drivers
+                    </span>
+                    <small style={{ color: "#777", fontSize: "0.8rem" }}>
+                      Reads all available drivers who are currently ready to deliver.
+                    </small>
+                  </div>
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      padding: "4px 12px",
+                      borderRadius: "999px",
+                      background:
+                        (form.available_drivers_ready ?? 0) > 0
+                          ? "#e7f6ec"
+                          : "#fef3e7",
+                      color:
+                        (form.available_drivers_ready ?? 0) > 0
+                          ? "#1b6338"
+                          : "#995300",
+                      fontSize: "0.85rem",
+                      fontWeight: 700,
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: "8px",
+                        height: "8px",
+                        borderRadius: "50%",
+                        background:
+                          (form.available_drivers_ready ?? 0) > 0
+                            ? "#2b7a4b"
+                            : "#d97706",
+                      }}
+                    />
+                    {form.available_drivers_ready ?? 0} driver{(form.available_drivers_ready ?? 0) === 1 ? "" : "s"} ready
+                  </span>
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
                     flexDirection: "row",
                     alignItems: "center",
                     justifyContent: "space-between",
@@ -5444,6 +5642,322 @@ function SettingsPage() {
                 ) : (
                   <div />
                 )}
+
+                <label className="field-label">
+                  Routing Factor
+                  <input
+                    type="number"
+                    min="1"
+                    max="4"
+                    step="any"
+                    value={form.haversine_routing_factor ?? 1.3627}
+                    onChange={(event) =>
+                      change(
+                        "haversine_routing_factor",
+                        Number(event.target.value),
+                      )
+                    }
+                  />
+                  <small style={{ color: "#777", fontSize: "0.8rem", marginTop: "2px" }}>
+                    Road distance multiplier for actual street distance fallback (default: 1.3627).
+                  </small>
+                </label>
+
+                {(() => {
+                  const baseSpeed = Number(storedBaseSpeed || 30.0);
+                  const minSpeed = Math.max(5, Math.round((baseSpeed - 10) * 10) / 10);
+                  const maxSpeed = Math.round((baseSpeed + 10) * 10) / 10;
+                  const currentSpeed = Number(form.average_delivery_speed_kmh ?? baseSpeed);
+                  const speedDiff = Math.round((currentSpeed - baseSpeed) * 10) / 10;
+
+                  return (
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "8px",
+                        padding: "14px 16px",
+                        border: "1px solid #e8e5dd",
+                        borderRadius: "14px",
+                        background: "#fff",
+                        boxSizing: "border-box",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          flexWrap: "wrap",
+                          gap: "8px",
+                        }}
+                      >
+                        <div>
+                          <span
+                            style={{
+                              fontSize: "0.95rem",
+                              fontWeight: 600,
+                              color: "#29332f",
+                              display: "block",
+                            }}
+                          >
+                            Average Delivery Speed
+                          </span>
+                          <small style={{ color: "#777", fontSize: "0.8rem" }}>
+                            Learned base: <strong>{baseSpeed.toFixed(1)} km/h</strong> (slider range ±10 km/h)
+                          </small>
+                        </div>
+                        <div style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                          <span
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "4px",
+                              padding: "4px 10px",
+                              borderRadius: "999px",
+                              background: speedDiff === 0 ? "#f0ede6" : (speedDiff > 0 ? "#e7f6ec" : "#fef3e7"),
+                              color: speedDiff === 0 ? "#555" : (speedDiff > 0 ? "#1b6338" : "#995300"),
+                              fontSize: "0.85rem",
+                              fontWeight: 700,
+                            }}
+                          >
+                            {currentSpeed.toFixed(1)} km/h
+                            {speedDiff !== 0 && (
+                              <span style={{ fontSize: "0.75rem", opacity: 0.85 }}>
+                                ({speedDiff > 0 ? `+${speedDiff.toFixed(1)}` : `${speedDiff.toFixed(1)}`})
+                              </span>
+                            )}
+                          </span>
+                          {speedDiff !== 0 && (
+                            <button
+                              type="button"
+                              onClick={() => change("average_delivery_speed_kmh", baseSpeed)}
+                              style={{
+                                border: "1px solid #d5cfc4",
+                                borderRadius: "999px",
+                                background: "#fff",
+                                padding: "2px 8px",
+                                fontSize: "0.75rem",
+                                fontWeight: 600,
+                                color: "#666",
+                                cursor: "pointer",
+                              }}
+                              title="Reset to learned baseline"
+                            >
+                              Reset
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      <div style={{ marginTop: "6px" }}>
+                        <input
+                          type="range"
+                          min={minSpeed}
+                          max={maxSpeed}
+                          step="0.5"
+                          value={currentSpeed}
+                          onChange={(e) =>
+                            change("average_delivery_speed_kmh", Number(e.target.value))
+                          }
+                          style={{
+                            width: "100%",
+                            cursor: "pointer",
+                            accentColor: "#2b7a4b",
+                          }}
+                        />
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            fontSize: "0.75rem",
+                            color: "#888",
+                            marginTop: "2px",
+                          }}
+                        >
+                          <span>{minSpeed.toFixed(1)} km/h (-10)</span>
+                          <span style={{ fontWeight: 600, color: "#555" }}>
+                            Baseline: {baseSpeed.toFixed(1)} km/h
+                          </span>
+                          <span>{maxSpeed.toFixed(1)} km/h (+10)</span>
+                        </div>
+                      </div>
+
+                      <small style={{ color: "#777", fontSize: "0.8rem", marginTop: "2px" }}>
+                        Automatically recalculated after every completed delivery using real trip timestamps from the database.
+                      </small>
+                    </div>
+                  );
+                })()}
+
+                <label className="field-label">
+                  Customer SLA (in minutes)
+                  <input
+                    type="number"
+                    min="5"
+                    max="180"
+                    step="1"
+                    value={form.customer_sla_minutes ?? 36.0}
+                    onChange={(event) =>
+                      change(
+                        "customer_sla_minutes",
+                        Number(event.target.value),
+                      )
+                    }
+                  />
+                  <small style={{ color: "#777", fontSize: "0.8rem", marginTop: "2px" }}>
+                    Target maximum customer wait time window for hot food arrival (default: 36 mins).
+                  </small>
+                </label>
+
+                <label className="field-label">
+                  Max Delivery per Delivery Guy (Orders at Once)
+                  <input
+                    type="number"
+                    min="1"
+                    max="20"
+                    step="1"
+                    value={form.max_orders_per_driver ?? 5}
+                    onChange={(event) =>
+                      change(
+                        "max_orders_per_driver",
+                        Math.max(1, Math.min(20, Number(event.target.value))),
+                      )
+                    }
+                  />
+                  <small style={{ color: "#777", fontSize: "0.8rem", marginTop: "2px" }}>
+                    Max number of orders a delivery rider can take at once on a single dispatch trip (default: 5).
+                  </small>
+                </label>
+
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "8px",
+                    padding: "12px 16px",
+                    border: "1px solid #e8e5dd",
+                    borderRadius: "14px",
+                    background: "#fff",
+                    boxSizing: "border-box",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                    }}
+                  >
+                    <div>
+                      <span
+                        style={{
+                          fontSize: "0.95rem",
+                          fontWeight: 600,
+                          color: "#29332f",
+                          textAlign: "left",
+                          display: "block",
+                        }}
+                      >
+                        ALNS Max Iterations
+                      </span>
+                      <small style={{ color: "#777", fontSize: "0.8rem" }}>
+                        {(form.alns_max_iterations_mode || "AUTO") === "MANUAL"
+                          ? `Manual custom value (${form.alns_max_iterations || 220} iterations)`
+                          : "Auto mode (220 iterations balanced for low latency)"}
+                      </small>
+                    </div>
+
+                    <div
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        padding: "3px",
+                        background: "#f0ede6",
+                        borderRadius: "999px",
+                        gap: "2px",
+                      }}
+                    >
+                      <button
+                        type="button"
+                        style={{
+                          border: "none",
+                          borderRadius: "999px",
+                          padding: "5px 14px",
+                          fontSize: "0.82rem",
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          background:
+                            (form.alns_max_iterations_mode || "AUTO") === "AUTO"
+                              ? "#2b7a4b"
+                              : "transparent",
+                          color:
+                            (form.alns_max_iterations_mode || "AUTO") === "AUTO"
+                              ? "#ffffff"
+                              : "#555555",
+                          transition: "all 0.16s ease",
+                        }}
+                        onClick={() => change("alns_max_iterations_mode", "AUTO")}
+                      >
+                        Auto
+                      </button>
+                      <button
+                        type="button"
+                        style={{
+                          border: "none",
+                          borderRadius: "999px",
+                          padding: "5px 14px",
+                          fontSize: "0.82rem",
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          background:
+                            form.alns_max_iterations_mode === "MANUAL"
+                              ? "#2b7a4b"
+                              : "transparent",
+                          color:
+                            form.alns_max_iterations_mode === "MANUAL"
+                              ? "#ffffff"
+                              : "#555555",
+                          transition: "all 0.16s ease",
+                        }}
+                        onClick={() => change("alns_max_iterations_mode", "MANUAL")}
+                      >
+                        Manual
+                      </button>
+                    </div>
+                  </div>
+
+                  {form.alns_max_iterations_mode === "MANUAL" && (
+                    <label
+                      className="field-label"
+                      style={{
+                        margin: "4px 0 0",
+                        borderTop: "1px dashed #e4dfd7",
+                        paddingTop: "10px",
+                        textAlign: "left",
+                      }}
+                    >
+                      Custom ALNS Iteration Value
+                      <input
+                        type="number"
+                        min="10"
+                        max="5000"
+                        step="10"
+                        value={form.alns_max_iterations || 220}
+                        onChange={(event) =>
+                          change(
+                            "alns_max_iterations",
+                            Math.max(10, Math.min(5000, Number(event.target.value))),
+                          )
+                        }
+                      />
+                      <small style={{ color: "#777", fontSize: "0.8rem", marginTop: "2px" }}>
+                        Specify custom number of ALNS metaheuristic optimization cycles (10 - 5000).
+                      </small>
+                    </label>
+                  )}
+                </div>
               </div>
             </section>
           </div>

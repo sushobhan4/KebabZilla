@@ -225,6 +225,7 @@ export type Restaurant = {
   delivery_radius_km: number
   free_delivery_radius_km: number
   delivery_fee_per_km_paise: number
+  charge_from_zero_beyond_free_radius?: boolean
   accepting_orders: boolean
   admin_override_open?: boolean
   admin_override_state?: boolean | null
@@ -236,6 +237,12 @@ export type Restaurant = {
   enforce_driver_geofence?: boolean
   driver_geofence_meters?: number
   haversine_routing_factor?: number
+  average_delivery_speed_kmh?: number
+  customer_sla_minutes?: number
+  alns_max_iterations_mode?: 'AUTO' | 'MANUAL'
+  alns_max_iterations?: number
+  max_orders_per_driver?: number
+  available_drivers_ready?: number
   google_client_id?: string | null
   google_maps_api_key?: string | null
 }
@@ -257,13 +264,16 @@ export type RecommendedBatchesResponse = {
   is_restaurant_open: boolean
   schedule_status: string
   single_order: boolean
-  order: (Order & { round_trip_km?: number }) | null
+  order: (Order & { round_trip_km?: number; round_trip_time_minutes?: number }) | null
   round_trip_km?: number
+  round_trip_time_minutes?: number
   clusters: {
     id: string
     route_label: string
     orders: Order[]
     round_trip_km?: number
+    round_trip_time_minutes?: number
+    legs?: any[]
   }[]
   restaurant_latitude: number | null
   restaurant_longitude: number | null

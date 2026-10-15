@@ -79,12 +79,20 @@ def format_public_weekly_schedule(raw_schedule: dict | None) -> dict:
     return clean
 
 
+from app.cache import KEY_PUBLIC_RESTAURANT, cache
+
+
 @app.get(f"{settings.api_prefix}/restaurant", tags=["restaurant"], response_model=PublicRestaurantOut)
-def public_restaurant(db: DbSession):
+def public_restaurant(db: DbSession, response: Response):
+    cached = cache.get(KEY_PUBLIC_RESTAURANT)
+    if cached is not None:
+        response.headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"
+        return cached
+
     config = restaurant_settings(db)
     is_open, _ = is_restaurant_open(config)
     phones = [p.strip() for p in (config.phone or "").split(",") if p.strip()]
-    return {
+    data = {
         "restaurant_name": config.restaurant_name,
         "tagline": config.tagline,
         "phone": config.phone,
@@ -96,12 +104,16 @@ def public_restaurant(db: DbSession):
         "delivery_radius_km": config.delivery_radius_km,
         "free_delivery_radius_km": config.free_delivery_radius_km,
         "delivery_fee_per_km_paise": config.delivery_fee_per_km_paise,
+        "charge_from_zero_beyond_free_radius": getattr(config, "charge_from_zero_beyond_free_radius", False) or False,
         "accepting_orders": is_open,
         "is_restaurant_open": is_open,
         "weekly_schedule": format_public_weekly_schedule(config.weekly_schedule),
         "google_client_id": settings.google_client_id,
         "google_maps_api_key": settings.google_maps_api_key,
     }
+    cache.set(KEY_PUBLIC_RESTAURANT, data, ttl_seconds=15.0)
+    response.headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"
+    return data
 
 
 @app.get(f"{settings.api_prefix}/restaurant/delivery-estimate", tags=["restaurant"])
@@ -118,7 +130,8 @@ def estimate_delivery(latitude: float, longitude: float, db: DbSession):
         round_off_inr = 0.0
         round_off_paise = 0
     else:
-        billable_km = distance_km - config.free_delivery_radius_km
+        charge_from_zero = getattr(config, "charge_from_zero_beyond_free_radius", False)
+        billable_km = distance_km if charge_from_zero else (distance_km - config.free_delivery_radius_km)
         raw_fee_inr = round(billable_km * (config.delivery_fee_per_km_paise / 100.0), 2)
         rounded_fee_inr = math.ceil(raw_fee_inr)
         round_off_inr = round(rounded_fee_inr - raw_fee_inr, 2)

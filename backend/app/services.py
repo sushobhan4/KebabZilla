@@ -33,6 +33,7 @@ from app.models import (
     MenuDiscount,
 )
 from app.schemas import OrderLineInput
+from app.cache import invalidate_delivery_cache, invalidate_orders_cache
 
 ALLOWED_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
     OrderStatus.PLACED: {OrderStatus.ACCEPTED, OrderStatus.REJECTED, OrderStatus.CANCELLED},
@@ -269,6 +270,8 @@ def assemble_order(
     db.add(order)
     db.flush()
     db.add(AdminEvent(event_type="order_created", message=f"Order {order.order_id} placed", actor_id=created_by.id if created_by else (customer.id if customer else None), details={"order_id": order.order_id, "order_number": order.order_id}))
+    invalidate_orders_cache()
+    invalidate_delivery_cache()
     return order
 
 
@@ -384,8 +387,9 @@ def _delivery_fee_paise(
     if distance_km <= config.free_delivery_radius_km:
         return 0
 
-    # Beyond free radius, priced per km proportionally
-    billable_km = distance_km - config.free_delivery_radius_km
+    # Beyond free radius, priced per km proportionally (either from 0 km or for the extra distance)
+    charge_from_zero = getattr(config, "charge_from_zero_beyond_free_radius", False)
+    billable_km = distance_km if charge_from_zero else (distance_km - config.free_delivery_radius_km)
     raw_fee_inr = billable_km * (config.delivery_fee_per_km_paise / 100.0)
     rounded_fee_inr = math.ceil(raw_fee_inr)
     return int(rounded_fee_inr * 100)
@@ -695,6 +699,8 @@ def order_payload(order: Order, *, include_delivery_otp: bool = False) -> dict:
         "delivery_name": delivery.name if delivery else None,
         "delivery_phone": delivery.phone if delivery else None,
         "created_at": order.created_at,
+        "delivery_started_at": order.delivery_started_at,
+        "delivered_at": order.delivered_at,
         "items": items,
         "delivery_otp": customer_delivery_otp(order) if include_delivery_otp else None,
     }
@@ -723,6 +729,64 @@ def transition_order(order: Order, new_status: OrderStatus) -> None:
     if new_status not in ALLOWED_TRANSITIONS[order.status]:
         raise HTTPException(status_code=409, detail=f"Cannot move an order from {order.status} to {new_status}")
     order.status = new_status
+    if new_status == OrderStatus.OUT_FOR_DELIVERY and order.delivery_started_at is None:
+        order.delivery_started_at = datetime.now(timezone.utc)
+    elif new_status == OrderStatus.DELIVERED and order.delivered_at is None:
+        order.delivered_at = datetime.now(timezone.utc)
+    invalidate_orders_cache()
+    invalidate_delivery_cache()
+
+
+def recalculate_and_update_delivery_speed(db: Session) -> float | None:
+    """
+    Recalculate average delivery speed from recent completed deliveries that have
+    delivery_started_at and delivered_at timestamps, and update restaurant_settings.
+    """
+    config = restaurant_settings(db)
+    if config.latitude is None or config.longitude is None:
+        return None
+
+    completed_orders = db.scalars(
+        select(Order)
+        .where(
+            Order.status == OrderStatus.DELIVERED,
+            Order.delivery_started_at.is_not(None),
+            Order.delivered_at.is_not(None),
+            Order.latitude.is_not(None),
+            Order.longitude.is_not(None),
+        )
+        .order_by(Order.delivered_at.desc())
+        .limit(100)
+    ).all()
+
+    speeds: list[float] = []
+    for ord in completed_orders:
+        if not ord.delivery_started_at or not ord.delivered_at:
+            continue
+        duration_hours = (ord.delivered_at - ord.delivery_started_at).total_seconds() / 3600.0
+        if duration_hours < 0.0167 or duration_hours > 3.0:
+            continue
+        try:
+            distance_km, _ = calculate_delivery_distance(config, ord.latitude, ord.longitude)
+        except Exception:
+            distance_km = _distance_km(config.latitude, config.longitude, ord.latitude, ord.longitude) * (getattr(config, "haversine_routing_factor", 1.3627) or 1.3627)
+
+        if distance_km < 0.2:
+            continue
+        speed = distance_km / duration_hours
+        if 5.0 <= speed <= 80.0:
+            speeds.append(speed)
+
+    if not speeds:
+        return None
+
+    calculated_avg = sum(speeds) / len(speeds)
+    new_speed = round(float(calculated_avg), 1)
+    config.average_delivery_speed_kmh = new_speed
+    db.flush()
+    from app.cache import invalidate_restaurant_cache
+    invalidate_restaurant_cache()
+    return new_speed
 
 
 def create_delivery_otp(order: Order) -> str:

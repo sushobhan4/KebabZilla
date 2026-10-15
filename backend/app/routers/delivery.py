@@ -26,15 +26,37 @@ from app.services import (
     create_delivery_otp,
     is_restaurant_open,
     order_payload,
+    recalculate_and_update_delivery_speed,
     restaurant_settings,
     transition_order,
     verify_delivery_otp,
+)
+from app.clustering import optimize_fleet_trips, solve_optimal_trip
+from app.cache import (
+    KEY_ADMIN_SETTINGS,
+    PREFIX_DELIVERY,
+    cache,
+    invalidate_delivery_cache,
+    invalidate_orders_cache,
 )
 
 router = APIRouter(prefix="/delivery", tags=["delivery"], dependencies=[Depends(require_roles(Role.ADMIN, Role.DELIVERY))])
 
 
+class OrderNode:
+    """Wrapper holding Order reference and geographic coordinates for ALNS dispatch engine."""
+
+    def __init__(self, order: Order, lat: float, lng: float):
+        self.order = order
+        self.id = order.order_id
+        self.lat = lat
+        self.lng = lng
+        self.name = f"Order #{order.order_id}"
+
+
 def _order_coords(o: Order, default_lat: float, default_lng: float) -> tuple[float, float]:
+    if o.latitude is not None and o.longitude is not None:
+        return o.latitude, o.longitude
     if o.customer and o.customer.addresses:
         addr = next((a for a in o.customer.addresses if a.is_default), o.customer.addresses[0])
         if addr.latitude is not None and addr.longitude is not None:
@@ -42,71 +64,34 @@ def _order_coords(o: Order, default_lat: float, default_lng: float) -> tuple[flo
     return default_lat, default_lng
 
 
-def cluster_orders(orders: list[Order], k: int, restaurant_lat: float, restaurant_lng: float) -> list[list[Order]]:
-    """Cluster orders geographically into k clusters based on delivery coordinates."""
+def cluster_orders(
+    orders: list[Order],
+    k: int,
+    restaurant_lat: float,
+    restaurant_lng: float,
+    speed_kmh: float = 30.0,
+    factor: float = 1.3627,
+    max_cluster_length: int = 5,
+    customer_sla_mins: float = 36.0,
+    max_iterations: int = 220,
+) -> list[list[Order]]:
+    """Cluster orders geographically into k clusters using the ALNS optimization engine."""
     if not orders:
         return []
-    k = max(1, min(k, len(orders)))
-    if k == 1:
-        # Sort single cluster orders by distance from restaurant for an efficient route
-        sorted_orders = sorted(
-            orders,
-            key=lambda o: _distance_km(
-                restaurant_lat,
-                restaurant_lng,
-                *_order_coords(o, restaurant_lat, restaurant_lng),
-            ),
-        )
-        return [sorted_orders]
-
-    points = []
-    for o in orders:
-        lat, lng = _order_coords(o, restaurant_lat, restaurant_lng)
-        points.append((lat, lng, o))
-
-    # Initialize k centroids using farthest point sampling
-    centroids = [(points[0][0], points[0][1])]
-    for _ in range(1, k):
-        def dist_to_nearest_c(p):
-            return min(_distance_km(p[0], p[1], c[0], c[1]) for c in centroids)
-        next_c = max(points, key=dist_to_nearest_c)
-        centroids.append((next_c[0], next_c[1]))
-
-    # K-means iterations
-    for _ in range(10):
-        clusters_map = [[] for _ in range(k)]
-        for p in points:
-            c_idx = min(range(k), key=lambda i: _distance_km(p[0], p[1], centroids[i][0], centroids[i][1]))
-            clusters_map[c_idx].append(p)
-
-        new_centroids = []
-        for i, cluster_pts in enumerate(clusters_map):
-            if cluster_pts:
-                avg_lat = sum(p[0] for p in cluster_pts) / len(cluster_pts)
-                avg_lng = sum(p[1] for p in cluster_pts) / len(cluster_pts)
-                new_centroids.append((avg_lat, avg_lng))
-            else:
-                new_centroids.append(centroids[i])
-        centroids = new_centroids
-
-    # Final assignment
-    clusters = [[] for _ in range(k)]
-    for p in points:
-        c_idx = min(range(k), key=lambda i: _distance_km(p[0], p[1], centroids[i][0], centroids[i][1]))
-        clusters[c_idx].append(p[2])
-
-    result = []
-    for cl in clusters:
-        if cl:
-            cl.sort(
-                key=lambda o: _distance_km(
-                    restaurant_lat,
-                    restaurant_lng,
-                    *_order_coords(o, restaurant_lat, restaurant_lng),
-                )
-            )
-            result.append(cl)
-    return result
+    rest_node = {"lat": restaurant_lat, "lng": restaurant_lng, "name": "Restaurant"}
+    nodes = [OrderNode(o, *_order_coords(o, restaurant_lat, restaurant_lng)) for o in orders]
+    res = optimize_fleet_trips(
+        rest_node,
+        nodes,
+        rider_count=k,
+        speed_kmh=speed_kmh,
+        factor=factor,
+        max_drivers=max(1, k),
+        max_iterations=max_iterations,
+        max_cluster_length=max_cluster_length,
+        customer_sla_mins=customer_sla_mins,
+    )
+    return [[node.order for node in trip["orders"]] for trip in res["trips"] if trip.get("orders")]
 
 
 def compute_round_trip_km(restaurant, orders: list[Order]) -> float:
@@ -114,36 +99,30 @@ def compute_round_trip_km(restaurant, orders: list[Order]) -> float:
     if not orders or restaurant.latitude is None or restaurant.longitude is None:
         return 0.0
 
-    rest_lat = restaurant.latitude
-    rest_lng = restaurant.longitude
+    rest_node = {"lat": restaurant.latitude, "lng": restaurant.longitude, "name": "Restaurant"}
+    factor = float(getattr(restaurant, "haversine_routing_factor", None) or 1.3627)
+    speed_kmh = float(getattr(restaurant, "average_delivery_speed_kmh", None) or 30.0)
+    customer_sla = float(getattr(restaurant, "customer_sla_minutes", None) or 36.0)
 
-    total_km = 0.0
-    curr_lat, curr_lng = rest_lat, rest_lng
-    factor = float(getattr(restaurant, "haversine_routing_factor", None) or 1.3)
-
-    for o in orders:
-        dest_lat, dest_lng = _order_coords(o, rest_lat, rest_lng)
-        try:
-            if curr_lat == rest_lat and curr_lng == rest_lng:
-                leg_km, _ = calculate_delivery_distance(restaurant, dest_lat, dest_lng)
-            else:
-                leg_km = _distance_km(curr_lat, curr_lng, dest_lat, dest_lng) * factor
-        except Exception:
-            leg_km = _distance_km(curr_lat, curr_lng, dest_lat, dest_lng) * factor
-        total_km += leg_km
-        curr_lat, curr_lng = dest_lat, dest_lng
-
-    try:
-        return_km, _ = calculate_delivery_distance(restaurant, curr_lat, curr_lng)
-    except Exception:
-        return_km = _distance_km(curr_lat, curr_lng, rest_lat, rest_lng) * factor
-    total_km += return_km
-
-    return round(total_km, 1)
+    nodes = [OrderNode(o, *_order_coords(o, restaurant.latitude, restaurant.longitude)) for o in orders]
+    trip = solve_optimal_trip(
+        rest_node,
+        nodes,
+        speed_kmh=speed_kmh,
+        factor=factor,
+        customer_sla_mins=customer_sla,
+        preserve_order=True,
+    )
+    return round(float(trip["roundTripDistanceKm"]), 1)
 
 
 def _count_active_riders(db: DbSession) -> int:
-    return db.scalar(
+    cache_key = f"{PREFIX_DELIVERY}active_riders"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    count = db.scalar(
         select(func.count(StaffInfo.account_id))
         .join(Account, Account.id == StaffInfo.account_id)
         .where(
@@ -151,6 +130,8 @@ def _count_active_riders(db: DbSession) -> int:
             StaffInfo.is_accepting_deliveries == True,
         )
     ) or 0
+    cache.set(cache_key, count, ttl_seconds=5.0)
+    return count
 
 
 @router.get("/duty-status")
@@ -209,6 +190,8 @@ def update_duty_status(data: DriverDutyInput, account: CurrentAccount, db: DbSes
 
     account.is_accepting_deliveries = data.accepting
     db.commit()
+    invalidate_delivery_cache()
+    cache.delete(KEY_ADMIN_SETTINGS)
 
     active_riders = _count_active_riders(db)
 
@@ -295,6 +278,11 @@ def recommended_batches(account: CurrentAccount, db: DbSession):
             "restaurant_longitude": restaurant.longitude,
         }
 
+    cache_key = f"{PREFIX_DELIVERY}recommended_batches"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     orders = db.scalars(
         select(Order)
         .where(Order.status == OrderStatus.READY, Order.assigned_delivery_id.is_(None))
@@ -302,7 +290,7 @@ def recommended_batches(account: CurrentAccount, db: DbSession):
     ).all()
 
     if not orders:
-        return {
+        empty_res = {
             "is_accepting_deliveries": True,
             "active_riders": active_riders,
             "is_restaurant_open": is_open,
@@ -313,13 +301,44 @@ def recommended_batches(account: CurrentAccount, db: DbSession):
             "restaurant_latitude": restaurant.latitude,
             "restaurant_longitude": restaurant.longitude,
         }
+        cache.set(cache_key, empty_res, ttl_seconds=5.0)
+        return empty_res
+
+    routing_factor = float(getattr(restaurant, "haversine_routing_factor", None) or 1.3627)
+    speed_kmh = float(getattr(restaurant, "average_delivery_speed_kmh", None) or 30.0)
+    customer_sla = float(getattr(restaurant, "customer_sla_minutes", None) or 36.0)
+    max_orders = int(getattr(restaurant, "max_orders_per_driver", None) or 5)
+    max_iters = (
+        int(getattr(restaurant, "alns_max_iterations", None) or 220)
+        if getattr(restaurant, "alns_max_iterations_mode", "AUTO") == "MANUAL"
+        else 220
+    )
+    # The max drivers constraint reads all available drivers ready to deliver
+    max_drivers = max(1, active_riders)
+
+    rest_node = {
+        "lat": restaurant.latitude or 0.0,
+        "lng": restaurant.longitude or 0.0,
+        "name": restaurant.restaurant_name or "Restaurant",
+    }
 
     # If there is a single order at the moment, show only that order directly
     if len(orders) == 1:
-        payload = order_payload(orders[0])
-        rt_km = compute_round_trip_km(restaurant, [orders[0]])
+        order_obj = orders[0]
+        node = OrderNode(order_obj, *_order_coords(order_obj, rest_node["lat"], rest_node["lng"]))
+        trip = solve_optimal_trip(
+            rest_node,
+            [node],
+            speed_kmh=speed_kmh,
+            factor=routing_factor,
+            customer_sla_mins=customer_sla,
+        )
+        payload = order_payload(order_obj)
+        rt_km = trip["roundTripDistanceKm"]
+        rt_mins = trip["roundTripTimeMinutes"]
         payload["round_trip_km"] = rt_km
-        return {
+        payload["round_trip_time_minutes"] = rt_mins
+        single_res = {
             "is_accepting_deliveries": True,
             "active_riders": active_riders,
             "is_restaurant_open": is_open,
@@ -327,38 +346,54 @@ def recommended_batches(account: CurrentAccount, db: DbSession):
             "single_order": True,
             "order": payload,
             "round_trip_km": rt_km,
+            "round_trip_time_minutes": rt_mins,
             "clusters": [
                 {
-                    "id": orders[0].order_id,
-                    "route_label": f"Single delivery · Order #{orders[0].order_id}",
+                    "id": order_obj.order_id,
+                    "route_label": f"Single delivery · Order #{order_obj.order_id}",
                     "orders": [payload],
                     "round_trip_km": rt_km,
+                    "round_trip_time_minutes": rt_mins,
+                    "legs": trip["legs"],
                 }
             ],
             "restaurant_latitude": restaurant.latitude,
             "restaurant_longitude": restaurant.longitude,
         }
+        cache.set(cache_key, single_res, ttl_seconds=5.0)
+        return single_res
 
-    # Multiple orders: form n clusters, where n is active delivery persons (at least 1)
-    n_clusters = max(1, active_riders)
-    clustered = cluster_orders(
-        orders,
-        k=n_clusters,
-        restaurant_lat=restaurant.latitude or 0.0,
-        restaurant_lng=restaurant.longitude or 0.0,
+    # Multiple orders: optimize fleet dispatch using the ALNS metaheuristic engine
+    nodes = [
+        OrderNode(o, *_order_coords(o, rest_node["lat"], rest_node["lng"]))
+        for o in orders
+    ]
+    alns_result = optimize_fleet_trips(
+        rest_node,
+        nodes,
+        rider_count="AUTO",
+        speed_kmh=speed_kmh,
+        factor=routing_factor,
+        max_drivers=max_drivers,
+        max_iterations=max_iters,
+        max_cluster_length=max_orders,
+        customer_sla_mins=customer_sla,
     )
 
     clusters_payload = [
         {
-            "id": "-".join(order.order_id for order in cl),
-            "route_label": f"Delivery {idx + 1} · {len(cl)} stop{'s' if len(cl) != 1 else ''}",
-            "orders": [order_payload(order) for order in cl],
-            "round_trip_km": compute_round_trip_km(restaurant, cl),
+            "id": "-".join(node.order.order_id for node in trip["orders"]),
+            "route_label": f"Delivery {idx + 1} · {len(trip['orders'])} stop{'s' if len(trip['orders']) != 1 else ''}",
+            "orders": [order_payload(node.order) for node in trip["orders"]],
+            "round_trip_km": trip["roundTripDistanceKm"],
+            "round_trip_time_minutes": trip["roundTripTimeMinutes"],
+            "legs": trip["legs"],
         }
-        for idx, cl in enumerate(clustered)
+        for idx, trip in enumerate(alns_result["trips"])
+        if trip.get("orders")
     ]
 
-    return {
+    fleet_res = {
         "is_accepting_deliveries": True,
         "active_riders": active_riders,
         "is_restaurant_open": is_open,
@@ -369,6 +404,8 @@ def recommended_batches(account: CurrentAccount, db: DbSession):
         "restaurant_latitude": restaurant.latitude,
         "restaurant_longitude": restaurant.longitude,
     }
+    cache.set(cache_key, fleet_res, ttl_seconds=5.0)
+    return fleet_res
 
 
 @router.post("/recommended-batches/claim", status_code=status.HTTP_201_CREATED)
@@ -399,6 +436,8 @@ async def claim_recommended_batch(data: BatchClaimInput, account: CurrentAccount
     db.add(batch)
     db.add(AdminEvent(event_type="delivery_batch_claimed", message=f"{account.name} took a {len(orders)}-stop delivery batch", actor_id=account.id, details={"order_ids": data.order_ids, "delivery_id": account.id}))
     db.commit()
+    invalidate_delivery_cache()
+    invalidate_orders_cache()
     return {"order_ids": data.order_ids, "route_label": batch.route_label}
 
 
@@ -425,6 +464,8 @@ async def claim_order(order_id: str, account: CurrentAccount, db: DbSession):
         otp=otp,
     )
     db.commit()
+    invalidate_delivery_cache()
+    invalidate_orders_cache()
     return order_payload(order)
 
 
@@ -446,6 +487,7 @@ def create_batch(data: BatchCreate, account: CurrentAccount, db: DbSession):
     db.add(batch)
     db.commit()
     db.refresh(batch)
+    invalidate_delivery_cache()
     return {"id": batch.id, "route_label": batch.route_label, "order_ids": data.order_ids, "created_at": batch.created_at}
 
 
@@ -475,8 +517,11 @@ def deliver(order_id: str, data: VerifyOtpInput, account: CurrentAccount, db: Db
     transition_order(order, OrderStatus.DELIVERED)
     db.add(AdminEvent(event_type="order_delivered", message=f"Order {order.order_id} delivered by {account.name}", actor_id=account.id, details={"order_id": order.order_id, "delivery_id": account.id, "delivery_name": account.name}))
     order.delivered_at = datetime.now(timezone.utc)
+    recalculate_and_update_delivery_speed(db)
     payment = db.get(Payment, order.order_id)
     if payment and payment.method == PaymentMethod.CASH:
         payment.status = PaymentStatus.PAID
     db.commit()
+    invalidate_orders_cache()
+    invalidate_delivery_cache()
     return order_payload(order)

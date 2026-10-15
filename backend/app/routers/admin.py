@@ -43,6 +43,12 @@ from app.services import (
     restaurant_settings,
     transition_order,
 )
+from app.cache import (
+    KEY_ADMIN_SETTINGS,
+    cache,
+    invalidate_menu_cache,
+    invalidate_restaurant_cache,
+)
 
 router = APIRouter(prefix="/admin", tags=["administration"], dependencies=[Depends(require_roles(Role.ADMIN))])
 
@@ -243,12 +249,23 @@ def sync_override_if_expired(settings_obj: RestaurantSettings, db: DbSession | N
                 db.commit()
 
 
-def serialize_restaurant_settings(settings_obj: RestaurantSettings) -> dict:
+def serialize_restaurant_settings(settings_obj: RestaurantSettings, db: DbSession | None = None) -> dict:
     is_open, status_reason = is_restaurant_open(settings_obj)
     sched_open, _ = is_scheduled_open(settings_obj)
     next_refresh = get_next_schedule_refresh(settings_obj)
 
     phones = [p.strip() for p in (settings_obj.phone or "").split(",") if p.strip()]
+
+    active_drivers_ready = 0
+    if db is not None:
+        active_drivers_ready = db.scalar(
+            select(func.count(StaffInfo.account_id))
+            .join(Account, Account.id == StaffInfo.account_id)
+            .where(
+                Account.role.in_([Role.DELIVERY, Role.ADMIN]),
+                StaffInfo.is_accepting_deliveries == True,
+            )
+        ) or 0
 
     return {
         "id": settings_obj.id,
@@ -264,6 +281,7 @@ def serialize_restaurant_settings(settings_obj: RestaurantSettings) -> dict:
         "delivery_radius_km": settings_obj.delivery_radius_km,
         "free_delivery_radius_km": settings_obj.free_delivery_radius_km,
         "delivery_fee_per_km_paise": settings_obj.delivery_fee_per_km_paise,
+        "charge_from_zero_beyond_free_radius": getattr(settings_obj, "charge_from_zero_beyond_free_radius", False) or False,
         "accepting_orders": is_open,
         "admin_override_open": bool(settings_obj.admin_override_state is True if settings_obj.admin_override_state is not None else settings_obj.admin_override_open),
         "admin_override_state": settings_obj.admin_override_state,
@@ -274,15 +292,27 @@ def serialize_restaurant_settings(settings_obj: RestaurantSettings) -> dict:
         "distance_calculation_mode": settings_obj.distance_calculation_mode,
         "enforce_driver_geofence": settings_obj.enforce_driver_geofence,
         "driver_geofence_meters": settings_obj.driver_geofence_meters,
-        "haversine_routing_factor": settings_obj.haversine_routing_factor,
+        "haversine_routing_factor": getattr(settings_obj, "haversine_routing_factor", 1.3627) or 1.3627,
+        "average_delivery_speed_kmh": getattr(settings_obj, "average_delivery_speed_kmh", 30.0) or 30.0,
+        "customer_sla_minutes": getattr(settings_obj, "customer_sla_minutes", 36.0) or 36.0,
+        "alns_max_iterations_mode": getattr(settings_obj, "alns_max_iterations_mode", "AUTO") or "AUTO",
+        "alns_max_iterations": getattr(settings_obj, "alns_max_iterations", 220) or 220,
+        "max_orders_per_driver": getattr(settings_obj, "max_orders_per_driver", 5) or 5,
+        "available_drivers_ready": active_drivers_ready,
     }
 
 
 @router.get("/settings")
 def get_settings(db: DbSession):
+    cached = cache.get(KEY_ADMIN_SETTINGS)
+    if cached is not None:
+        return cached
+
     settings = restaurant_settings(db)
     sync_override_if_expired(settings, db)
-    return serialize_restaurant_settings(settings)
+    data = serialize_restaurant_settings(settings, db=db)
+    cache.set(KEY_ADMIN_SETTINGS, data, ttl_seconds=10.0)
+    return data
 
 
 @router.put("/settings")
@@ -344,7 +374,8 @@ def update_settings(data: RestaurantSettingsInput, db: DbSession):
     ))
     db.commit()
     db.refresh(settings)
-    return serialize_restaurant_settings(settings)
+    invalidate_restaurant_cache()
+    return serialize_restaurant_settings(settings, db=db)
 
 
 
@@ -484,6 +515,7 @@ def create_discount(data: MenuDiscountInput, actor: CurrentAccount, db: DbSessio
     db.add(AdminEvent(event_type="menu_discount_created", message=f"{data.discount_percent}% discount scheduled for {', '.join(item_names)}", actor_id=actor.id, details={"menu_item_ids": item_ids, "discount_percent": data.discount_percent, "starts_at": starts_at.isoformat(), "ends_at": ends_at.isoformat()}))
     db.commit()
     db.flush()
+    invalidate_menu_cache()
     return {
         "id": discount.id,
         "campaign_name": data.campaign_name,
@@ -530,6 +562,7 @@ def update_discount(discount_id: int, data: MenuDiscountInput, actor: CurrentAcc
     current.ends_at = ends_at
     db.add(AdminEvent(event_type="menu_discount_updated", message=f"{data.discount_percent}% discount campaign updated for {', '.join(item_names)}", actor_id=actor.id, details={"discount_id": discount_id, "menu_item_ids": item_ids, "discount_percent": data.discount_percent, "starts_at": starts_at.isoformat(), "ends_at": ends_at.isoformat()}))
     db.commit()
+    invalidate_menu_cache()
     return {
         "id": current.id,
         "campaign_name": data.campaign_name,
@@ -556,6 +589,7 @@ def delete_discount(discount_id: int, actor: CurrentAccount, db: DbSession):
     db.add(AdminEvent(event_type="menu_discount_deleted", message=f"Scheduled discount for {', '.join(all_names)} deleted", actor_id=actor.id, details={"menu_item_ids": item_ids, "discount_percent": discount.discount_percent}))
     db.delete(discount)
     db.commit()
+    invalidate_menu_cache()
 
 
 
