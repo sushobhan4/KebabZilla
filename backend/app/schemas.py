@@ -585,6 +585,8 @@ class PublicRestaurantOut(ORMModel):
     accepting_orders: bool
     is_restaurant_open: bool
     weekly_schedule: dict = Field(default_factory=dict)
+    google_client_id: str | None = None
+    google_maps_api_key: str | None = None
 
 
 class DriverDutyInput(BaseModel):

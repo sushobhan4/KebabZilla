@@ -63,7 +63,7 @@ import {
   type Restaurant,
   type Role,
 } from "../api";
-import { useAuth } from "../state";
+import { useAuth, useRestaurant } from "../state";
 import {
   Badge,
   Button,
@@ -4303,12 +4303,13 @@ function Reports() {
 }
 
 function RestaurantLocationMap({ latitude, longitude, onSave, onClose }: { latitude: number | null; longitude: number | null; onSave: (latitude: number, longitude: number) => void; onClose: () => void }) {
+  const { restaurant } = useRestaurant();
   const container = useRef<HTMLDivElement>(null);
   const [point, setPoint] = useState<google.maps.LatLngLiteral>(latitude != null && longitude != null ? { lat: latitude, lng: longitude } : amtalaMapCenter);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
-    const key = import.meta.env.VITE_GOOGLE_MAPS_API_KEY?.trim();
+    const key = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY || restaurant?.google_maps_api_key || "").trim();
     if (!key) { setError("Google Maps is not configured. Add VITE_GOOGLE_MAPS_API_KEY to the frontend build environment."); return; }
     let disposed = false;
     void loadRestaurantMaps(key).then((maps) => {

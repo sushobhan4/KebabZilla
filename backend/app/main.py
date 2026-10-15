@@ -99,6 +99,8 @@ def public_restaurant(db: DbSession):
         "accepting_orders": is_open,
         "is_restaurant_open": is_open,
         "weekly_schedule": format_public_weekly_schedule(config.weekly_schedule),
+        "google_client_id": settings.google_client_id,
+        "google_maps_api_key": settings.google_maps_api_key,
     }
 
 

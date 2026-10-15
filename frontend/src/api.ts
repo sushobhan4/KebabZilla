@@ -233,6 +233,8 @@ export type Restaurant = {
   enforce_driver_geofence?: boolean
   driver_geofence_meters?: number
   haversine_routing_factor?: number
+  google_client_id?: string | null
+  google_maps_api_key?: string | null
 }
 
 export type DriverDutyStatus = {

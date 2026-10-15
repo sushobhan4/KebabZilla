@@ -32,6 +32,7 @@ import {
   PageTitle,
   StatusBadge,
 } from "../components";
+import { useRestaurant } from "../state";
 
 function DeliveryWaypointsMap({
   restaurantLat,
@@ -42,6 +43,7 @@ function DeliveryWaypointsMap({
   restaurantLng: number | null;
   orders: Order[];
 }) {
+  const { restaurant } = useRestaurant();
   const containerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<google.maps.Map | null>(null);
   const orderMarkersRef = useRef<google.maps.Marker[]>([]);
@@ -51,7 +53,7 @@ function DeliveryWaypointsMap({
   const ordersKey = orders.map((o) => `${o.order_id}:${o.latitude}:${o.longitude}`).join("|");
 
   useEffect(() => {
-    const key = import.meta.env.VITE_GOOGLE_MAPS_API_KEY?.trim();
+    const key = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY || restaurant?.google_maps_api_key || "").trim();
     if (!key) {
       setMapError("Google Maps API key is not configured.");
       return;

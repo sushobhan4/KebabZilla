@@ -2,19 +2,20 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { ArrowLeft, ArrowRight, Eye, EyeOff, Flame, LockKeyhole, Mail, Phone, UserRound } from 'lucide-react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { GoogleOAuthProvider, GoogleLogin, type CredentialResponse } from '@react-oauth/google'
-import { useAuth } from '../state'
+import { useAuth, useRestaurant } from '../state'
 import { Brand, Notice, PhoneInput } from '../components'
 import { confirmPasswordReset, requestPasswordReset } from '../api'
 
 export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recovery' }) {
   const { signIn, register, googleSignIn, verify2fa } = useAuth()
+  const { restaurant } = useRestaurant()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const tokenParam = searchParams.get('token') || ''
   const emailParam = searchParams.get('email') || ''
   const hasInviteToken = Boolean(tokenParam && mode === 'recovery')
 
-  const googleClientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim()
+  const googleClientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || restaurant?.google_client_id || '').trim()
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('+91')

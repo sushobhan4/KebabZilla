@@ -3,7 +3,7 @@ import { ArrowLeft, Check, LocateFixed, MapPin, Plus, Save, Star, Trash2, X } fr
 import { Link } from 'react-router-dom'
 import { importLibrary, setOptions } from '@googlemaps/js-api-loader'
 import { api, formatSavedAddress, type Account, type SavedAddress } from '../api'
-import { useAuth } from '../state'
+import { useAuth, useRestaurant } from '../state'
 import { Button, Loading, Notice, PageTitle, PhoneInput, formatPhoneWithPrefix, isValidIndianMobile } from '../components'
 
 const defaults = (): SavedAddress[] => [
@@ -27,6 +27,7 @@ function loadGoogleMaps(apiKey: string) {
 }
 
 function AddressMap({ address, onSave, onClose }: { address: SavedAddress; onSave: (lat: number, lng: number, parts: Partial<SavedAddress>) => void; onClose: () => void }) {
+  const { restaurant } = useRestaurant()
   const mapElement = useRef<HTMLDivElement>(null)
   const choosePoint = useRef<(location: google.maps.LatLngLiteral) => void>(() => undefined)
   const [point, setPoint] = useState<google.maps.LatLngLiteral>(address.latitude != null && address.longitude != null ? { lat: address.latitude, lng: address.longitude } : amtalaMapCenter)
@@ -39,7 +40,7 @@ function AddressMap({ address, onSave, onClose }: { address: SavedAddress; onSav
   const [selected, setSelected] = useState(address.latitude != null && address.longitude != null)
 
   useEffect(() => {
-    const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY?.trim()
+    const apiKey = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY || restaurant?.google_maps_api_key || '').trim()
     if (!apiKey) {
       setMapLoading(false)
       setLookup('Add VITE_GOOGLE_MAPS_API_KEY to frontend/.env.local, then restart the frontend.')
