@@ -4,11 +4,7 @@ import react from '@vitejs/plugin-react'
 declare const process: { env: Record<string, string | undefined> }
 
 export default defineConfig(() => {
-  const isGitHubCi = Boolean(process.env.GITHUB_ACTIONS)
-  const repoName = process.env.GITHUB_REPOSITORY
-    ? `/${process.env.GITHUB_REPOSITORY.split('/')[1]}/`
-    : '/KebabZilla/'
-  const base = process.env.BASE_PATH || (isGitHubCi ? repoName : '/')
+  const base = process.env.BASE_PATH || '/'
 
   return {
     plugins: [react()],
