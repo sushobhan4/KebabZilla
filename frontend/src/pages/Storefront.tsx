@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, ArrowRight, Check, ChevronLeft, ChevronRight, Clock3, Edit3, Flame, Leaf, ListFilter, MapPin, Phone, Plus, RotateCcw, ShieldCheck, ShoppingBag, Sparkles, Truck, Utensils, X, Search } from 'lucide-react'
+import { ArrowDown, ArrowRight, Check, ChevronLeft, ChevronRight, Clock3, Edit3, Flame, Leaf, ListFilter, MapPin, Phone, Plus, RotateCcw, ShieldCheck, ShoppingBag, Sparkles, Truck, Utensils, WifiOff, X, Search } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { api, formatINR, formatSavedAddress, getCustomItemLowestPrice, getMenuItemLowestPrice, resolveImageUrl, type CustomMenuItem, type CustomMenuSectionOption, type MenuItem, type MenuItemVariation, type Order, type Restaurant, type SavedCartItem } from '../api'
 import { useAuth } from '../state'
@@ -79,6 +79,7 @@ export default function Storefront() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [serverDown, setServerDown] = useState(false)
   const [success, setSuccess] = useState<Order | null>(null)
   const cartSync = useRef<Promise<void>>(Promise.resolve())
   const cartRetractTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -158,12 +159,71 @@ export default function Storefront() {
     cartRetractTimer.current = setTimeout(() => setCartExpanded(false), 5000)
   }
 
-  useEffect(() => {
+  const priceFor = (item: MenuItem) => item.discounted_price_paise ?? (item.discount_percent ? Math.round(item.price_paise * (100 - item.discount_percent) / 100) : item.price_paise)
+
+  const persistCart = useCallback((nextCart: CartLine[]) => {
+    try {
+      if (nextCart.length > 0) {
+        localStorage.setItem('kz_active_cart', JSON.stringify(nextCart))
+      } else {
+        localStorage.removeItem('kz_active_cart')
+      }
+    } catch {}
+
+    if (account?.role !== 'USER') return
+
+    cartSync.current = cartSync.current.catch(() => undefined).then(async () => {
+      const payload = nextCart.map((line) => ({
+        menu_id: line.item.id,
+        variation_name: line.variation_name || null,
+        quantity: line.quantity,
+        unit_price_paise: line.unit_price_paise ?? priceFor(line.item),
+        customizations: line.customizations || [],
+      }))
+      await api<SavedCartItem[]>('/cart', {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      })
+    }).catch((err) => setError(err instanceof Error ? err.message : 'Could not save your cart.'))
+  }, [account?.role])
+
+  const cartLinesFromSaved = useCallback((saved: SavedCartItem[], availableMenu: MenuItem[]): CartLine[] => {
+    if (!availableMenu.length) return []
+    return saved.flatMap((savedItem) => {
+      const itemId = savedItem.menu_id || savedItem.menu_item_id
+      if (!itemId) return []
+      const item = availableMenu.find((m) => m.id === itemId)
+      if (!item || !item.is_available) return []
+
+      const customizations = savedItem.customizations || []
+      const unitPrice = savedItem.unit_price_paise ?? priceFor(item)
+      const lineKey = customizations.length > 0
+        ? `custom-${item.id}-${customizations.map((o) => `${o.name}:${o.extra_paise}`).sort().join('|')}`
+        : savedItem.variation_name
+          ? `${item.id}-${savedItem.variation_name}`
+          : String(item.id)
+
+      return [{
+        item,
+        quantity: savedItem.quantity,
+        customizations,
+        variation_name: savedItem.variation_name || undefined,
+        unit_price_paise: unitPrice,
+        lineKey,
+        custom_menu_item_id: item.is_custom ? item.id : undefined,
+      }]
+    })
+  }, [])
+
+  const loadStore = useCallback(() => {
+    setLoading(true)
+    setError('')
     Promise.all([
       api<MenuItem[]>('/menu'),
       api<CustomMenuItem[]>('/custom-menu'),
       api<Restaurant>('/restaurant'),
     ]).then(([items, customItems, config]) => {
+      setServerDown(false)
       const mappedCustom: MenuItem[] = (customItems || []).map((ci) => {
         const lowestPaise = getCustomItemLowestPrice(ci)
         const discPercent = (ci as any).discount_percent || 0
@@ -223,64 +283,16 @@ export default function Storefront() {
           }
         }).catch(() => undefined)
       }
-    }).catch((err) => setError(err instanceof Error ? err.message : 'We could not load the menu.')).finally(() => setLoading(false))
-  }, [])
+    }).catch((err) => {
+      const msg = err instanceof Error ? err.message : 'Our servers are currently down. Please check back in a few minutes.'
+      setError(msg)
+      setServerDown(true)
+    }).finally(() => setLoading(false))
+  }, [account, cartLinesFromSaved, persistCart])
 
-  const priceFor = (item: MenuItem) => item.discounted_price_paise ?? (item.discount_percent ? Math.round(item.price_paise * (100 - item.discount_percent) / 100) : item.price_paise)
-
-  const persistCart = useCallback((nextCart: CartLine[]) => {
-    try {
-      if (nextCart.length > 0) {
-        localStorage.setItem('kz_active_cart', JSON.stringify(nextCart))
-      } else {
-        localStorage.removeItem('kz_active_cart')
-      }
-    } catch {}
-
-    if (account?.role !== 'USER') return
-
-    cartSync.current = cartSync.current.catch(() => undefined).then(async () => {
-      const payload = nextCart.map((line) => ({
-        menu_id: line.item.id,
-        variation_name: line.variation_name || null,
-        quantity: line.quantity,
-        unit_price_paise: line.unit_price_paise ?? priceFor(line.item),
-        customizations: line.customizations || [],
-      }))
-      await api<SavedCartItem[]>('/cart', {
-        method: 'PUT',
-        body: JSON.stringify(payload),
-      })
-    }).catch((err) => setError(err instanceof Error ? err.message : 'Could not save your cart.'))
-  }, [account?.role])
-
-  const cartLinesFromSaved = useCallback((saved: SavedCartItem[], availableMenu: MenuItem[]): CartLine[] => {
-    if (!availableMenu.length) return []
-    return saved.flatMap((savedItem) => {
-      const itemId = savedItem.menu_id || savedItem.menu_item_id
-      if (!itemId) return []
-      const item = availableMenu.find((m) => m.id === itemId)
-      if (!item || !item.is_available) return []
-
-      const customizations = savedItem.customizations || []
-      const unitPrice = savedItem.unit_price_paise ?? priceFor(item)
-      const lineKey = customizations.length > 0
-        ? `custom-${item.id}-${customizations.map((o) => `${o.name}:${o.extra_paise}`).sort().join('|')}`
-        : savedItem.variation_name
-          ? `${item.id}-${savedItem.variation_name}`
-          : String(item.id)
-
-      return [{
-        item,
-        quantity: savedItem.quantity,
-        customizations,
-        variation_name: savedItem.variation_name || undefined,
-        unit_price_paise: unitPrice,
-        lineKey,
-        custom_menu_item_id: item.is_custom ? item.id : undefined,
-      }]
-    })
-  }, [])
+  useEffect(() => {
+    loadStore()
+  }, [loadStore])
 
   useEffect(() => {
     if (account && account.role !== 'USER') {
@@ -1013,10 +1025,23 @@ export default function Storefront() {
 
     <section className="value-strip"><div><span className="value-icon"><Flame size={19} /></span><span><strong>Charcoal, always</strong><small>Real fire. No shortcuts.</small></span></div><div><span className="value-icon"><Leaf size={19} /></span><span><strong>Fresh, never frozen</strong><small>Made when you order.</small></span></div><div><span className="value-icon"><Truck size={19} /></span><span><strong>Quick to your door</strong><small>Hot food. Happy you.</small></span></div><div><span className="value-icon"><Utensils size={19} /></span><span><strong>Made with care</strong><small>Recipes worth sharing.</small></span></div></section>
 
-    <section className="menu-section" id="menu"><div className="menu-intro"><div><h2>Menu</h2><p>Choose what you’d like to order.</p></div></div>
-      {error && <Notice onDismiss={() => setError('')}>{error}</Notice>}
-      {orderingClosed && <Notice tone="info">We’re taking a short breather. Ordering will be back soon.</Notice>}
-      <div className="menu-tabs">{categories.map((name) => <button className={`menu-tab ${category === name ? 'active' : ''}`} key={name} onClick={() => { setCategory(name); liquidGlassManager.invalidateAll(); }}>{name}</button>)}</div>
+    <section className="menu-section" id="menu"><div className="menu-intro"><div><h2>{serverDown ? 'Menu temporarily unavailable' : orderingClosed ? 'Sorry, we are closed' : 'Menu'}</h2><p>{serverDown ? 'Our servers are currently down. Please check back in a few minutes.' : orderingClosed ? "Ordering is currently paused. Please check back later." : "Choose what you’d like to order."}</p></div></div>
+      {serverDown ? (
+        <div className="menu-server-down" style={{ padding: '2rem 1rem' }}>
+          <EmptyState
+            icon={<WifiOff size={24} />}
+            title="Our servers are currently down"
+            description="We’re having trouble connecting to our servers right now. Please check back in a few minutes or try again shortly."
+            action={
+              <Button onClick={() => loadStore()} style={{ marginTop: '0.75rem' }}>
+                <RotateCcw size={15} style={{ marginRight: '6px' }} /> Try again
+              </Button>
+            }
+          />
+        </div>
+      ) : (
+        <>
+          <div className="menu-tabs">{categories.map((name) => <button className={`menu-tab ${category === name ? 'active' : ''}`} key={name} onClick={() => { setCategory(name); liquidGlassManager.invalidateAll(); }}>{name}</button>)}</div>
       <div className="storefront-sticky-controls">
         <div className="menu-discovery-controls">
           <label className="menu-search">
@@ -1052,6 +1077,7 @@ export default function Storefront() {
                 src={resolveImageUrl((item.image_urls?.length ? item.image_urls[0] : item.image_url) || '')}
                 alt={item.name}
                 loading="lazy"
+                crossOrigin="anonymous"
               />
             </div>
           ) : (
@@ -1132,6 +1158,8 @@ export default function Storefront() {
           </div>
         </div>
       </article>)}</div> : <EmptyState icon={<Utensils size={20} />} title="The menu’s getting warmed up" description="Ask your restaurant admin to publish a few delicious items." />}
+        </>
+      )}
     </section>
 
     <section className="story-banner"><div className="story-mark"><Flame size={25} /></div><div><div className="eyebrow light-eyebrow">THE ZILLA WAY</div><h2>Good food is meant<br />to bring people <em>closer.</em></h2><p>From our charcoal grill to your table, every bite starts with the good stuff.</p></div><div className="story-seal"><span>100%</span><small>GOOD<br />TASTE</small><span>✦</span></div><div className="story-pattern">✳ &nbsp;· &nbsp;✦ &nbsp;· &nbsp;✳</div></section>
@@ -1310,6 +1338,7 @@ export default function Storefront() {
                   src={detailImages[modalImageIndex % detailImages.length]}
                   alt={`${activeDetailItem.name} photo`}
                   className="food-detail-hero-img"
+                  crossOrigin="anonymous"
                 />
               ) : (
                 <div className="food-detail-no-img">

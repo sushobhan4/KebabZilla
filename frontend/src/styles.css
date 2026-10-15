@@ -1162,6 +1162,10 @@ select:focus-visible {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 17px;
 }
+/* When the last row in a 3-column grid contains only 1 item (e.g. 4 or 3n+1 items), center it in column 2 */
+.food-grid > .food-card:last-child:nth-child(3n + 1) {
+  grid-column: 2;
+}
 .food-card {
   overflow: hidden;
   border: 1px solid #ebe8e0;
@@ -1617,26 +1621,39 @@ select:focus-visible {
 }
 .cart-line {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: minmax(0, 1fr) 78px 68px;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   padding: 9px 0;
   border-bottom: 1px solid #f1efe9;
 }
 .cart-line-name {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   font-size: 10px;
   font-weight: 600;
   gap: 3px;
+  overflow-wrap: break-word;
 }
 .cart-line-name small {
   font-size: 10px;
   color: #979a92;
   font-weight: 400;
 }
+.cart-line .quantity-picker {
+  width: 78px;
+  min-width: 78px;
+  justify-self: end;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
 .cart-line > strong {
   font-size: 10px;
+  text-align: right;
+  justify-self: end;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 .cart-totals {
   padding: 7px 0 10px;
@@ -5251,6 +5268,15 @@ select:focus-visible {
   .food-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .food-grid > .food-card:last-child:nth-child(3n + 1) {
+    grid-column: auto;
+  }
+  .food-grid > .food-card:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+    justify-self: center;
+    width: 100%;
+    max-width: 380px;
+  }
   .food-image {
     height: 170px;
   }
@@ -8771,16 +8797,24 @@ body {
     width: 12px;
   }
   .quantity-picker.quantity-small {
-    min-width: 58px;
+    min-width: 72px;
+    width: 72px;
   }
   .quantity-small button {
-    width: 19px;
+    width: 21px;
   }
   .cart-line {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) 72px 58px;
+    gap: 8px;
+  }
+  .cart-line .quantity-picker {
+    width: 72px;
+    min-width: 72px;
   }
   .cart-line > strong {
-    grid-column: 2;
+    grid-column: auto;
+    font-size: 10px;
+    text-align: right;
   }
   .cart-line-name {
     overflow-wrap: anywhere;
@@ -13009,12 +13043,14 @@ input[type="radio"]:focus-visible {
 
 /* When the navbar and sticky search controls meet and stick together, fuse them into one seamless container */
 .app-header.is-stuck-together {
-  border-bottom-color: transparent !important;
+  border-bottom: none !important;
   box-shadow: none !important;
 }
 
 .storefront-sticky-controls.is-stuck-together {
+  top: var(--app-header-height, 72px) !important;
   border-top: none !important;
+  margin-top: 0 !important;
   background: var(--glass-container-bg) !important;
   backdrop-filter: blur(var(--glass-container-blur)) saturate(var(--glass-container-saturate)) !important;
   -webkit-backdrop-filter: blur(var(--glass-container-blur)) saturate(var(--glass-container-saturate)) !important;
@@ -13027,6 +13063,35 @@ input[type="radio"]:focus-visible {
   border-bottom: none !important;
   border-top: none !important;
   box-shadow: none !important;
+}
+
+/* Fallback CSS rules when WebGL Liquid Glass is throttled / turned off */
+[data-liquid-glass-throttled="true"] .app-header,
+:root[style*="--liquid-glass-throttled"] .app-header {
+  background: var(--glass-container-bg) !important;
+  backdrop-filter: blur(var(--glass-container-blur)) saturate(var(--glass-container-saturate)) !important;
+  -webkit-backdrop-filter: blur(var(--glass-container-blur)) saturate(var(--glass-container-saturate)) !important;
+}
+
+[data-liquid-glass-throttled="true"] .storefront-sticky-controls,
+:root[style*="--liquid-glass-throttled"] .storefront-sticky-controls {
+  background: var(--glass-container-bg) !important;
+  backdrop-filter: blur(var(--glass-container-blur)) saturate(var(--glass-container-saturate)) !important;
+  -webkit-backdrop-filter: blur(var(--glass-container-blur)) saturate(var(--glass-container-saturate)) !important;
+}
+
+[data-liquid-glass-throttled="true"] .app-header.is-stuck-together,
+:root[style*="--liquid-glass-throttled"] .app-header.is-stuck-together {
+  border-bottom: none !important;
+  box-shadow: none !important;
+}
+
+[data-liquid-glass-throttled="true"] .storefront-sticky-controls.is-stuck-together,
+:root[style*="--liquid-glass-throttled"] .storefront-sticky-controls.is-stuck-together {
+  top: var(--app-header-height, 72px) !important;
+  border-top: none !important;
+  border-bottom: 1px solid rgba(235, 232, 224, 0.6) !important;
+  box-shadow: 0 12px 28px -8px rgba(39, 37, 29, 0.08) !important;
 }
 
 .app-header.has-liquid-glass .header-inner,

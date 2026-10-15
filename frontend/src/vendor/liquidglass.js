@@ -1548,13 +1548,25 @@ var GlassRenderer = class {
     this.cropCanvas.width = W;
     this.cropCanvas.height = H;
     this.cropCtx.clearRect(0, 0, W, H);
-    this.cropCtx.drawImage(sourceCanvas, -sourceX, -sourceY);
+    try {
+      this.cropCtx.drawImage(sourceCanvas, -sourceX, -sourceY);
+    } catch (e) {
+      this.cropCanvas = document.createElement("canvas");
+      this.cropCtx = this.cropCanvas.getContext("2d");
+      throw e;
+    }
     if (!this.bgTex) {
       this.bgTex = gl.createTexture();
     }
     gl.bindTexture(gl.TEXTURE_2D, this.bgTex);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this.cropCanvas);
+    try {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this.cropCanvas);
+    } catch (e) {
+      this.cropCanvas = document.createElement("canvas");
+      this.cropCtx = this.cropCanvas.getContext("2d");
+      throw e;
+    }
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);

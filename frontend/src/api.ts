@@ -52,13 +52,16 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
       credentials: 'include',
     })
   } catch {
-    throw new Error('Can’t reach the KebabZilla server. Check that the API is running and try again.')
+    throw new Error('Our servers are currently down. Please check back in a few minutes.')
   }
   const responseCsrf = response.headers.get('x-csrf-token')
   if (responseCsrf) {
     setCsrfToken(responseCsrf)
   }
   if (!response.ok) {
+    if (response.status >= 500) {
+      throw new Error('Our servers are currently down. Please check back in a few minutes.')
+    }
     const problem = await response.json().catch(() => null) as { detail?: unknown; message?: unknown } | null
     const detail = problem?.detail
     const validationMessages = Array.isArray(detail)

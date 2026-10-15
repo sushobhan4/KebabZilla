@@ -445,7 +445,7 @@ export function MenuImageCarousel({ images, alt, className = '' }: { images: str
             <small>Image unavailable</small>
           </span>
         ) : (
-          <img src={mainUrl} alt={alt} onError={() => setFailedSource(mainUrl)} />
+          <img src={mainUrl} alt={alt} crossOrigin="anonymous" onError={() => setFailedSource(mainUrl)} />
         )}
         {urls.length > 1 && (
           <span className="menu-photo-multi-badge" title={`${urls.length} photos · Click to view`}>
@@ -503,6 +503,7 @@ export function MenuImageCarousel({ images, alt, className = '' }: { images: str
                     src={urls[active]}
                     alt={`${alt} · photo ${active + 1}`}
                     className="menu-lightbox-big-img"
+                    crossOrigin="anonymous"
                     onError={() => setFailedSource(urls[active])}
                   />
                 )}

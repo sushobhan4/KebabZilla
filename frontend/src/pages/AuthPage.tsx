@@ -1,10 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { ArrowLeft, ArrowRight, Eye, EyeOff, Flame, LockKeyhole, Mail, Phone, UserRound } from 'lucide-react'
+import { ArrowLeft, ArrowRight, CircleAlert, Eye, EyeOff, Flame, LockKeyhole, Mail, Phone, UserRound, WifiOff } from 'lucide-react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { GoogleOAuthProvider, GoogleLogin, type CredentialResponse } from '@react-oauth/google'
 import { useAuth, useRestaurant } from '../state'
-import { Brand, Notice, PhoneInput } from '../components'
-import { confirmPasswordReset, requestPasswordReset } from '../api'
+import { Brand, EmptyState, PhoneInput } from '../components'
+import { api, confirmPasswordReset, requestPasswordReset } from '../api'
 
 export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recovery' }) {
   const { signIn, register, googleSignIn, verify2fa } = useAuth()
@@ -28,10 +28,22 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [serverDown, setServerDown] = useState(false)
   const [twoFactor, setTwoFactor] = useState<{ temp_token: string; email: string; role?: string } | null>(null)
   const [twoFactorCode, setTwoFactorCode] = useState('')
   const isRegister = mode === 'register'
   const isRecovery = mode === 'recovery'
+
+  useEffect(() => {
+    api('/restaurant')
+      .then(() => setServerDown(false))
+      .catch((err) => {
+        const msg = err instanceof Error ? err.message.toLowerCase() : ''
+        if (msg.includes('server') || msg.includes('down') || msg.includes('unavailable') || msg.includes('reach')) {
+          setServerDown(true)
+        }
+      })
+  }, [])
 
   useEffect(() => {
     if (emailParam) setEmail(emailParam)
@@ -104,7 +116,13 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
         navigate('/workspace', { replace: true })
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.')
+      const msg = err instanceof Error ? err.message : 'Something went wrong. Please try again.'
+      const lower = msg.toLowerCase()
+      if (lower.includes('server') || lower.includes('down') || lower.includes('unavailable') || lower.includes('reach')) {
+        setServerDown(true)
+      } else {
+        setError(msg)
+      }
     } finally {
       setBusy(false)
     }
@@ -124,7 +142,13 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
       }
       navigate(isRegister ? '/' : '/workspace', { replace: true })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Google sign-in was unsuccessful.')
+      const msg = err instanceof Error ? err.message : 'Google sign-in was unsuccessful.'
+      const lower = msg.toLowerCase()
+      if (lower.includes('server') || lower.includes('down') || lower.includes('unavailable') || lower.includes('reach')) {
+        setServerDown(true)
+      } else {
+        setError(msg)
+      }
     } finally {
       setBusy(false)
     }
@@ -140,7 +164,13 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
       await verify2fa(twoFactor.temp_token, twoFactorCode.trim())
       navigate('/workspace', { replace: true })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Invalid verification code. Please try again.')
+      const msg = err instanceof Error ? err.message : 'Invalid verification code. Please try again.'
+      const lower = msg.toLowerCase()
+      if (lower.includes('server') || lower.includes('down') || lower.includes('unavailable') || lower.includes('reach')) {
+        setServerDown(true)
+      } else {
+        setError(msg)
+      }
     } finally {
       setBusy(false)
     }
@@ -154,7 +184,40 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
       <div className="auth-visual-footer">© KebabZilla · Made fresh, served with care</div>
     </section>
     <section className="auth-form-side"><div className="auth-mobile-brand"><Brand /></div><div className="auth-card">
-      {twoFactor ? (
+      {serverDown ? (
+        <div className="auth-server-down">
+          <div className="auth-heading">
+            <div className="eyebrow">TEMPORARILY UNAVAILABLE</div>
+            <h1>Servers are currently down</h1>
+            <p>Our servers are taking a quick break or undergoing maintenance. We’ll be right back.</p>
+          </div>
+          <div style={{ padding: '1rem 0' }}>
+            <EmptyState
+              icon={<WifiOff size={24} />}
+              title="Our servers are currently down"
+              description="We’re having trouble connecting to our servers right now. Please check back in a few minutes or try again shortly."
+              action={
+                <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', marginTop: '1.25rem', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="button button-dark"
+                    onClick={() => {
+                      setServerDown(false)
+                      setError('')
+                      api('/restaurant').catch(() => setServerDown(true))
+                    }}
+                  >
+                    Try again
+                  </button>
+                  <Link className="button button-outline" to="/">
+                    Back to the menu
+                  </Link>
+                </div>
+              }
+            />
+          </div>
+        </div>
+      ) : twoFactor ? (
         <>
           <div className="auth-heading">
             <div className="eyebrow">STAFF SECURITY VERIFICATION</div>
@@ -163,7 +226,12 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
               A 6-digit security code was dispatched to <strong>{twoFactor.email}</strong>. Enter it below to complete sign-in to your staff workspace.
             </p>
           </div>
-          {error && <Notice>{error}</Notice>}
+          {error && (
+            <div className="auth-inline-error" style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#c2410c', fontSize: '0.875rem', margin: '8px 0 16px', fontWeight: 500 }}>
+              <CircleAlert size={16} />
+              <span>{error}</span>
+            </div>
+          )}
           {success && <div className="notice notice-success">{success}</div>}
           <form className="auth-form" onSubmit={submit2fa}>
             <label className="field-label">
@@ -205,7 +273,12 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
       ) : (
         <>
           <div className="auth-heading"><div className="eyebrow">{hasInviteToken ? 'ACCOUNT ACTIVATION' : isRecovery ? 'WE CAN HELP' : isRegister ? 'GOOD TASTE STARTS HERE' : 'WELCOME BACK'}</div><h1>{hasInviteToken ? 'Set up your password' : isRecovery ? 'Reset your password' : isRegister ? 'Create your account' : 'Come on in.'}</h1><p>{hasInviteToken ? 'Choose a strong password or continue with Google to access your workspace.' : isRecovery ? 'Enter the email for your customer, admin, employee, or delivery account. Your restaurant administrator can help restore access.' : isRegister ? 'Get your favorites to your door in a few taps.' : 'The grill’s hot and your favorites are waiting.'}</p></div>
-          {error && <Notice>{error}</Notice>}
+          {error && (
+            <div className="auth-inline-error" style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#c2410c', fontSize: '0.875rem', margin: '8px 0 16px', fontWeight: 500 }}>
+              <CircleAlert size={16} />
+              <span>{error}</span>
+            </div>
+          )}
           {success && <div className="notice notice-success">{success}</div>}
 
           {hasInviteToken && Boolean(googleClientId) && (

@@ -174,20 +174,21 @@ class LiquidGlassManager {
   private mutationObserver: MutationObserver | null = null;
   private isEnabled = true;
   private isThrottled = false;
-  private frameCount = 0;
-  private lastFpsSampleTime = 0;
-  private lowFpsStreak = 0;
-  private longTaskObserver: PerformanceObserver | null = null;
-  private longTaskStreak = 0;
-  private readonly FPS_SAMPLE_INTERVAL = 1000;
-  private readonly FPS_THRESHOLD = 32;
-  private readonly STREAK_THRESHOLD = 3;
+  private isPausedForVisibility = false;
+  private initStartTime = performance.now();
+  private lastResizeTime = 0;
+  private lastBurstFrameTimestamp = 0;
+  private consecutiveLaggedFrames = 0;
+  private highRenderDurationStreak = 0;
   private cachedHeaderH = -1;
   private cachedSearchH = -1;
   private lastStuckState: boolean | null = null;
 
   constructor() {
     this.loadFromStorage();
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", this.handleVisibilityChange);
+    }
   }
 
   private loadFromStorage() {
@@ -299,27 +300,7 @@ class LiquidGlassManager {
       }
     } catch {}
 
-    // Monitor for long tasks (> 100ms) which indicate severe main thread bottlenecking
-    if (typeof window !== "undefined" && "PerformanceObserver" in window) {
-      try {
-        this.longTaskObserver = new PerformanceObserver((list) => {
-          for (const entry of list.getEntries()) {
-            if (entry.duration > 100) {
-              this.longTaskStreak++;
-              if (this.longTaskStreak >= 2) {
-                this.handleThrottlingTrigger(
-                  `Long task detected (${Math.round(entry.duration)}ms)`,
-                );
-                break;
-              }
-            } else {
-              this.longTaskStreak = Math.max(0, this.longTaskStreak - 1);
-            }
-          }
-        });
-        this.longTaskObserver.observe({ entryTypes: ["longtask"] });
-      } catch {}
-    }
+
 
     try {
       this.capture = new HtmlCapture(document.body);
@@ -401,6 +382,9 @@ class LiquidGlassManager {
     });
     window.addEventListener("click", this.handleInteraction, { passive: true });
     window.addEventListener("input", this.handleInteraction, { passive: true });
+    window.addEventListener("wheel", this.handleInteraction, { passive: true });
+    window.addEventListener("touchmove", this.handleInteraction, { passive: true });
+    window.addEventListener("touchstart", this.handleInteraction, { passive: true });
 
     this.scheduleRender(8);
   }
@@ -415,10 +399,7 @@ class LiquidGlassManager {
       this.mutationObserver.disconnect();
       this.mutationObserver = null;
     }
-    if (this.longTaskObserver) {
-      this.longTaskObserver.disconnect();
-      this.longTaskObserver = null;
-    }
+
     window.removeEventListener("scroll", this.handleScrollOrResize);
     window.removeEventListener("resize", this.handleScrollOrResize);
     window.removeEventListener("pointerdown", this.handleInteraction);
@@ -426,6 +407,9 @@ class LiquidGlassManager {
     window.removeEventListener("input", this.handleInteraction);
     window.removeEventListener("change", this.handleInteraction);
     window.removeEventListener("keyup", this.handleInteraction);
+    window.removeEventListener("wheel", this.handleInteraction);
+    window.removeEventListener("touchmove", this.handleInteraction);
+    window.removeEventListener("touchstart", this.handleInteraction);
 
     for (const [el, canvas] of this.elementCanvases) {
       canvas.remove();
@@ -442,6 +426,45 @@ class LiquidGlassManager {
       this.renderer.destroy();
       this.renderer = null;
     }
+  }
+
+  private handleVisibilityChange = () => {
+    if (document.hidden) {
+      this.pauseForVisibility();
+    } else {
+      this.resumeFromVisibility();
+    }
+  };
+
+  private pauseForVisibility() {
+    if (!this.isRunning) return;
+    this.isPausedForVisibility = true;
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+    }
+    for (const [el, canvas] of this.elementCanvases) {
+      canvas.remove();
+      el.classList.remove("has-liquid-glass");
+    }
+    this.elementCanvases.clear();
+  }
+
+  private resumeFromVisibility() {
+    if (!this.isPausedForVisibility && !this.isThrottled) return;
+    this.isPausedForVisibility = false;
+
+    // Reset performance tracking metrics for a fresh evaluation
+    this.isThrottled = false;
+    this.initStartTime = performance.now();
+    this.lastBurstFrameTimestamp = 0;
+    this.consecutiveLaggedFrames = 0;
+    this.highRenderDurationStreak = 0;
+    document.documentElement.style.removeProperty("--liquid-glass-throttled");
+    document.documentElement.removeAttribute("data-liquid-glass-throttled");
+
+    this.start();
+    this.scheduleRender(12);
   }
 
   public scheduleRender(frames = 6) {
@@ -472,10 +495,13 @@ class LiquidGlassManager {
         this.capture.invalidateCache(block);
       }
     }
-    this.scheduleRender(6);
+    this.scheduleRender(8);
   };
 
-  private handleScrollOrResize = () => {
+  private handleScrollOrResize = (e?: Event) => {
+    if (e && e.type === "resize") {
+      this.lastResizeTime = performance.now();
+    }
     this.updateStuckState();
     this.scheduleRender(6);
   };
@@ -491,10 +517,7 @@ class LiquidGlassManager {
     );
     if (!header || !searchStrip) return false;
 
-    const inner = header.querySelector<HTMLElement>(".header-inner");
-    const baseHeaderH = inner
-      ? inner.getBoundingClientRect().height
-      : header.getBoundingClientRect().height;
+    const baseHeaderH = header.getBoundingClientRect().height;
 
     if (baseHeaderH > 0) {
       const roundedH = Math.round(baseHeaderH);
@@ -627,30 +650,28 @@ class LiquidGlassManager {
   private renderLoop = (timestamp?: number) => {
     if (!this.isRunning) return;
 
-    // Monitor frame performance & device throttling
-    if (typeof timestamp === "number") {
-      this.frameCount++;
-      if (this.lastFpsSampleTime === 0) {
-        this.lastFpsSampleTime = timestamp;
-      } else {
-        const delta = timestamp - this.lastFpsSampleTime;
-        if (delta >= this.FPS_SAMPLE_INTERVAL) {
-          const fps = Math.round((this.frameCount * 1000) / delta);
-          this.frameCount = 0;
-          this.lastFpsSampleTime = timestamp;
+    const now = typeof timestamp === "number" ? timestamp : performance.now();
+    const isStartupGracePeriod = now - this.initStartTime < 2500;
+    const isRecentResize = now - this.lastResizeTime < 800; // Protect against DevTools inspect open / window resize
 
-          // If low FPS detected under stress
-          if (fps < this.FPS_THRESHOLD) {
-            this.lowFpsStreak++;
-            if (this.lowFpsStreak >= this.STREAK_THRESHOLD) {
-              this.handleThrottlingTrigger(`Low FPS sustained (${fps} FPS)`);
-              return; // Stop animation loop immediately
-            }
-          } else {
-            this.lowFpsStreak = Math.max(0, this.lowFpsStreak - 1);
+    // Monitor frame performance during active rendering bursts
+    if (!isStartupGracePeriod && !isRecentResize) {
+      if (this.lastBurstFrameTimestamp > 0) {
+        const frameInterval = now - this.lastBurstFrameTimestamp;
+        // Frame interval > 65ms means < 15 FPS between consecutive active frames
+        if (frameInterval > 65) {
+          this.consecutiveLaggedFrames++;
+          if (this.consecutiveLaggedFrames >= 4) {
+            this.handleThrottlingTrigger(
+              `Active render frame interval dropped (${Math.round(1000 / frameInterval)} FPS / ${Math.round(frameInterval)}ms)`,
+            );
+            return;
           }
+        } else if (frameInterval <= 35) {
+          this.consecutiveLaggedFrames = Math.max(0, this.consecutiveLaggedFrames - 1);
         }
       }
+      this.lastBurstFrameTimestamp = now;
     }
 
     if ((this.isDirty || this.dirtyFramesRemaining > 0) && this.renderer) {
@@ -658,14 +679,38 @@ class LiquidGlassManager {
         this.dirtyFramesRemaining--;
       }
       this.isDirty = false;
-      this.discoverElements();
-      this.renderElements();
+      try {
+        const renderStart = performance.now();
+        this.discoverElements();
+        this.renderElements();
+        const renderDuration = performance.now() - renderStart;
+
+        // If the execution time of rendering itself exceeds 35ms (> 2 frames of CPU/GPU work)
+        if (!isStartupGracePeriod && renderDuration > 35) {
+          this.highRenderDurationStreak++;
+          if (this.highRenderDurationStreak >= 4) {
+            this.handleThrottlingTrigger(
+              `Rendering duration exceeded budget (${Math.round(renderDuration)}ms)`,
+            );
+            return;
+          }
+        } else if (renderDuration <= 18) {
+          this.highRenderDurationStreak = Math.max(0, this.highRenderDurationStreak - 1);
+        }
+      } catch (err: any) {
+        console.warn("LiquidGlassManager: WebGL render failed, falling back to CSS glass:", err);
+        this.handleThrottlingTrigger(`Render error: ${err?.message || err}`);
+        return;
+      }
     }
 
     if (this.dirtyFramesRemaining > 0 || this.isDirty) {
       this.rafId = requestAnimationFrame(this.renderLoop);
     } else {
       this.rafId = null;
+      // Burst has completed and rendering is now idle. Reset burst frame timestamp so
+      // the idle time between events is NEVER counted as lag!
+      this.lastBurstFrameTimestamp = 0;
     }
   };
 
@@ -704,8 +749,9 @@ class LiquidGlassManager {
       searchStrip.classList.remove("has-liquid-glass");
     }
 
-    // Set fallback CSS variable flag
+    // Set fallback CSS variable flag and attribute
     document.documentElement.style.setProperty("--liquid-glass-throttled", "1");
+    document.documentElement.setAttribute("data-liquid-glass-throttled", "true");
   }
 
   public isPerformanceThrottled(): boolean {
@@ -714,11 +760,12 @@ class LiquidGlassManager {
 
   public resetThrottling() {
     this.isThrottled = false;
-    this.lowFpsStreak = 0;
-    this.longTaskStreak = 0;
-    this.lastFpsSampleTime = 0;
-    this.frameCount = 0;
+    this.initStartTime = performance.now();
+    this.lastBurstFrameTimestamp = 0;
+    this.consecutiveLaggedFrames = 0;
+    this.highRenderDurationStreak = 0;
     document.documentElement.style.removeProperty("--liquid-glass-throttled");
+    document.documentElement.removeAttribute("data-liquid-glass-throttled");
     this.start();
   }
 
@@ -810,6 +857,8 @@ class LiquidGlassManager {
         effDpr,
         [el],
       );
+
+
 
       this.renderer.uploadAndBlur(
         this.sceneCanvas,
@@ -924,6 +973,8 @@ class LiquidGlassManager {
       [header, searchStrip],
     );
 
+
+
     // 3. Single WebGL pass: upload background & blur
     this.renderer.uploadAndBlur(
       this.sceneCanvas,
@@ -974,6 +1025,21 @@ class LiquidGlassManager {
     }
   }
 
+  private canSafelyDrawImage(img: HTMLImageElement): boolean {
+    if (!img || !img.complete || img.naturalWidth === 0) return false;
+    try {
+      const src = img.currentSrc || img.src;
+      if (!src) return false;
+      if (src.startsWith("data:") || src.startsWith("blob:")) return true;
+      const url = new URL(src, window.location.href);
+      if (url.origin === window.location.origin) return true;
+      if (img.crossOrigin === "anonymous" || img.crossOrigin === "use-credentials") {
+        return true;
+      }
+    } catch {}
+    return false;
+  }
+
   private composeSceneForBounds(
     sampleLeft: number,
     sampleTop: number,
@@ -1004,7 +1070,7 @@ class LiquidGlassManager {
 
     // 2. Find candidate content containers underneath the glass
     const candidateBlocks = document.querySelectorAll<HTMLElement>(
-      ".hero-section, .value-strip, .menu-intro, .menu-tabs, .food-card, .story-banner, .store-bottom, .order-success",
+      ".hero-section, .value-strip, .menu-intro, .notice, .menu-tabs, .food-card, .story-banner, .store-bottom, .order-success",
     );
 
     // Render each intersecting block
@@ -1090,8 +1156,35 @@ class LiquidGlassManager {
 
     if (destW <= 0 || destH <= 0) return;
 
-    // 1. Draw block background and border
+    // Check block visibility and opacity
     const bStyle = window.getComputedStyle(block);
+    if (bStyle.display === "none" || bStyle.visibility === "hidden") return;
+
+    const blockOpacity = parseFloat(bStyle.opacity || "1");
+    if (blockOpacity <= 0) return;
+
+    ctx.save();
+    if (blockOpacity < 1) {
+      ctx.globalAlpha = blockOpacity;
+    }
+
+    // Determine if block or context is closed/unavailable (or has CSS filters)
+    const isClosedOrUnavailable =
+      block.classList.contains("food-card-unavailable") ||
+      block.classList.contains("food-grid-closed") ||
+      !!block.closest(".food-grid-closed") ||
+      !!block.closest(".food-card-unavailable");
+
+    let blockFilter =
+      bStyle.filter && bStyle.filter !== "none" ? bStyle.filter : "none";
+    if (blockFilter === "none" && isClosedOrUnavailable) {
+      blockFilter = "grayscale(0.78)";
+    }
+    if (blockFilter !== "none") {
+      ctx.filter = blockFilter;
+    }
+
+    // 1. Draw block background and border
     const bBg = bStyle.backgroundColor;
     const bRadius = (parseFloat(bStyle.borderRadius) || 0) * dpr;
     const bBorderW = (parseFloat(bStyle.borderWidth) || 0) * dpr;
@@ -1122,9 +1215,9 @@ class LiquidGlassManager {
       ctx.restore();
     }
 
-    // 2. Draw nested styled container boxes (e.g. .food-image, .hero-art-bg, buttons, pills, tags)
+    // 2. Draw nested styled container boxes (e.g. .food-image, .hero-art-bg, buttons, pills, tags, labels)
     const subBoxes = block.querySelectorAll<HTMLElement>(
-      ".food-image, .hero-art-bg, .hero-note, .hero-food-main, .diet-dot, .food-best, .value-strip > div, .menu-tab, button, .add-food, .quantity-picker, .social-rating, .hero-delivery",
+      ".food-image, .hero-art-bg, .hero-note, .hero-food-main, .diet-dot, .food-best, .value-strip > div, .menu-tab, button, .add-food, .quantity-picker, .social-rating, .hero-delivery, .closed-menu-label, .notice, .custom-dish-badge, .discount-campaign-label, .food-zilla-pick",
     );
     for (let i = 0; i < subBoxes.length; i++) {
       const box = subBoxes[i];
@@ -1156,30 +1249,78 @@ class LiquidGlassManager {
         sStyle.borderColor !== "transparent" &&
         sStyle.borderColor !== "rgba(0, 0, 0, 0)";
 
-      if (hasBg || hasBorder) {
-        ctx.save();
-        ctx.beginPath();
-        if (sRad > 0 && ctx.roundRect) ctx.roundRect(sx, sy, sw, sh, sRad);
-        else ctx.rect(sx, sy, sw, sh);
-
-        if (hasBg) {
-          ctx.fillStyle = sBg;
-          ctx.fill();
-        }
-        if (hasBorder) {
-          ctx.strokeStyle = sStyle.borderColor;
-          ctx.lineWidth = sBorderW;
-          ctx.stroke();
-        }
-        ctx.restore();
+      ctx.save();
+      const sFilter =
+        sStyle.filter && sStyle.filter !== "none"
+          ? sStyle.filter
+          : blockFilter !== "none"
+            ? blockFilter
+            : isClosedOrUnavailable
+              ? "grayscale(0.78)"
+              : "none";
+      if (sFilter !== "none") {
+        ctx.filter = sFilter;
       }
+      const sOpacity = parseFloat(sStyle.opacity || "1");
+      if (sOpacity < 1 && sOpacity >= 0) {
+        ctx.globalAlpha = blockOpacity * sOpacity;
+      }
+
+      ctx.beginPath();
+      if (sRad > 0 && ctx.roundRect) ctx.roundRect(sx, sy, sw, sh, sRad);
+      else ctx.rect(sx, sy, sw, sh);
+
+      // Check if food-image has a gradient background (e.g. food-red, food-gold)
+      if (box.classList.contains("food-red")) {
+        const grad = ctx.createRadialGradient(
+          sx + sw * 0.53,
+          sy + sh * 0.47,
+          0,
+          sx + sw * 0.53,
+          sy + sh * 0.47,
+          Math.max(sw, sh) * 0.7,
+        );
+        grad.addColorStop(0, "#e7ad82");
+        grad.addColorStop(0.36, "#d18459");
+        grad.addColorStop(1, "#c45a3e");
+        ctx.fillStyle = grad;
+        ctx.fill();
+      } else if (box.classList.contains("food-gold")) {
+        const grad = ctx.createRadialGradient(
+          sx + sw * 0.5,
+          sy + sh * 0.48,
+          0,
+          sx + sw * 0.5,
+          sy + sh * 0.48,
+          Math.max(sw, sh) * 0.7,
+        );
+        grad.addColorStop(0, "#f6d391");
+        grad.addColorStop(0.39, "#e9b96e");
+        grad.addColorStop(1, "#c88943");
+        ctx.fillStyle = grad;
+        ctx.fill();
+      } else if (hasBg) {
+        ctx.fillStyle = sBg;
+        ctx.fill();
+      }
+
+      if (hasBorder) {
+        ctx.strokeStyle = sStyle.borderColor;
+        ctx.lineWidth = sBorderW;
+        ctx.stroke();
+      }
+      ctx.restore();
     }
 
     // 3. Draw all images inside this block
     const imgs = block.querySelectorAll<HTMLImageElement>("img");
     for (let i = 0; i < imgs.length; i++) {
       const img = imgs[i];
-      if (!img.complete || img.naturalWidth === 0) continue;
+      if (!img.complete) {
+        img.addEventListener("load", () => this.invalidateAll(), { once: true });
+        continue;
+      }
+      if (img.naturalWidth === 0) continue;
       if (img.closest(".has-liquid-glass")) continue;
 
       const iRect = img.getBoundingClientRect();
@@ -1206,6 +1347,31 @@ class LiquidGlassManager {
         ctx.roundRect(ix, iy, iw, ih, imgRadius);
         ctx.clip();
       }
+
+      const imgFilter =
+        imgStyle.filter && imgStyle.filter !== "none"
+          ? imgStyle.filter
+          : blockFilter !== "none"
+            ? blockFilter
+            : isClosedOrUnavailable
+              ? "grayscale(0.78)"
+              : "none";
+      if (imgFilter !== "none") {
+        ctx.filter = imgFilter;
+      }
+      const imgOpacity = parseFloat(imgStyle.opacity || "1");
+      if (imgOpacity < 1 && imgOpacity >= 0) {
+        ctx.globalAlpha = blockOpacity * imgOpacity;
+      }
+
+      // Check if image can be drawn without tainting the canvas
+      if (!this.canSafelyDrawImage(img)) {
+        ctx.fillStyle = imgStyle.backgroundColor || "#ece9e2";
+        ctx.fillRect(ix, iy, iw, ih);
+        ctx.restore();
+        continue;
+      }
+
       try {
         const nw = img.naturalWidth;
         const nh = img.naturalHeight;
@@ -1302,6 +1468,7 @@ class LiquidGlassManager {
       }
       node = walker.nextNode();
     }
+    ctx.restore();
   }
 }
 
