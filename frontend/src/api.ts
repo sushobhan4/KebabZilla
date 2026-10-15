@@ -2,14 +2,37 @@ const rawBase = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, 
 export const API_BASE = rawBase.endsWith('/api/v1') ? rawBase : `${rawBase}/api/v1`
 
 let accessToken: string | null = null
+try {
+  accessToken = localStorage.getItem('kz_access_token')
+} catch {}
+
+let memoryCsrfToken: string | null = null
+try {
+  memoryCsrfToken = localStorage.getItem('kz_csrf_token')
+} catch {}
 
 export function setAccessToken(token: string | null) {
   accessToken = token
+  try {
+    if (token) localStorage.setItem('kz_access_token', token)
+    else localStorage.removeItem('kz_access_token')
+  } catch {}
+}
+
+export function setCsrfToken(token: string | null) {
+  memoryCsrfToken = token
+  try {
+    if (token) localStorage.setItem('kz_csrf_token', token)
+    else localStorage.removeItem('kz_csrf_token')
+  } catch {}
 }
 
 function getCsrfToken(): string | null {
-  const match = document.cookie.match(/(?:^|;\s*)kz_csrf_token=([^;]+)/)
-  return match ? decodeURIComponent(match[1]) : null
+  try {
+    const match = document.cookie.match(/(?:^|;\s*)kz_csrf_token=([^;]+)/)
+    if (match) return decodeURIComponent(match[1])
+  } catch {}
+  return memoryCsrfToken
 }
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -30,6 +53,10 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     })
   } catch {
     throw new Error('Can’t reach the KebabZilla server. Check that the API is running and try again.')
+  }
+  const responseCsrf = response.headers.get('x-csrf-token')
+  if (responseCsrf) {
+    setCsrfToken(responseCsrf)
   }
   if (!response.ok) {
     const problem = await response.json().catch(() => null) as { detail?: unknown; message?: unknown } | null

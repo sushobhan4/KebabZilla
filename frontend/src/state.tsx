@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { api, setAccessToken, type Account, type Role } from './api'
+import { api, setAccessToken, setCsrfToken, type Account, type Role } from './api'
 
 export type AuthResponse = {
   account?: Account
@@ -42,7 +42,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
       .catch(() => {
         setAccessToken(null)
+        setCsrfToken(null)
         localStorage.removeItem('kz_account')
+        localStorage.removeItem('kz_access_token')
+        localStorage.removeItem('kz_csrf_token')
         sessionStorage.removeItem('kz_account')
         sessionStorage.removeItem('kz_access_token')
         setAccount(null)
@@ -50,50 +53,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setLoading(false))
   }, [])
 
-  const accept = useCallback((result: { access_token?: string; account: Account }) => {
+  const accept = useCallback((result: { access_token?: string; csrf_token?: string; account: Account }) => {
     if (result.access_token) setAccessToken(result.access_token)
+    if (result.csrf_token) setCsrfToken(result.csrf_token)
     setAccount(result.account)
     localStorage.setItem('kz_account', JSON.stringify(result.account))
     return result.account
   }, [])
 
   const signIn = useCallback(async (email: string, password: string): Promise<AuthResponse> => {
-    const result = await api<{ access_token?: string; account?: Account; requires_2fa?: boolean; temp_token?: string; email?: string; role?: Role }>('/auth/login', {
+    const result = await api<{ access_token?: string; csrf_token?: string; account?: Account; requires_2fa?: boolean; temp_token?: string; email?: string; role?: Role }>('/auth/login', {
       method: 'POST', body: JSON.stringify({ email, password }),
     })
     if (result.requires_2fa) {
       return result
     }
     if (result.account) {
-      accept({ access_token: result.access_token, account: result.account })
+      accept({ access_token: result.access_token, csrf_token: result.csrf_token, account: result.account })
       return { account: result.account }
     }
     return result
   }, [accept])
 
   const register = useCallback(async (name: string, email: string, phone: string, password: string) => {
-    const result = await api<{ access_token?: string; account: Account }>('/auth/register', {
+    const result = await api<{ access_token?: string; csrf_token?: string; account: Account }>('/auth/register', {
       method: 'POST', body: JSON.stringify({ name, email, phone: phone || null, password }),
     })
     return accept(result)
   }, [accept])
 
   const googleSignIn = useCallback(async (credential: string): Promise<AuthResponse> => {
-    const result = await api<{ access_token?: string; account?: Account; requires_2fa?: boolean; temp_token?: string; email?: string; role?: Role }>('/auth/google', {
+    const result = await api<{ access_token?: string; csrf_token?: string; account?: Account; requires_2fa?: boolean; temp_token?: string; email?: string; role?: Role }>('/auth/google', {
       method: 'POST', body: JSON.stringify({ credential }),
     })
     if (result.requires_2fa) {
       return result
     }
     if (result.account) {
-      accept({ access_token: result.access_token, account: result.account })
+      accept({ access_token: result.access_token, csrf_token: result.csrf_token, account: result.account })
       return { account: result.account }
     }
     return result
   }, [accept])
 
   const verify2fa = useCallback(async (temp_token: string, code: string): Promise<Account> => {
-    const result = await api<{ access_token?: string; account: Account }>('/auth/verify-2fa', {
+    const result = await api<{ access_token?: string; csrf_token?: string; account: Account }>('/auth/verify-2fa', {
       method: 'POST', body: JSON.stringify({ temp_token, code }),
     })
     return accept(result)
@@ -102,7 +106,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(() => {
     api('/auth/logout', { method: 'POST' }).catch(() => {})
     setAccessToken(null)
+    setCsrfToken(null)
     localStorage.removeItem('kz_account')
+    localStorage.removeItem('kz_access_token')
+    localStorage.removeItem('kz_csrf_token')
     sessionStorage.removeItem('kz_account')
     sessionStorage.removeItem('kz_access_token')
     setAccount(null)

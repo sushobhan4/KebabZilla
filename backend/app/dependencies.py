@@ -34,17 +34,16 @@ def current_account_base(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    # 1. Check HttpOnly cookie first, then fall back to Authorization header
+    # 1. Check Authorization Bearer header first, then fall back to HttpOnly cookie
+    bearer_token = credentials.credentials if (credentials and credentials.scheme.casefold() == "bearer") else None
     cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
-    token = cookie_token
-    if not token and credentials and credentials.scheme.casefold() == "bearer":
-        token = credentials.credentials
+    token = bearer_token or cookie_token
 
     if not token:
         raise unauthorized
 
-    # CSRF protection: If authenticated via cookie on a state-changing method, verify double-submit CSRF token
-    if cookie_token and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+    # CSRF protection: If authenticated solely via ambient cookie on a state-changing method, verify double-submit CSRF token
+    if not bearer_token and cookie_token and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
         csrf_cookie = request.cookies.get(CSRF_COOKIE_NAME)
         csrf_header = request.headers.get("x-csrf-token")
         if not csrf_cookie or not csrf_header or not secrets.compare_digest(csrf_header, csrf_cookie):

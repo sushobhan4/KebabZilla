@@ -74,14 +74,17 @@ def issue_session(account: Account, request: Request, response: Response, db: Se
     db.add(session)
     db.commit()
 
+    csrf_token = generate_csrf_token()
     set_session_cookie(response, raw_token)
-    set_csrf_cookie(response, generate_csrf_token())
+    set_csrf_cookie(response, csrf_token)
+    response.headers["x-csrf-token"] = csrf_token
 
     return TokenOut(
         access_token=raw_token,
         token_type="bearer",
         expires_in=SESSION_LIFETIME_DAYS * 86400,
         account=AccountOut.model_validate(account),
+        csrf_token=csrf_token,
     )
 
 
@@ -391,9 +394,18 @@ def me(account: PasswordChangeAccount, request: Request, response: Response):
     token = request.cookies.get(SESSION_COOKIE_NAME)
     if token:
         set_session_cookie(response, token)
-    if not request.cookies.get(CSRF_COOKIE_NAME):
-        set_csrf_cookie(response, generate_csrf_token())
+    csrf_token = request.cookies.get(CSRF_COOKIE_NAME) or generate_csrf_token()
+    set_csrf_cookie(response, csrf_token)
+    response.headers["x-csrf-token"] = csrf_token
     return account
+
+
+@router.get("/csrf")
+def get_csrf(request: Request, response: Response):
+    csrf_token = request.cookies.get(CSRF_COOKIE_NAME) or generate_csrf_token()
+    set_csrf_cookie(response, csrf_token)
+    response.headers["x-csrf-token"] = csrf_token
+    return {"csrf_token": csrf_token}
 
 
 @router.patch("/profile", response_model=AccountOut)
@@ -470,8 +482,9 @@ def logout(
     db: DbSession,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)] = None,
 ):
+    bearer_token = credentials.credentials if credentials and credentials.scheme.casefold() == "bearer" else None
     cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
-    if cookie_token:
+    if not bearer_token and cookie_token:
         csrf_cookie = request.cookies.get(CSRF_COOKIE_NAME)
         csrf_header = request.headers.get("x-csrf-token")
         if not csrf_cookie or not csrf_header or not secrets.compare_digest(csrf_header, csrf_cookie):
@@ -479,9 +492,7 @@ def logout(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="CSRF token missing or invalid",
             )
-    token = cookie_token
-    if not token and credentials and credentials.scheme.casefold() == "bearer":
-        token = credentials.credentials
+    token = bearer_token or cookie_token
     if token:
         token_hash = hash_session_token(token)
         db.query(UserSession).filter(UserSession.token_hash == token_hash).update(

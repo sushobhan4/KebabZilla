@@ -271,6 +271,7 @@ class TokenOut(BaseModel):
     temp_token: str | None = None
     email: str | None = None
     role: Role | None = None
+    csrf_token: str | None = None
 
 
 class MenuItemVariationInput(BaseModel):

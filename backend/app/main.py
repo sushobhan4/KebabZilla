@@ -40,6 +40,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Razorpay-Signature", "X-CSRF-Token"],
+    expose_headers=["X-CSRF-Token"],
 )
 
 for route_module in (auth, menu, cart, orders, staff, delivery, admin, payments, custom_menu):
