@@ -9,18 +9,28 @@ router = APIRouter(prefix="/cart", tags=["customer cart"])
 
 
 def customer_only(account: CurrentAccount) -> None:
-    if account.role != Role.USER:
-        raise HTTPException(status_code=403, detail="Saved carts are available to customer accounts")
+    if account.role not in (Role.USER, Role.ADMIN):
+        raise HTTPException(status_code=403, detail="Saved carts are available to customer and administrator accounts")
 
 
-def _customizations_key(customizations: list[dict] | None) -> str:
+def _customizations_key(customizations: list | None) -> str:
     if not customizations:
         return ""
-    opts = [c for c in customizations if isinstance(c, dict)]
-    return "|".join(sorted(f"{c.get('name', '')}:{c.get('extra_paise', 0)}" for c in opts))
+    opts = []
+    for c in customizations:
+        if hasattr(c, "name"):
+            name = c.name or ""
+            extra = max(0, int(c.extra_paise or 0))
+        elif isinstance(c, dict):
+            name = c.get("name", "")
+            extra = max(0, int(c.get("extra_paise", 0) or 0))
+        else:
+            continue
+        opts.append((name, extra))
+    return "|".join(sorted(f"{name}:{extra}" for name, extra in opts))
 
 
-def _same_item(ci: CartItem, menu_id: int, variation_name: str | None, customizations: list[dict] | None) -> bool:
+def _same_item(ci: CartItem, menu_id: int, variation_name: str | None, customizations: list | None) -> bool:
     if ci.menu_id != menu_id:
         return False
     if (ci.variation_name or None) != (variation_name or None):
@@ -64,13 +74,17 @@ def sync_cart(items: list[CartItemInput], account: CurrentAccount, db: DbSession
         if unit_price is None or unit_price < 0:
             unit_price = menu_item.price_paise
 
+        raw_customs = [
+            c.model_dump() if hasattr(c, "model_dump") else c
+            for c in (item_data.customizations or [])
+        ]
         db.add(
             CartItem(
                 customer_id=account.id,
                 menu_id=item_id,
                 variation_name=item_data.variation_name or None,
                 quantity=item_data.quantity,
-                customizations=item_data.customizations or [],
+                customizations=raw_customs,
             )
         )
 
@@ -112,9 +126,13 @@ def add_or_update_cart_item(item_data: CartItemInput, account: CurrentAccount, d
             select(CartItem).where(CartItem.customer_id == account.id).order_by(CartItem.id.asc())
         ).all()
 
+    raw_customs = [
+        c.model_dump() if hasattr(c, "model_dump") else c
+        for c in (item_data.customizations or [])
+    ]
     if existing:
         existing.quantity = item_data.quantity
-        existing.customizations = item_data.customizations or []
+        existing.customizations = raw_customs
         existing.variation_name = item_data.variation_name or None
     else:
         db.add(
@@ -123,7 +141,7 @@ def add_or_update_cart_item(item_data: CartItemInput, account: CurrentAccount, d
                 menu_id=item_id,
                 variation_name=item_data.variation_name or None,
                 quantity=item_data.quantity,
-                customizations=item_data.customizations or [],
+                customizations=raw_customs,
             )
         )
 
@@ -178,15 +196,28 @@ def delete_cart_item(item_id: str, account: CurrentAccount, db: DbSession):
     customer_only(account)
     if item_id.isdigit():
         target_id = int(item_id)
+        # 1. Try finding by CartItem.id first
         existing = db.scalar(
             select(CartItem).where(
                 CartItem.customer_id == account.id,
-                (CartItem.id == target_id) | (CartItem.menu_id == target_id),
+                CartItem.id == target_id,
             )
         )
         if existing:
             db.delete(existing)
             db.commit()
+        else:
+            # 2. Fall back to removing all items matching menu_id
+            menu_matches = db.scalars(
+                select(CartItem).where(
+                    CartItem.customer_id == account.id,
+                    CartItem.menu_id == target_id,
+                )
+            ).all()
+            for item in menu_matches:
+                db.delete(item)
+            if menu_matches:
+                db.commit()
 
     return db.scalars(
         select(CartItem).where(CartItem.customer_id == account.id).order_by(CartItem.id.asc())

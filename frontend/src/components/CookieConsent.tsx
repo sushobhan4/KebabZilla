@@ -12,35 +12,35 @@ export function CookiePreferencesModal({
 }) {
   const [consent, setConsent] = useState<CookieConsentState>(() => getCookieConsent());
   const [prefToggled, setPrefToggled] = useState(() => consent.preferences);
-  const [analyticsToggled, setAnalyticsToggled] = useState(() => consent.analytics);
+  const [marketingToggled, setMarketingToggled] = useState(() => consent.marketing);
 
   useEffect(() => {
     if (open) {
       const c = getCookieConsent();
       setConsent(c);
       setPrefToggled(c.preferences);
-      setAnalyticsToggled(c.analytics);
+      setMarketingToggled(c.marketing);
     }
   }, [open]);
 
   if (!open) return null;
 
   function handleSave() {
-    saveCookieConsent({ preferences: prefToggled, analytics: analyticsToggled, decided: true });
+    saveCookieConsent({ preferences: prefToggled, marketing: marketingToggled, decided: true });
     onClose();
   }
 
   function handleAcceptAll() {
-    saveCookieConsent({ preferences: true, analytics: true, decided: true });
+    saveCookieConsent({ preferences: true, marketing: true, decided: true });
     setPrefToggled(true);
-    setAnalyticsToggled(true);
+    setMarketingToggled(true);
     onClose();
   }
 
   function handleRejectAll() {
-    saveCookieConsent({ preferences: false, analytics: false, decided: true });
+    saveCookieConsent({ preferences: false, marketing: false, decided: true });
     setPrefToggled(false);
-    setAnalyticsToggled(false);
+    setMarketingToggled(false);
     onClose();
   }
 
@@ -123,7 +123,7 @@ export function CookiePreferencesModal({
               </p>
             </div>
 
-            {/* Category: Analytics */}
+            {/* Category: Marketing */}
             <div
               style={{
                 padding: '14px',
@@ -133,18 +133,18 @@ export function CookiePreferencesModal({
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                <strong style={{ fontSize: '0.95rem' }}>Performance &amp; Experience</strong>
+                <strong style={{ fontSize: '0.95rem' }}>Marketing</strong>
                 <label className="toggle-switch">
                   <input
                     type="checkbox"
-                    checked={analyticsToggled}
-                    onChange={(e) => setAnalyticsToggled(e.target.checked)}
+                    checked={marketingToggled}
+                    onChange={(e) => setMarketingToggled(e.target.checked)}
                   />
                   <span />
                 </label>
               </div>
               <p style={{ margin: 0, fontSize: '0.84rem', color: '#666', lineHeight: 1.45 }}>
-                Collects anonymous performance data to ensure delicious kebab photos, interactive menus, and real-time delivery tracking maps load quickly on your phone or computer. Zero ad networks.
+                Enables promotional offers, discount campaigns, and exclusive deals from KebabZilla. Essential and preference cookies are always stored locally on your device; only this marketing consent choice is synchronized with your account in the database.
               </p>
             </div>
           </div>
@@ -204,12 +204,12 @@ export function CookieConsentBanner({
   }, []);
 
   function handleAcceptAll() {
-    saveCookieConsent({ preferences: true, analytics: true, decided: true });
+    saveCookieConsent({ preferences: true, marketing: true, decided: true });
     setVisible(false);
   }
 
   function handleRejectOptional() {
-    saveCookieConsent({ preferences: false, analytics: false, decided: true });
+    saveCookieConsent({ preferences: false, marketing: false, decided: true });
     setVisible(false);
   }
 
@@ -395,10 +395,10 @@ export function CookiePolicyModal({
 
               <div style={{ padding: '14px', borderRadius: '10px', background: '#f9f9f7', border: '1px solid var(--border)' }}>
                 <strong style={{ display: 'block', fontSize: '0.95rem', color: '#111' }}>
-                  C. Performance &amp; Experience Cookies (Optional)
+                  C. Marketing &amp; Promotional Consent (Optional)
                 </strong>
                 <p style={{ margin: '4px 0 0 0', fontSize: '0.88rem', color: '#555' }}>
-                  Used anonymously to ensure menu pages, high-resolution food photos, and live order tracking maps load at top speed on your mobile or desktop device. Zero third-party ad networks, zero selling of customer habits.
+                  Enables KebabZilla to send exclusive promotional deals, campaign discounts, and seasonal offers to your email or SMS. Strictly no third-party ad networks or data brokers. All essential and functional preference cookies are kept locally on your device; only your marketing preference choice is saved to your account in our database.
                 </p>
               </div>
             </div>

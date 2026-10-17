@@ -18,6 +18,7 @@ class AccountCreate(BaseModel):
     email: EmailStr
     phone: str | None = Field(default=None, max_length=32)
     password: str = Field(min_length=10, max_length=128)
+    promotional_consent: bool = Field(default=True)
 
     @field_validator("phone")
     @classmethod
@@ -127,6 +128,7 @@ class AccountOut(ORMModel):
     role: Role
     must_change_password: bool = False
     is_accepting_deliveries: bool = False
+    promotional_consent: bool = True
     created_at: datetime
 
     @model_validator(mode="before")
@@ -144,6 +146,7 @@ class AccountOut(ORMModel):
             data["addresses"] = [{("id" if key == "address_id" else key): val for key, val in item.items()} for item in data["addresses"]]
             data["must_change_password"] = bool(getattr(value, "must_change_password", False))
             data["is_accepting_deliveries"] = bool(getattr(value, "is_accepting_deliveries", False))
+            data["promotional_consent"] = bool(getattr(value, "promotional_consent", True))
             return data
         return value
 
@@ -187,6 +190,7 @@ class AccountProfileUpdate(BaseModel):
     email: EmailStr
     phone: str | None = Field(default=None, max_length=32)
     addresses: list[SavedAddressInput] | None = Field(default=None, max_length=12)
+    promotional_consent: bool | None = Field(default=None)
 
     @field_validator("phone")
     @classmethod
@@ -194,6 +198,10 @@ class AccountProfileUpdate(BaseModel):
         if not value:
             return None
         return normalize_phone_e164(value)
+
+
+class PromotionalConsentUpdate(BaseModel):
+    promotional_consent: bool
 
 
 class PasswordUpdate(BaseModel):
@@ -206,6 +214,13 @@ class TwoFactorVerifyRequest(BaseModel):
     code: str = Field(min_length=6, max_length=10)
 
 
+class CustomizationOptionInput(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    name: str = Field(min_length=1, max_length=120)
+    extra_paise: int = Field(default=0, ge=0, le=1_000_000)
+
+
 class CartItemInput(BaseModel):
     menu_id: int | None = None
     menu_item_id: int | None = None
@@ -213,7 +228,7 @@ class CartItemInput(BaseModel):
     variation_name: str | None = Field(default=None, max_length=60)
     quantity: int = Field(ge=0, le=99)
     unit_price_paise: int | None = Field(default=None, ge=0)
-    customizations: list[dict] = Field(default_factory=list)
+    customizations: list[CustomizationOptionInput] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
@@ -402,7 +417,7 @@ class OrderLineInput(BaseModel):
     menu_item_id: int | None = None
     custom_menu_item_id: int | None = None
     quantity: int = Field(gt=0, le=30)
-    customizations: list[dict] = Field(default_factory=list)
+    customizations: list[CustomizationOptionInput] = Field(default_factory=list)
     variation_name: str | None = None
 
     @model_validator(mode="after")
@@ -447,7 +462,8 @@ class OrderCreate(BaseModel):
         import json
         keys = []
         for item in items:
-            custom_key = json.dumps(item.customizations, sort_keys=True) if item.customizations else ""
+            raw_customs = [c.model_dump() if hasattr(c, "model_dump") else c for c in item.customizations]
+            custom_key = json.dumps(raw_customs, sort_keys=True) if raw_customs else ""
             var_key = item.variation_name or ""
             keys.append((item.menu_item_id, item.custom_menu_item_id, var_key, custom_key))
         if len(keys) != len(set(keys)):
@@ -494,6 +510,7 @@ class RestaurantSettingsInput(BaseModel):
     tagline: str = Field(max_length=200)
     phone: str = Field(max_length=300)
     phones: list[str] = Field(default_factory=list)
+    email: str = Field(default="support@kebabzilla.in", max_length=255)
     address: str = Field(max_length=300)
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
@@ -503,6 +520,8 @@ class RestaurantSettingsInput(BaseModel):
     free_delivery_radius_km: float = Field(ge=0, le=500)
     delivery_fee_per_km_paise: int = Field(ge=0, le=1_000_000)
     accepting_orders: bool
+    is_delivery_open: bool = Field(default=True)
+    order_cutoff_minutes_before_closing: int = Field(default=30, ge=0, le=720)
     admin_override_open: bool | None = None
     admin_override_state: bool | None = None
     admin_override_until: datetime | None = None
@@ -546,6 +565,7 @@ class RestaurantSettingsOut(ORMModel):
     tagline: str
     phone: str
     phones: list[str] = Field(default_factory=list)
+    email: str = "support@kebabzilla.in"
     address: str
     latitude: float | None
     longitude: float | None
@@ -555,6 +575,14 @@ class RestaurantSettingsOut(ORMModel):
     free_delivery_radius_km: float
     delivery_fee_per_km_paise: int
     accepting_orders: bool
+    is_restaurant_open: bool = False
+    is_delivery_open: bool = True
+    order_cutoff_minutes_before_closing: int = 30
+    delivery_status: str = "OPEN"
+    delivery_status_heading: str = "Menu"
+    delivery_status_message: str = "Choose what you’d like to order."
+    closing_in_minutes: int | None = None
+    closing_time: str | None = None
     admin_override_open: bool = False
     admin_override_state: bool | None = None
     admin_override_until: datetime | None = None
@@ -586,20 +614,13 @@ class PublicRestaurantOut(ORMModel):
     restaurant_name: str
     tagline: str
     phone: str
-    phones: list[str] = Field(default_factory=list)
+    email: str = "support@kebabzilla.in"
     address: str
     latitude: float | None = None
     longitude: float | None = None
-    minimum_order_paise: int
-    delivery_radius_km: float
-    free_delivery_radius_km: float
-    delivery_fee_per_km_paise: int
-    accepting_orders: bool
     is_restaurant_open: bool
+    is_delivery_open: bool = True
     weekly_schedule: dict = Field(default_factory=dict)
-    charge_from_zero_beyond_free_radius: bool = False
-    google_client_id: str | None = None
-    google_maps_api_key: str | None = None
 
 
 class DriverDutyInput(BaseModel):
@@ -645,7 +666,18 @@ class OfferInput(BaseModel):
     audience: str = Field(pattern=r"^(ALL|NEW|RETURNING)$")
     channels: list[str] = Field(min_length=1)
     subject: str = Field(default="A little something from KebabZilla", min_length=2, max_length=160)
-    message: str = Field(min_length=2, max_length=1000)
+    message: str = Field(min_length=2, max_length=5000)
+    headline: str | None = Field(default=None, max_length=200)
+    subheading: str | None = Field(default=None, max_length=300)
+    promo_code: str | None = Field(default=None, max_length=40)
+    discount_highlight: str | None = Field(default=None, max_length=60)
+    cta_text: str | None = Field(default=None, max_length=80)
+    cta_url: str | None = Field(default=None, max_length=500)
+    background_image_url: str | None = Field(default=None, max_length=2048)
+    theme_color: str | None = Field(default=None, max_length=30)
+    background_opacity: float = Field(default=0.35, ge=0.05, le=1.0)
+    outer_blur: int = Field(default=70, ge=0, le=150)
+    invert_logo: bool = Field(default=False)
 
     @field_validator("channels")
     @classmethod

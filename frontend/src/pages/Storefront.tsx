@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, ArrowRight, Check, ChevronLeft, ChevronRight, Clock3, Edit3, Flame, Leaf, ListFilter, MapPin, Phone, Plus, RotateCcw, ShieldCheck, ShoppingBag, Sparkles, Truck, Utensils, WifiOff, X, Search } from 'lucide-react'
+import { ArrowDown, ArrowRight, Check, ChevronLeft, ChevronRight, Clock3, Edit3, Flame, Leaf, ListFilter, MapPin, Phone, Plus, RotateCcw, ShieldCheck, ShoppingBag, Sparkles, Truck, Utensils, WifiOff, X, Search, Mail } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { api, formatINR, formatSavedAddress, getCustomItemLowestPrice, getMenuItemLowestPrice, resolveImageUrl, type CustomMenuItem, type CustomMenuSectionOption, type MenuItem, type MenuItemVariation, type Order, type Restaurant, type SavedCartItem } from '../api'
 import { useAuth } from '../state'
@@ -84,7 +84,77 @@ export default function Storefront() {
   const cartSync = useRef<Promise<void>>(Promise.resolve())
   const cartRetractTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const totalItems = useMemo(() => cart.reduce((total, line) => total + line.quantity, 0), [cart])
-  const orderingClosed = restaurant !== null && !restaurant.accepting_orders
+
+  const [nowTimestamp, setNowTimestamp] = useState<number>(() => Date.now())
+  useEffect(() => {
+    const timer = setInterval(() => setNowTimestamp(Date.now()), 30000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const isRestaurantOpen = restaurant === null ? true : (restaurant.is_restaurant_open ?? restaurant.accepting_orders ?? true)
+  const isDeliveryOpen = restaurant === null ? true : (restaurant.is_delivery_open ?? restaurant.accepting_orders ?? true)
+
+  const dynamicMinutesUntilClose = useMemo(() => {
+    if (!restaurant?.closing_time) return restaurant?.closing_in_minutes ?? null
+    const closeTime = new Date(restaurant.closing_time).getTime()
+    const diffMs = closeTime - nowTimestamp
+    if (diffMs <= 0) return 0
+    return Math.max(1, Math.round(diffMs / 60000))
+  }, [restaurant?.closing_time, restaurant?.closing_in_minutes, nowTimestamp])
+
+  const cutoffMinutes = restaurant?.order_cutoff_minutes_before_closing ?? 30
+
+  const dynamicMinutesUntilCutoff = useMemo(() => {
+    if (dynamicMinutesUntilClose === null) return restaurant?.cutoff_in_minutes ?? null
+    return Math.max(0, dynamicMinutesUntilClose - cutoffMinutes)
+  }, [dynamicMinutesUntilClose, cutoffMinutes, restaurant?.cutoff_in_minutes])
+
+  const isPastCutoff = useMemo(() => {
+    if (restaurant?.delivery_status === 'DELIVERY_CUTOFF') return true
+    if (isRestaurantOpen && dynamicMinutesUntilClose !== null) {
+      return dynamicMinutesUntilClose <= cutoffMinutes
+    }
+    return false
+  }, [restaurant?.delivery_status, isRestaurantOpen, dynamicMinutesUntilClose, cutoffMinutes])
+
+  const isApproachingClosing = useMemo(() => {
+    if (restaurant?.delivery_status === 'CLOSING_SOON') return true
+    if (isRestaurantOpen && isDeliveryOpen && dynamicMinutesUntilCutoff !== null && !isPastCutoff) {
+      return dynamicMinutesUntilCutoff <= 30
+    }
+    return false
+  }, [restaurant?.delivery_status, isRestaurantOpen, isDeliveryOpen, dynamicMinutesUntilCutoff, isPastCutoff])
+
+  const effectiveDeliveryOpen = isDeliveryOpen && !isPastCutoff
+  const orderingClosed = restaurant !== null && (!isRestaurantOpen || !effectiveDeliveryOpen)
+
+  const menuHeading = useMemo(() => {
+    if (serverDown) return 'Menu temporarily unavailable'
+    if (restaurant === null) return 'Menu'
+    if (!isRestaurantOpen) return 'Sorry, we are closed'
+    if (!effectiveDeliveryOpen) return 'Currently not delivering'
+    if (isApproachingClosing) return 'Hurry up closing soon'
+    return restaurant.delivery_status_heading || 'Menu'
+  }, [serverDown, restaurant, isRestaurantOpen, effectiveDeliveryOpen, isApproachingClosing])
+
+  const menuSubtitle = useMemo(() => {
+    if (serverDown) return 'Our servers are currently down. Please check back in a few minutes.'
+    if (restaurant === null) return "Choose what you’d like to order."
+    if (!isRestaurantOpen) return 'Our shop is currently closed. Please check back during operating hours.'
+    if (!effectiveDeliveryOpen) {
+      if (dynamicMinutesUntilClose !== null && dynamicMinutesUntilClose > 0) {
+        return `Our shop is open! We are currently only accepting walk-in orders at our counter. The restaurant is closing in ${dynamicMinutesUntilClose} minutes.`
+      }
+      return 'Our shop is open! We are currently only accepting walk-in orders at our counter.'
+    }
+    if (isApproachingClosing) {
+      const mins = (dynamicMinutesUntilCutoff !== null && dynamicMinutesUntilCutoff > 0)
+        ? dynamicMinutesUntilCutoff
+        : (restaurant.cutoff_in_minutes ?? 30)
+      return `The restaurant is closing in ${mins} minutes.`
+    }
+    return restaurant.delivery_status_message || "Choose what you’d like to order."
+  }, [serverDown, restaurant, isRestaurantOpen, effectiveDeliveryOpen, isApproachingClosing, dynamicMinutesUntilCutoff, dynamicMinutesUntilClose])
 
   // Permissible opening hour slots for today only (15-min intervals)
   const permissibleTimeSlots = useMemo(() => {
@@ -1027,7 +1097,13 @@ export default function Storefront() {
 
     <section className="value-strip"><div><span className="value-icon"><Flame size={19} /></span><span><strong>Charcoal, always</strong><small>Real fire. No shortcuts.</small></span></div><div><span className="value-icon"><Leaf size={19} /></span><span><strong>Fresh, never frozen</strong><small>Made when you order.</small></span></div><div><span className="value-icon"><Truck size={19} /></span><span><strong>Quick to your door</strong><small>Hot food. Happy you.</small></span></div><div><span className="value-icon"><Utensils size={19} /></span><span><strong>Made with care</strong><small>Recipes worth sharing.</small></span></div></section>
 
-    <section className="menu-section" id="menu"><div className="menu-intro"><div><h2>{serverDown ? 'Menu temporarily unavailable' : orderingClosed ? 'Sorry, we are closed' : 'Menu'}</h2><p>{serverDown ? 'Our servers are currently down. Please check back in a few minutes.' : orderingClosed ? "Ordering is currently paused. Please check back later." : "Choose what you’d like to order."}</p></div></div>
+    <section className="menu-section" id="menu">
+      <div className="menu-intro">
+        <div>
+          <h2>{menuHeading}</h2>
+          <p>{menuSubtitle}</p>
+        </div>
+      </div>
       {serverDown ? (
         <div className="menu-server-down" style={{ padding: '2rem 1rem' }}>
           <EmptyState
@@ -1104,7 +1180,9 @@ export default function Storefront() {
               )}
             </strong>
             {orderingClosed || item.is_paused ? (
-              <span className="closed-menu-label">Currently unavailable</span>
+              <span className="closed-menu-label">
+                {item.is_paused ? 'Currently unavailable' : !isRestaurantOpen ? 'Closed' : 'Walk-in only'}
+              </span>
             ) : item.is_custom && item.custom_sections && item.custom_sections.length > 0 ? (
               quantityFor(item.id, Boolean(item.is_custom)) > 0 ? (
                 <QuantityPicker
@@ -1165,7 +1243,7 @@ export default function Storefront() {
     </section>
 
     <section className="story-banner"><div className="story-mark"><Flame size={25} /></div><div><div className="eyebrow light-eyebrow">THE ZILLA WAY</div><h2>Good food is meant<br />to bring people <em>closer.</em></h2><p>From our charcoal grill to your table, every bite starts with the good stuff.</p></div><div className="story-seal"><span>100%</span><small>GOOD<br />TASTE</small><span>✦</span></div><div className="story-pattern">✳ &nbsp;· &nbsp;✦ &nbsp;· &nbsp;✳</div></section>
-    <section className="store-bottom"><div><div className="eyebrow">COME BY, SAY HI</div><h2>Or let us bring it <em>to your table.</em></h2><div className="store-bottom-details">{restaurant?.address ? (<a href={restaurant.latitude != null && restaurant.longitude != null ? `https://www.google.com/maps/search/?api=1&query=${restaurant.latitude},${restaurant.longitude}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(restaurant.address)}`} target="_blank" rel="noreferrer" className="store-address-link" title="Open exact location in Google Maps" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: 'inherit', textDecoration: 'none', cursor: 'pointer' }}><MapPin size={15} /> <span>{restaurant.address}</span></a>) : (<span>Restaurant location has not been added yet.</span>)}{((restaurant?.phones && restaurant.phones.length > 0) ? restaurant.phones : (restaurant?.phone ? restaurant.phone.split(',').map((p) => p.trim()).filter(Boolean) : [])).map((phoneNum, idx) => (<span key={idx} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><Phone size={15} /> <a href={`tel:${phoneNum}`} style={{ color: 'inherit', textDecoration: 'none' }}>{phoneNum}</a></span>))}</div></div>{restaurant?.latitude != null && restaurant.longitude != null ? <a className="store-bottom-map" href={`https://www.google.com/maps/search/?api=1&query=${restaurant.latitude},${restaurant.longitude}`} target="_blank" rel="noreferrer"><span className="map-mini"><MapPin size={26} /></span><span><strong>Find KebabZilla</strong><small>Open directions in Maps</small></span><ArrowRight size={17} /></a> : <div className="store-bottom-map"><span className="map-mini"><MapPin size={26} /></span><span><strong>Location details</strong><small>Pin location coming soon</small></span></div>}</section>
+    <section className="store-bottom"><div><div className="eyebrow">COME BY, SAY HI</div><h2>Or let us bring it <em>to your table.</em></h2><div className="store-bottom-details">{restaurant?.address ? (<a href={restaurant.latitude != null && restaurant.longitude != null ? `https://www.google.com/maps/search/?api=1&query=${restaurant.latitude},${restaurant.longitude}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(restaurant.address)}`} target="_blank" rel="noreferrer" className="store-address-link" title="Open exact location in Google Maps" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: 'inherit', textDecoration: 'none', cursor: 'pointer' }}><MapPin size={15} /> <span>{restaurant.address}</span></a>) : (<span>Restaurant location has not been added yet.</span>)}{restaurant?.email && (<span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><Mail size={15} /> <a href={`mailto:${restaurant.email}`} style={{ color: 'inherit', textDecoration: 'none' }}>{restaurant.email}</a></span>)}{((restaurant?.phones && restaurant.phones.length > 0) ? restaurant.phones : (restaurant?.phone ? restaurant.phone.split(',').map((p) => p.trim()).filter(Boolean) : [])).map((phoneNum, idx) => (<span key={idx} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><Phone size={15} /> <a href={`tel:${phoneNum}`} style={{ color: 'inherit', textDecoration: 'none' }}>{phoneNum}</a></span>))}</div></div>{restaurant?.latitude != null && restaurant.longitude != null ? <a className="store-bottom-map" href={`https://www.google.com/maps/search/?api=1&query=${restaurant.latitude},${restaurant.longitude}`} target="_blank" rel="noreferrer"><span className="map-mini"><MapPin size={26} /></span><span><strong>Find KebabZilla</strong><small>Open directions in Maps</small></span><ArrowRight size={17} /></a> : <div className="store-bottom-map"><span className="map-mini"><MapPin size={26} /></span><span><strong>Location details</strong><small>Pin location coming soon</small></span></div>}</section>
 
     {cartOpen && <div className="cart-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setCartOpen(false) }}><aside className="cart-panel" aria-label="Your basket" onMouseDown={(event) => event.stopPropagation()}><div className="cart-header"><div><span className="cart-icon"><ShoppingBag size={17} /></span><span><strong>Your order</strong><small>{totalItems} delicious thing{totalItems === 1 ? '' : 's'}</small></span></div><button className="cart-close" aria-label="Close cart" onClick={() => setCartOpen(false)}><X size={17} /></button></div><div className="cart-panel-scroll">{cart.length ? <><div className="cart-items">{cart.map((line) => { const unitPrice = line.unit_price_paise ?? priceFor(line.item); const customSummary = (line.customizations || []).map((o) => o.name).join(', '); const hasVariations = (line.item.variations?.length || 0) > 0; return <div className="cart-line" key={line.lineKey}><span className="cart-line-name">{line.item.name}{line.variation_name && <small className="cart-custom-desc">Portion: {line.variation_name}</small>}{customSummary && <small className="cart-custom-desc">{customSummary}</small>}{(line.item.is_custom || hasVariations) && <button type="button" className="cart-edit-link" onClick={() => { if (line.item.is_custom) { openCustomizationModal(line.item, line) } else { openVariationModal(line.item, line) } }} aria-label={`Edit ${line.item.name}`}><Edit3 size={11} /> {line.item.is_custom ? 'Edit customization' : 'Change portion'}</button>}<small>{formatINR(unitPrice)} each</small></span><QuantityPicker small quantity={line.quantity} onChange={(next) => setLineQuantity(line.lineKey, next)} /><strong>{formatINR(unitPrice * line.quantity)}</strong></div> })}</div>
       <div className="cart-totals">
@@ -1306,8 +1384,16 @@ export default function Storefront() {
                     ]}
                   />
                 </div>
-                <Button className="checkout-button" disabled={busy || !restaurant?.accepting_orders} onClick={placeOrder}>
-                  {busy ? 'Just a second…' : <>Place order · {formatINR(payable)} <ArrowRight size={16} /></>}
+                <Button className="checkout-button" disabled={busy || orderingClosed} onClick={placeOrder}>
+                  {busy ? (
+                    'Just a second…'
+                  ) : orderingClosed ? (
+                    !isRestaurantOpen ? 'Sorry, we are closed' : 'Currently not delivering (Walk-in only)'
+                  ) : isApproachingClosing ? (
+                    <>Place order · {formatINR(payable)} (Closing soon) <ArrowRight size={16} /></>
+                  ) : (
+                    <>Place order · {formatINR(payable)} <ArrowRight size={16} /></>
+                  )}
                 </Button>
               </div>
               <div className="checkout-secure">
@@ -1440,7 +1526,9 @@ export default function Storefront() {
 
                 <div className="food-detail-action-col">
                   {orderingClosed || activeDetailItem.is_paused ? (
-                    <span className="closed-menu-label">Unavailable</span>
+                    <span className="closed-menu-label">
+                      {activeDetailItem.is_paused ? 'Unavailable' : !isRestaurantOpen ? 'Closed' : 'Walk-in only'}
+                    </span>
                   ) : isCustom ? (
                     currentQty > 0 ? (
                       <QuantityPicker

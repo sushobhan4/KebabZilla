@@ -1,14 +1,16 @@
 from datetime import datetime, time, timedelta, timezone
+import os
 import secrets
 import string
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
 import httpx
 from sqlalchemy import func, or_, select, update
 
 from app.dependencies import CurrentAccount, DbSession, require_roles
 from app.config import settings
+from app.campaign_dispatcher import campaign_dispatcher
 from app.integrations import staff_account_notifier
 from app.models import (
     Account,
@@ -34,6 +36,7 @@ from app.schemas import AccountsPageOut, AccountOut, AdminAccountCreate, AdminOr
 from app.security import hash_password
 from app.services import (
     calculate_override_until,
+    evaluate_restaurant_and_delivery_status,
     get_next_schedule_refresh,
     is_restaurant_open,
     is_scheduled_open,
@@ -242,7 +245,6 @@ def sync_override_if_expired(settings_obj: RestaurantSettings, db: DbSession | N
         if now_utc >= until_utc:
             settings_obj.admin_override_state = None
             settings_obj.admin_override_until = None
-            settings_obj.admin_override_open = False
             is_open, _ = is_scheduled_open(settings_obj)
             settings_obj.accepting_orders = is_open
             if db is not None:
@@ -253,6 +255,7 @@ def serialize_restaurant_settings(settings_obj: RestaurantSettings, db: DbSessio
     is_open, status_reason = is_restaurant_open(settings_obj)
     sched_open, _ = is_scheduled_open(settings_obj)
     next_refresh = get_next_schedule_refresh(settings_obj)
+    status_info = evaluate_restaurant_and_delivery_status(settings_obj)
 
     phones = [p.strip() for p in (settings_obj.phone or "").split(",") if p.strip()]
 
@@ -273,6 +276,7 @@ def serialize_restaurant_settings(settings_obj: RestaurantSettings, db: DbSessio
         "tagline": settings_obj.tagline,
         "phone": settings_obj.phone,
         "phones": phones,
+        "email": getattr(settings_obj, "email", "support@kebabzilla.in") or "support@kebabzilla.in",
         "address": settings_obj.address,
         "latitude": settings_obj.latitude,
         "longitude": settings_obj.longitude,
@@ -283,7 +287,15 @@ def serialize_restaurant_settings(settings_obj: RestaurantSettings, db: DbSessio
         "delivery_fee_per_km_paise": settings_obj.delivery_fee_per_km_paise,
         "charge_from_zero_beyond_free_radius": getattr(settings_obj, "charge_from_zero_beyond_free_radius", False) or False,
         "accepting_orders": is_open,
-        "admin_override_open": bool(settings_obj.admin_override_state is True if settings_obj.admin_override_state is not None else settings_obj.admin_override_open),
+        "is_restaurant_open": is_open,
+        "is_delivery_open": bool(getattr(settings_obj, "is_delivery_open", True)),
+        "order_cutoff_minutes_before_closing": getattr(settings_obj, "order_cutoff_minutes_before_closing", 30) or 30,
+        "delivery_status": status_info["delivery_status"],
+        "delivery_status_heading": status_info["delivery_status_heading"],
+        "delivery_status_message": status_info["delivery_status_message"],
+        "closing_in_minutes": status_info["closing_in_minutes"],
+        "closing_time": status_info["closing_time"],
+        "admin_override_open": bool(settings_obj.admin_override_state is True),
         "admin_override_state": settings_obj.admin_override_state,
         "admin_override_until": settings_obj.admin_override_until,
         "is_currently_scheduled_open": sched_open,
@@ -335,20 +347,19 @@ def update_settings(data: RestaurantSettingsInput, db: DbSession):
         # Desired state matches natural schedule: clear any active override!
         settings.admin_override_state = None
         settings.admin_override_until = None
-        settings.admin_override_open = False
         settings.accepting_orders = target_accepting
     else:
         # Desired state is an override against the natural schedule!
         override_until = calculate_override_until(settings, now_dt, target_accepting)
         settings.admin_override_state = target_accepting
         settings.admin_override_until = override_until
-        settings.admin_override_open = (target_accepting is True)
         settings.accepting_orders = target_accepting
 
     payload_data.pop("admin_override_open", None)
     payload_data.pop("admin_override_state", None)
     payload_data.pop("admin_override_until", None)
     payload_data.pop("accepting_orders", None)
+    target_delivery_open = payload_data.pop("is_delivery_open", None)
 
     for field, value in payload_data.items():
         if hasattr(settings, field):
@@ -356,11 +367,17 @@ def update_settings(data: RestaurantSettingsInput, db: DbSession):
 
     is_now_open, _ = is_restaurant_open(settings, now_dt)
     if not is_now_open:
+        # If the restaurant is closed, online delivery cannot be active
+        settings.is_delivery_open = False
         db.execute(
             update(StaffInfo)
             .where(StaffInfo.is_accepting_deliveries == True)
             .values(is_accepting_deliveries=False)
         )
+    else:
+        # Restaurant is open, honor delivery toggle from input
+        if target_delivery_open is not None:
+            settings.is_delivery_open = bool(target_delivery_open)
 
     db.add(AdminEvent(
         event_type="settings_changed",
@@ -368,6 +385,9 @@ def update_settings(data: RestaurantSettingsInput, db: DbSession):
         details={
             "weekly_schedule": data.weekly_schedule,
             "accepting_orders": settings.accepting_orders,
+            "is_restaurant_open": is_now_open,
+            "is_delivery_open": settings.is_delivery_open,
+            "order_cutoff_minutes_before_closing": settings.order_cutoff_minutes_before_closing,
             "admin_override_state": settings.admin_override_state,
             "admin_override_until": settings.admin_override_until.isoformat() if settings.admin_override_until else None,
         }
@@ -385,26 +405,88 @@ def admin_events(db: DbSession, limit: int = Query(default=100, ge=1, le=250)):
     return [{"id": row.id, "event_type": row.event_type, "message": row.message, "details": row.details, "actor_name": row.actor.name if row.actor else "System", "created_at": row.created_at} for row in rows]
 
 
-def _send_offer_campaign_bg(log_id: int, recipient_emails: list[str], subject: str, message: str):
-    from app.db import SessionLocal
-    with SessionLocal() as db:
-        log = db.get(OfferLog, log_id)
-        if not log:
-            return
-        sent = 0
-        for email in recipient_emails:
-            if staff_account_notifier.send_offer(recipient=email, subject=subject, message_text=message):
-                sent += 1
-        log.sent_count = sent
-        log.status = "SENT" if sent == len(recipient_emails) else "PARTIAL" if sent > 0 else "FAILED"
-        if log.delivery_counts and "EMAIL" in log.delivery_counts:
-            log.delivery_counts["EMAIL"]["sent_count"] = sent
-        db.commit()
+
+@router.post("/email-images/upload", dependencies=[Depends(require_roles(Role.ADMIN))])
+async def upload_email_image_endpoint(file: UploadFile = File(...)):
+    """Upload an offer email image directly into the Google Cloud Storage bucket (emailImages/ folder)."""
+    allowed_types = {
+        "image/jpeg",
+        "image/jpg",
+        "image/pjpeg",
+        "image/png",
+        "image/x-png",
+        "image/webp",
+        "image/gif",
+        "image/avif",
+    }
+    raw_content_type = (file.content_type or "").lower().strip()
+    filename = file.filename or "image.jpg"
+    _, ext = os.path.splitext(filename)
+    ext_clean = ext.lower().strip()
+    ext_map = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+        ".avif": "image/avif",
+    }
+
+    content_type = raw_content_type
+    if content_type in ("image/jpg", "image/pjpeg"):
+        content_type = "image/jpeg"
+    elif content_type in ("image/x-png",):
+        content_type = "image/png"
+    elif not content_type or content_type == "application/octet-stream":
+        content_type = ext_map.get(ext_clean, "image/jpeg")
+
+    if content_type not in allowed_types:
+        raise HTTPException(
+            status_code=400,
+            detail="Only JPEG, PNG, WebP, GIF, and AVIF image formats are supported.",
+        )
+
+    content = await file.read()
+    if len(content) < 100:
+        raise HTTPException(status_code=400, detail="Uploaded file is too small to be a valid image.")
+
+    max_size_bytes = 10 * 1024 * 1024  # 10MB
+    if len(content) > max_size_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Image size exceeds 10MB limit ({len(content) / (1024 * 1024):.2f}MB). Please upload a smaller image.",
+        )
+
+    try:
+        from app.storage import upload_email_image
+        result = upload_email_image(content, filename, content_type)
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Image upload to storage failed: {exc}")
+
+
+@router.get("/email-images", dependencies=[Depends(require_roles(Role.ADMIN))])
+def list_email_images_endpoint():
+    """List all images stored in the GCS emailImages/ folder."""
+    from app.storage import list_email_images
+    return list_email_images()
+
+
+@router.delete("/email-images/{filename:path}", dependencies=[Depends(require_roles(Role.ADMIN))])
+def delete_email_image_endpoint(filename: str):
+    """Delete an email image from GCS and local cache."""
+    import os
+    from app.storage import delete_email_image
+    clean_name = os.path.basename(filename)
+    deleted = delete_email_image(clean_name)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Email image not found or already deleted.")
+    return {"deleted": True, "filename": clean_name}
 
 
 @router.post("/offers", status_code=status.HTTP_201_CREATED)
 async def create_offer(data: OfferInput, actor: CurrentAccount, db: DbSession, background_tasks: BackgroundTasks):
-    customer_accounts = select(Account).where(Account.role == Role.USER)
+    customer_accounts = select(Account).where(Account.role == Role.USER, Account.promotional_consent.is_(True))
     customers = db.scalars(customer_accounts.order_by(Account.created_at.desc())).all()
     order_counts = dict(db.execute(select(Order.customer_id, func.count(Order.order_id)).where(Order.customer_id.is_not(None)).group_by(Order.customer_id)).all())
     if data.audience == "NEW":
@@ -418,13 +500,15 @@ async def create_offer(data: OfferInput, actor: CurrentAccount, db: DbSession, b
     delivery_counts = {channel: {"recipient_count": len(eligible[channel]), "sent_count": 0} for channel in data.channels}
     clean_subject = " ".join(data.subject.splitlines()).strip()
 
-    email_recipients = [person.email for person in eligible.get("EMAIL", [])] if "EMAIL" in data.channels else []
+    email_recipients = [person.email for person in eligible.get("EMAIL", []) if person.email] if "EMAIL" in data.channels else []
+    sms_recipients = [person.phone for person in eligible.get("SMS", []) if person.phone] if "SMS" in data.channels else []
     if "SMS" in data.channels and not configured["SMS"]:
         failures.append("SMS is not configured")
     if "EMAIL" in data.channels and not configured["EMAIL"]:
         failures.append("Email is not configured")
 
-    state = "QUEUED" if configured.get("EMAIL") and email_recipients else ("NOT_CONFIGURED" if not any(configured[c] for c in data.channels) else "FAILED")
+    has_queued = (configured.get("EMAIL") and bool(email_recipients)) or (configured.get("SMS") and bool(sms_recipients))
+    state = "QUEUED" if has_queued else ("NOT_CONFIGURED" if not any(configured[c] for c in data.channels) else "FAILED")
     log = OfferLog(
         actor_id=actor.id,
         audience=data.audience,
@@ -432,8 +516,6 @@ async def create_offer(data: OfferInput, actor: CurrentAccount, db: DbSession, b
         subject=clean_subject,
         message=data.message,
         delivery_counts=delivery_counts,
-        recipient_count=sum(len(eligible[channel]) for channel in data.channels),
-        sent_count=0,
         status=state,
     )
     db.add(log)
@@ -441,8 +523,32 @@ async def create_offer(data: OfferInput, actor: CurrentAccount, db: DbSession, b
     db.commit()
     db.refresh(log)
 
-    if state == "QUEUED" and email_recipients:
-        background_tasks.add_task(_send_offer_campaign_bg, log.id, email_recipients, clean_subject, data.message)
+    if configured.get("EMAIL") and email_recipients:
+        campaign_dispatcher.enqueue_email_campaign(
+            log.id,
+            email_recipients,
+            subject=clean_subject,
+            message=data.message,
+            headline=data.headline,
+            subheading=data.subheading,
+            promo_code=data.promo_code,
+            discount_highlight=data.discount_highlight,
+            cta_text=data.cta_text,
+            cta_url=data.cta_url,
+            background_image_url=data.background_image_url,
+            theme_color=data.theme_color,
+            background_opacity=data.background_opacity,
+            outer_blur=data.outer_blur,
+            invert_logo=data.invert_logo,
+        )
+
+    if configured.get("SMS") and sms_recipients:
+        campaign_dispatcher.enqueue_sms_campaign(
+            log.id,
+            sms_recipients,
+            message=data.message,
+            promo_code=data.promo_code,
+        )
 
     return {
         "id": log.id,

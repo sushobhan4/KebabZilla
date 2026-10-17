@@ -51,11 +51,22 @@ if settings.database_url.startswith("sqlite"):
                     cursor.execute("ALTER TABLE restaurant_settings ADD COLUMN max_orders_per_driver INTEGER DEFAULT 5")
                 if "charge_from_zero_beyond_free_radius" not in cols:
                     cursor.execute("ALTER TABLE restaurant_settings ADD COLUMN charge_from_zero_beyond_free_radius BOOLEAN DEFAULT 0")
+                if "is_delivery_open" not in cols:
+                    cursor.execute("ALTER TABLE restaurant_settings ADD COLUMN is_delivery_open BOOLEAN DEFAULT 1")
+                if "order_cutoff_minutes_before_closing" not in cols:
+                    cursor.execute("ALTER TABLE restaurant_settings ADD COLUMN order_cutoff_minutes_before_closing INTEGER DEFAULT 30")
+                if "email" not in cols:
+                    cursor.execute("ALTER TABLE restaurant_settings ADD COLUMN email VARCHAR(255) DEFAULT 'support@kebabzilla.in'")
 
             cursor.execute("PRAGMA table_info(orders)")
             order_cols = {row[1] for row in cursor.fetchall()}
             if order_cols and "delivery_started_at" not in order_cols:
                 cursor.execute("ALTER TABLE orders ADD COLUMN delivery_started_at DATETIME")
+
+            cursor.execute("PRAGMA table_info(accounts)")
+            account_cols = {row[1] for row in cursor.fetchall()}
+            if account_cols and "promotional_consent" not in account_cols:
+                cursor.execute("ALTER TABLE accounts ADD COLUMN promotional_consent BOOLEAN DEFAULT 1")
         except Exception:
             pass
         cursor.close()
@@ -70,7 +81,29 @@ else:
                     conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS alns_max_iterations INTEGER DEFAULT 220;")
                     conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS max_orders_per_driver INTEGER DEFAULT 5;")
                     conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS charge_from_zero_beyond_free_radius BOOLEAN DEFAULT FALSE;")
+                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS is_delivery_open BOOLEAN DEFAULT TRUE;")
+                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS order_cutoff_minutes_before_closing INTEGER DEFAULT 30;")
+                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS email VARCHAR(255) DEFAULT 'support@kebabzilla.in';")
                     conn.exec_driver_sql("ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_started_at TIMESTAMPTZ;")
+                    conn.exec_driver_sql("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS promotional_consent BOOLEAN DEFAULT TRUE;")
+                    conn.exec_driver_sql("ALTER TABLE restaurant_settings DROP COLUMN IF EXISTS admin_override_open;")
+                    conn.exec_driver_sql("""
+                        DO $$
+                        BEGIN
+                            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'menu_items' AND column_name = 'category_id') THEN
+                                IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'menu_item_categories') THEN
+                                    INSERT INTO menu_item_categories (menu_item_id, category_id)
+                                    SELECT id, category_id FROM menu_items WHERE category_id IS NOT NULL
+                                    ON CONFLICT DO NOTHING;
+                                END IF;
+                                ALTER TABLE menu_items DROP COLUMN category_id;
+                            END IF;
+                        END $$;
+                    """)
+                    conn.exec_driver_sql("ALTER TABLE offer_logs DROP COLUMN IF EXISTS recipient_count;")
+                    conn.exec_driver_sql("ALTER TABLE offer_logs DROP COLUMN IF EXISTS sent_count;")
+                    conn.exec_driver_sql("DROP TABLE IF EXISTS custom_menu_sections CASCADE;")
+                    conn.exec_driver_sql("DROP TABLE IF EXISTS custom_menu_items CASCADE;")
         except Exception:
             pass
 

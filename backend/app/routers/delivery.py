@@ -214,15 +214,17 @@ def queue(account: CurrentAccount, db: DbSession):
         .where(Order.assigned_delivery_id == account.id, Order.status == OrderStatus.OUT_FOR_DELIVERY)
         .order_by(Order.created_at)
     ).all()
-    return [order_payload(order) for order in orders]
+    return [order_payload(order, include_customer_email=False) for order in orders]
 
 
 @router.get("/available")
-def available_orders(db: DbSession):
+def available_orders(account: CurrentAccount, db: DbSession):
+    if account.role == Role.DELIVERY and not account.is_accepting_deliveries:
+        return []
     orders = db.scalars(
         select(Order).where(Order.status == OrderStatus.READY, Order.assigned_delivery_id.is_(None)).order_by(Order.created_at)
     ).all()
-    return [order_payload(order) for order in orders]
+    return [order_payload(order, include_customer_email=False) for order in orders]
 
 
 @router.get("/history")
@@ -233,7 +235,7 @@ def delivery_history(account: CurrentAccount, db: DbSession):
         .order_by(Order.delivered_at.desc(), Order.created_at.desc())
         .limit(100)
     ).all()
-    return [order_payload(order) for order in orders]
+    return [order_payload(order, include_customer_email=False) for order in orders]
 
 
 @router.get("/recommended-batches")
@@ -333,7 +335,7 @@ def recommended_batches(account: CurrentAccount, db: DbSession):
             factor=routing_factor,
             customer_sla_mins=customer_sla,
         )
-        payload = order_payload(order_obj)
+        payload = order_payload(order_obj, include_customer_email=False)
         rt_km = trip["roundTripDistanceKm"]
         rt_mins = trip["roundTripTimeMinutes"]
         payload["round_trip_km"] = rt_km
@@ -384,7 +386,7 @@ def recommended_batches(account: CurrentAccount, db: DbSession):
         {
             "id": "-".join(node.order.order_id for node in trip["orders"]),
             "route_label": f"Delivery {idx + 1} · {len(trip['orders'])} stop{'s' if len(trip['orders']) != 1 else ''}",
-            "orders": [order_payload(node.order) for node in trip["orders"]],
+            "orders": [order_payload(node.order, include_customer_email=False) for node in trip["orders"]],
             "round_trip_km": trip["roundTripDistanceKm"],
             "round_trip_time_minutes": trip["roundTripTimeMinutes"],
             "legs": trip["legs"],
@@ -415,6 +417,8 @@ async def claim_recommended_batch(data: BatchClaimInput, account: CurrentAccount
     ).all()
     if len(orders) != len(data.order_ids):
         raise HTTPException(status_code=409, detail="This batch was already claimed or has changed. Refresh to see the remaining deliveries.")
+    
+    notifications_to_send = []
     for order in orders:
         claimed = db.execute(
             update(Order)
@@ -426,16 +430,23 @@ async def claim_recommended_batch(data: BatchClaimInput, account: CurrentAccount
             raise HTTPException(status_code=409, detail="This batch was just claimed by another rider. Refresh to see the remaining deliveries.")
         transition_order(order, OrderStatus.OUT_FOR_DELIVERY)
         otp = create_delivery_otp(order)
-        await customer_notifier.send_delivery_otp(
-            phone=order.customer_phone or (order.customer.phone if order.customer else None),
-            order_number=order.order_id,
-            otp=otp,
-        )
+        notifications_to_send.append({
+            "phone": order.customer_phone or (order.customer.phone if order.customer else None),
+            "order_number": order.order_id,
+            "otp": otp,
+            "email": order.customer_email or (order.customer.email if order.customer else None),
+            "customer_name": order.customer_name or (order.customer.name if order.customer else None),
+        })
     batch = DeliveryBatch(delivery_id=account.id, route_label=f"Nearby delivery route · {len(orders)} stop{'s' if len(orders) != 1 else ''}")
     batch.orders = [DeliveryBatchOrder(order_id=order.order_id) for order in orders]
     db.add(batch)
     db.add(AdminEvent(event_type="delivery_batch_claimed", message=f"{account.name} took a {len(orders)}-stop delivery batch", actor_id=account.id, details={"order_ids": data.order_ids, "delivery_id": account.id}))
     db.commit()
+
+    # Dispatch notifications only after transaction is successfully committed
+    for notif in notifications_to_send:
+        await customer_notifier.send_delivery_otp(**notif)
+
     invalidate_delivery_cache()
     invalidate_orders_cache()
     return {"order_ids": data.order_ids, "route_label": batch.route_label}
@@ -458,15 +469,19 @@ async def claim_order(order_id: str, account: CurrentAccount, db: DbSession):
     transition_order(order, OrderStatus.OUT_FOR_DELIVERY)
     db.add(AdminEvent(event_type="delivery_claimed", message=f"{account.name} picked order {order.order_id}", actor_id=account.id, details={"order_id": order.order_id, "delivery_id": account.id, "delivery_name": account.name}))
     otp = create_delivery_otp(order)
+    db.commit()
+
+    # Dispatch notification after successful transaction commit
     await customer_notifier.send_delivery_otp(
         phone=order.customer_phone or (order.customer.phone if order.customer else None),
         order_number=order.order_id,
         otp=otp,
+        email=order.customer_email or (order.customer.email if order.customer else None),
+        customer_name=order.customer_name or (order.customer.name if order.customer else None),
     )
-    db.commit()
     invalidate_delivery_cache()
     invalidate_orders_cache()
-    return order_payload(order)
+    return order_payload(order, include_customer_email=False)
 
 
 @router.post("/batches", status_code=status.HTTP_201_CREATED)
@@ -524,4 +539,4 @@ def deliver(order_id: str, data: VerifyOtpInput, account: CurrentAccount, db: Db
     db.commit()
     invalidate_orders_cache()
     invalidate_delivery_cache()
-    return order_payload(order)
+    return order_payload(order, include_customer_email=False)

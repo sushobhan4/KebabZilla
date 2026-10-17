@@ -1,8 +1,12 @@
 from datetime import timedelta
+import logging
 import secrets
+import threading
 import time
 from collections import defaultdict
 from typing import Annotated
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials
@@ -22,6 +26,7 @@ from app.schemas import (
     PasswordResetConfirm,
     PasswordResetRequest,
     PasswordUpdate,
+    PromotionalConsentUpdate,
     TokenOut,
     TwoFactorVerifyRequest,
 )
@@ -99,6 +104,7 @@ def register(data: AccountCreate, request: Request, response: Response, db: DbSe
         phone=data.phone,
         password_hash=hash_password(data.password),
         role=Role.USER,
+        promotional_consent=data.promotional_consent,
     )
     account.addresses = [
         AccountAddress(address_id="home", label="Home", is_default=True),
@@ -109,32 +115,45 @@ def register(data: AccountCreate, request: Request, response: Response, db: DbSe
     return issue_session(account, request, response, db)
 
 
-import time
-from collections import defaultdict
-
+_rate_limit_lock = threading.Lock()
 _failed_logins: dict[str, list[float]] = defaultdict(list)
 
 
 def check_login_rate_limit(key: str) -> None:
     now = time.time()
-    attempts = [t for t in _failed_logins[key] if now - t < 300]
-    _failed_logins[key] = attempts
-    if len(attempts) >= 5:
-        raise HTTPException(
-            status_code=429,
-            detail="Too many failed login attempts. Please wait 5 minutes before trying again.",
-        )
+    with _rate_limit_lock:
+        attempts = [t for t in _failed_logins[key] if now - t < 300]
+        if attempts:
+            _failed_logins[key] = attempts
+        else:
+            _failed_logins.pop(key, None)
+        if len(attempts) >= 5:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many failed login attempts. Please wait 5 minutes before trying again.",
+            )
 
 
 def record_failed_login(key: str) -> None:
-    _failed_logins[key].append(time.time())
+    now = time.time()
+    with _rate_limit_lock:
+        if len(_failed_logins) > 1000:
+            expired = [k for k, times in _failed_logins.items() if not times or now - times[-1] >= 300]
+            for k in expired:
+                _failed_logins.pop(k, None)
+        _failed_logins[key].append(now)
 
 
 def clear_failed_logins(key: str) -> None:
-    _failed_logins.pop(key, None)
+    with _rate_limit_lock:
+        _failed_logins.pop(key, None)
 
 
-def initiate_2fa_challenge(account: Account, db: Session) -> TokenOut:
+def initiate_2fa_challenge(
+    account: Account,
+    db: Session,
+    background_tasks: BackgroundTasks | None = None,
+) -> TokenOut:
     code = generate_2fa_code()
     code_hash = hash_2fa_code(code)
     temp_token = generate_2fa_temp_token()
@@ -152,7 +171,20 @@ def initiate_2fa_challenge(account: Account, db: Session) -> TokenOut:
     db.add(challenge)
     db.commit()
 
-    staff_account_notifier.send_2fa_code(name=account.name, email=account.email, code=code)
+    # Dispatch 2FA email in background so staff login screen transitions immediately without freezing
+    if background_tasks is not None:
+        background_tasks.add_task(
+            staff_account_notifier.send_2fa_code,
+            name=account.name,
+            email=account.email,
+            code=code,
+        )
+    else:
+        threading.Thread(
+            target=staff_account_notifier.send_2fa_code,
+            kwargs={"name": account.name, "email": account.email, "code": code},
+            daemon=True,
+        ).start()
 
     return TokenOut(
         requires_2fa=True,
@@ -163,7 +195,13 @@ def initiate_2fa_challenge(account: Account, db: Session) -> TokenOut:
 
 
 @router.post("/login", response_model=TokenOut)
-def login(data: LoginRequest, request: Request, response: Response, db: DbSession):
+def login(
+    data: LoginRequest,
+    request: Request,
+    response: Response,
+    db: DbSession,
+    background_tasks: BackgroundTasks,
+):
     email = data.email.lower().strip()
     ip_address = request.client.host if request.client else "unknown"
     rate_limit_key = f"{ip_address}:{email}"
@@ -175,7 +213,7 @@ def login(data: LoginRequest, request: Request, response: Response, db: DbSessio
     clear_failed_logins(rate_limit_key)
 
     if account.role in (Role.ADMIN, Role.EMPLOYEE, Role.DELIVERY):
-        return initiate_2fa_challenge(account, db)
+        return initiate_2fa_challenge(account, db, background_tasks)
 
     return issue_session(account, request, response, db)
 
@@ -256,6 +294,7 @@ def google_login(
     request: Request,
     response: Response,
     db: DbSession,
+    background_tasks: BackgroundTasks,
 ):
     if not settings.google_client_id:
         raise HTTPException(
@@ -265,7 +304,8 @@ def google_login(
     try:
         id_info = verify_google_token(data.credential)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid Google credential token: {exc}") from exc
+        logger.warning(f"Google token verification failed: {exc}")
+        raise HTTPException(status_code=400, detail="Invalid Google credential token") from exc
 
     if not id_info.get("email_verified"):
         raise HTTPException(status_code=400, detail="Google email address is not verified")
@@ -295,7 +335,7 @@ def google_login(
         db.commit()
 
     if account.role in (Role.ADMIN, Role.EMPLOYEE, Role.DELIVERY):
-        return initiate_2fa_challenge(account, db)
+        return initiate_2fa_challenge(account, db, background_tasks)
 
     return issue_session(account, request, response, db)
 
@@ -312,11 +352,19 @@ def request_password_reset(
 ):
     ip_address = request.client.host if request.client else "unknown"
     now = time.time()
-    recent_attempts = [t for t in _forgot_password_attempts[ip_address] if now - t < 300]
-    _forgot_password_attempts[ip_address] = recent_attempts
-    if len(recent_attempts) >= 5:
-        raise HTTPException(status_code=429, detail="Too many password reset requests. Please wait 5 minutes.")
-    _forgot_password_attempts[ip_address].append(now)
+    with _rate_limit_lock:
+        if len(_forgot_password_attempts) > 1000:
+            expired = [k for k, times in _forgot_password_attempts.items() if not times or now - times[-1] >= 300]
+            for k in expired:
+                _forgot_password_attempts.pop(k, None)
+        recent_attempts = [t for t in _forgot_password_attempts[ip_address] if now - t < 300]
+        if recent_attempts:
+            _forgot_password_attempts[ip_address] = recent_attempts
+        else:
+            _forgot_password_attempts.pop(ip_address, None)
+        if len(recent_attempts) >= 5:
+            raise HTTPException(status_code=429, detail="Too many password reset requests. Please wait 5 minutes.")
+        _forgot_password_attempts[ip_address].append(now)
 
     email = data.email.lower().strip()
     account = db.scalar(select(Account).where(Account.email == email))
@@ -417,6 +465,8 @@ def update_profile(data: AccountProfileUpdate, account: CurrentAccount, db: DbSe
     account.name = data.name.strip()
     account.email = email
     account.phone = data.phone.strip() if data.phone else None
+    if data.promotional_consent is not None:
+        account.promotional_consent = data.promotional_consent
     if account.role == Role.USER and data.addresses is not None:
         addresses = [item.model_dump() for item in data.addresses]
         ids = [item["id"] for item in addresses]
@@ -454,8 +504,22 @@ def update_profile(data: AccountProfileUpdate, account: CurrentAccount, db: DbSe
     return account
 
 
+@router.patch("/promotional-consent", response_model=AccountOut)
+def update_promotional_consent(data: PromotionalConsentUpdate, account: CurrentAccount, db: DbSession):
+    account.promotional_consent = data.promotional_consent
+    db.commit()
+    db.refresh(account)
+    return account
+
+
 @router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)
-def change_password(data: PasswordUpdate, account: PasswordChangeAccount, request: Request, db: DbSession):
+def change_password(
+    data: PasswordUpdate,
+    account: PasswordChangeAccount,
+    request: Request,
+    db: DbSession,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)] = None,
+):
     if not account.must_change_password:
         if not data.current_password or not verify_password(data.current_password, account.password_hash):
             raise HTTPException(status_code=400, detail="Current password is incorrect")
@@ -465,7 +529,9 @@ def change_password(data: PasswordUpdate, account: PasswordChangeAccount, reques
     account.must_change_password = False
 
     # Revoke sessions on all other devices, keeping current device active
-    current_token = request.cookies.get(SESSION_COOKIE_NAME)
+    bearer_token = credentials.credentials if credentials and credentials.scheme.casefold() == "bearer" else None
+    cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
+    current_token = cookie_token or bearer_token
     current_hash = hash_session_token(current_token) if current_token else None
     query = db.query(UserSession).filter(UserSession.account_id == account.id)
     if current_hash:

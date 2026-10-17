@@ -1,12 +1,48 @@
+# Version control & CI
+.git
+.github
+
+# Environment variables & Secrets (Never bake into Docker images)
+.env*
+!.env.example
+*.pem
+*.key
+*.cert
+*.crt
+*.pfx
+*.p12
+*.pkcs12
+service-account*.json
+*credentials*.json
+client_secret*.json
+google-services.json
+
+# Python Virtual Environments, Caches & Tests
 .venv
+venv
 __pycache__
-app/__pycache__
-app/routers/__pycache__
-alembic/__pycache__
-alembic/versions/__pycache__
-alembic/legacy_versions
+**/__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+tests
+.coverage
+htmlcov
+
+# Local databases
 *.db
 *.db-shm
 *.db-wal
+*.sqlite
+*.sqlite3
+
+# User uploads & ephemeral files
+uploads
 *.log
-.env
+
+# OS & IDE Clutter
+.DS_Store
+Thumbs.db
+.vscode
+.idea

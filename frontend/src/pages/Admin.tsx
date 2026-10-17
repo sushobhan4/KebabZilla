@@ -42,8 +42,16 @@ import {
   ZoomOut,
   Crop,
   Star,
+  Copy,
+  Monitor,
+  Smartphone,
+  Sparkles,
+  Palette,
+  Mail,
+  MessageSquare,
+  Pipette,
 } from "lucide-react";
-import { Link, Route, Routes } from "react-router-dom";
+import { Link, Navigate, Route, Routes } from "react-router-dom";
 import {
   api,
   formatINR,
@@ -54,6 +62,10 @@ import {
   getMenuItemLowestPrice,
   resolveImageUrl,
   uploadMenuImage,
+  uploadEmailImage,
+  listEmailImages,
+  deleteEmailImage,
+  type EmailImageItem,
   type Account,
   type CustomMenuItem,
   type CustomMenuSection,
@@ -4345,7 +4357,13 @@ function RestaurantLocationMap({ latitude, longitude, onSave, onClose }: { latit
       map.addListener("click", (event: google.maps.MapMouseEvent) => { if (event.latLng) choose(event.latLng.toJSON()); });
       marker.addListener("dragend", () => { const location = marker.getPosition()?.toJSON(); if (location) setPoint(location); });
       setReady(true);
-    }).catch(() => { if (!disposed) setError("Google Maps could not load. Check the API key and Maps JavaScript API restrictions."); });
+    }).catch((err) => {
+      console.error("Google Maps failed to load in Admin:", err);
+      if (!disposed) {
+        const msg = err instanceof Error ? err.message : String(err || "");
+        setError(msg ? `Google Maps could not load: ${msg}` : "Google Maps could not load. Check the API key and Maps JavaScript API restrictions.");
+      }
+    });
     return () => { disposed = true; };
   }, [latitude, longitude]);
   return <div className="address-map-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="address-map-dialog" role="dialog" aria-modal="true" aria-labelledby="restaurant-location-title"><div className="address-map-heading"><span><small>RESTAURANT LOCATION</small><h2 id="restaurant-location-title">Pin your restaurant</h2></span><button className="icon-button" type="button" onClick={onClose} aria-label="Close map"><X size={18} /></button></div><div className="address-map-toolbar"><p className="address-map-help">The map opens on Amtala, South 24 Parganas. Click or drag the pin to your restaurant’s exact entrance.</p></div><div className="address-map-wrap"><div className="address-map-canvas address-google-map" ref={container} /></div>{error ? <Notice>{error}</Notice> : <div className="address-map-status">Selected: {point.lat.toFixed(6)}, {point.lng.toFixed(6)}</div>}<div className="address-map-actions"><Button type="button" variant="secondary" onClick={onClose}>Cancel</Button><Button type="button" disabled={!ready} onClick={() => { onSave(point.lat, point.lng); onClose(); }}><Check size={15} /> Use this pin</Button></div></section></div>;
@@ -4566,12 +4584,18 @@ function SettingsPage() {
         const finalPhones = phonesList.length > 0 ? phonesList.map(formatPhoneWithPrefix) : ["+91"];
         setPhoneNumbers(finalPhones);
 
+        const isRestOpen = settings.is_restaurant_open ?? settings.accepting_orders ?? true;
+        const isDelivOpen = settings.is_delivery_open !== undefined ? Boolean(settings.is_delivery_open) : true;
+
         const formData: Restaurant = {
           ...settings,
           weekly_schedule: settings.weekly_schedule || {},
           delivery_fee_per_km_paise: settings.delivery_fee_per_km_paise / 100,
           minimum_order_paise: settings.minimum_order_paise / 100,
-          accepting_orders: settings.accepting_orders,
+          accepting_orders: isRestOpen,
+          is_restaurant_open: isRestOpen,
+          is_delivery_open: isDelivOpen,
+          order_cutoff_minutes_before_closing: settings.order_cutoff_minutes_before_closing ?? 30,
           distance_calculation_mode: settings.distance_calculation_mode || "AUTO",
           charge_from_zero_beyond_free_radius: Boolean(settings.charge_from_zero_beyond_free_radius),
           haversine_routing_factor: settings.haversine_routing_factor ?? 1.3627,
@@ -4628,9 +4652,17 @@ function SettingsPage() {
           .then((settings) => {
             setForm((prev) => {
               if (!prev) return null;
+              const isRestOpen = settings.is_restaurant_open ?? settings.accepting_orders ?? prev.accepting_orders;
+              const isDelivOpen = settings.is_delivery_open !== undefined ? Boolean(settings.is_delivery_open) : prev.is_delivery_open;
               return {
                 ...prev,
-                accepting_orders: settings.accepting_orders,
+                accepting_orders: isRestOpen,
+                is_restaurant_open: isRestOpen,
+                is_delivery_open: isDelivOpen,
+                order_cutoff_minutes_before_closing: settings.order_cutoff_minutes_before_closing ?? 30,
+                delivery_status: settings.delivery_status,
+                delivery_status_heading: settings.delivery_status_heading,
+                delivery_status_message: settings.delivery_status_message,
                 admin_override_state: settings.admin_override_state,
                 admin_override_until: settings.admin_override_until,
                 admin_override_open: settings.admin_override_open,
@@ -4653,6 +4685,7 @@ function SettingsPage() {
     const weekly = buildWeeklySchedule(schedules);
     const scheduledOpen = form.is_currently_scheduled_open ?? isCurrentlyOpenBySchedule(schedules);
     const isOverride = nextVal !== scheduledOpen;
+    const nextDeliveryOpen = nextVal ? Boolean(form.is_delivery_open) : false;
 
     setBusy(true);
     try {
@@ -4661,12 +4694,13 @@ function SettingsPage() {
         body: JSON.stringify({
           ...form,
           accepting_orders: nextVal,
-          admin_override_open: nextVal,
+          is_delivery_open: nextDeliveryOpen,
           phone: phoneStr,
           phones: cleanPhones,
           weekly_schedule: weekly,
           delivery_fee_per_km_paise: Math.round(form.delivery_fee_per_km_paise * 100),
           minimum_order_paise: Math.round(form.minimum_order_paise * 100),
+          order_cutoff_minutes_before_closing: Number(form.order_cutoff_minutes_before_closing) || 30,
           distance_calculation_mode: form.distance_calculation_mode || "AUTO",
           charge_from_zero_beyond_free_radius: Boolean(form.charge_from_zero_beyond_free_radius),
           haversine_routing_factor: Number(form.haversine_routing_factor) || 1.3627,
@@ -4696,6 +4730,10 @@ function SettingsPage() {
         weekly_schedule: updated.weekly_schedule || {},
         delivery_fee_per_km_paise: updated.delivery_fee_per_km_paise / 100,
         minimum_order_paise: updated.minimum_order_paise / 100,
+        accepting_orders: updated.is_restaurant_open ?? updated.accepting_orders,
+        is_restaurant_open: updated.is_restaurant_open ?? updated.accepting_orders,
+        is_delivery_open: updated.is_delivery_open !== undefined ? Boolean(updated.is_delivery_open) : nextDeliveryOpen,
+        order_cutoff_minutes_before_closing: updated.order_cutoff_minutes_before_closing ?? 30,
         distance_calculation_mode: updated.distance_calculation_mode || "AUTO",
         charge_from_zero_beyond_free_radius: Boolean(updated.charge_from_zero_beyond_free_radius),
         haversine_routing_factor: updated.haversine_routing_factor ?? 1.3627,
@@ -4715,22 +4753,109 @@ function SettingsPage() {
         phoneNumbers: finalPhones,
       });
 
-      let noticeMsg = "Order status updated.";
+      let noticeMsg = "Restaurant status updated.";
       if (isOverride) {
         const untilStr = updated.admin_override_until ? ` until ${formatOverrideTime(updated.admin_override_until)}` : "";
         noticeMsg = nextVal
-          ? `Override active: Restaurant opened for orders${untilStr}.`
-          : `Override active: Restaurant orders paused${untilStr}.`;
+          ? `Override active: Restaurant opened${untilStr}.`
+          : `Override active: Restaurant closed${untilStr}.`;
       } else {
         noticeMsg = nextVal
-          ? "Restaurant is open for orders as scheduled."
-          : "Restaurant is closed for orders as scheduled.";
+          ? "Restaurant opened as scheduled."
+          : "Restaurant closed as scheduled.";
       }
       setNotice(noticeMsg);
       setSavedToastOpen(true);
       setTimeout(() => setSavedToastOpen(false), 3000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not update order status.");
+      setError(err instanceof Error ? err.message : "Could not update restaurant status.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function persistDeliveryToggle(nextVal: boolean) {
+    if (!form || busy) return;
+    const isRestOpen = form.is_restaurant_open ?? form.accepting_orders;
+    if (!isRestOpen && nextVal) {
+      setError("Cannot enable online ordering while the restaurant is closed.");
+      return;
+    }
+    const cleanPhones = phoneNumbers.map((p) => p.trim()).filter(Boolean);
+    const phoneStr = cleanPhones.join(", ");
+    const weekly = buildWeeklySchedule(schedules);
+
+    setBusy(true);
+    try {
+      const updated = await api<Restaurant>("/admin/settings", {
+        method: "PUT",
+        body: JSON.stringify({
+          ...form,
+          accepting_orders: isRestOpen,
+          is_delivery_open: nextVal,
+          phone: phoneStr,
+          phones: cleanPhones,
+          weekly_schedule: weekly,
+          delivery_fee_per_km_paise: Math.round(form.delivery_fee_per_km_paise * 100),
+          minimum_order_paise: Math.round(form.minimum_order_paise * 100),
+          order_cutoff_minutes_before_closing: Number(form.order_cutoff_minutes_before_closing) || 30,
+          distance_calculation_mode: form.distance_calculation_mode || "AUTO",
+          charge_from_zero_beyond_free_radius: Boolean(form.charge_from_zero_beyond_free_radius),
+          haversine_routing_factor: Number(form.haversine_routing_factor) || 1.3627,
+          average_delivery_speed_kmh: Number(form.average_delivery_speed_kmh) || 30.0,
+          customer_sla_minutes: Number(form.customer_sla_minutes) || 36.0,
+          alns_max_iterations_mode: form.alns_max_iterations_mode || "AUTO",
+          alns_max_iterations: Number(form.alns_max_iterations) || 220,
+          max_orders_per_driver: Number(form.max_orders_per_driver) || 5,
+          enforce_driver_geofence: Boolean(form.enforce_driver_geofence),
+          driver_geofence_meters: Number(form.driver_geofence_meters) || 500,
+        }),
+      });
+
+      const parsedScheds = parseSchedulesFromWeekly(updated.weekly_schedule);
+      setSchedules(parsedScheds);
+      setStoredBaseSpeed(updated.average_delivery_speed_kmh ?? 30.0);
+      const phonesList = (updated.phones && updated.phones.length > 0)
+        ? updated.phones
+        : updated.phone
+          ? updated.phone.split(",").map((p: string) => p.trim()).filter(Boolean)
+          : ["+91"];
+      const finalPhones = phonesList.length > 0 ? phonesList.map(formatPhoneWithPrefix) : ["+91"];
+      setPhoneNumbers(finalPhones);
+
+      const formData: Restaurant = {
+        ...updated,
+        weekly_schedule: updated.weekly_schedule || {},
+        delivery_fee_per_km_paise: updated.delivery_fee_per_km_paise / 100,
+        minimum_order_paise: updated.minimum_order_paise / 100,
+        accepting_orders: updated.is_restaurant_open ?? updated.accepting_orders,
+        is_restaurant_open: updated.is_restaurant_open ?? updated.accepting_orders,
+        is_delivery_open: updated.is_delivery_open !== undefined ? Boolean(updated.is_delivery_open) : nextVal,
+        order_cutoff_minutes_before_closing: updated.order_cutoff_minutes_before_closing ?? 30,
+        distance_calculation_mode: updated.distance_calculation_mode || "AUTO",
+        charge_from_zero_beyond_free_radius: Boolean(updated.charge_from_zero_beyond_free_radius),
+        haversine_routing_factor: updated.haversine_routing_factor ?? 1.3627,
+        average_delivery_speed_kmh: updated.average_delivery_speed_kmh ?? 30.0,
+        customer_sla_minutes: updated.customer_sla_minutes ?? 36.0,
+        alns_max_iterations_mode: updated.alns_max_iterations_mode || "AUTO",
+        alns_max_iterations: updated.alns_max_iterations || 220,
+        max_orders_per_driver: updated.max_orders_per_driver || 5,
+        available_drivers_ready: updated.available_drivers_ready ?? form.available_drivers_ready ?? 0,
+        enforce_driver_geofence: Boolean(updated.enforce_driver_geofence),
+        driver_geofence_meters: updated.driver_geofence_meters || 500,
+      };
+      setForm(formData);
+      initialSnapshot.current = JSON.stringify({
+        form: formData,
+        schedules: parsedScheds,
+        phoneNumbers: finalPhones,
+      });
+
+      setNotice(nextVal ? "Online ordering enabled." : "Online ordering paused (Walk-in orders active).");
+      setSavedToastOpen(true);
+      setTimeout(() => setSavedToastOpen(false), 3000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update online order status.");
     } finally {
       setBusy(false);
     }
@@ -4833,11 +4958,14 @@ function SettingsPage() {
         method: "PUT",
         body: JSON.stringify({
           ...form,
+          accepting_orders: form.is_restaurant_open ?? form.accepting_orders,
           phone: phoneStr,
           phones: cleanPhones,
           weekly_schedule: weekly,
           delivery_fee_per_km_paise: Math.round(form.delivery_fee_per_km_paise * 100),
           minimum_order_paise: Math.round(form.minimum_order_paise * 100),
+          is_delivery_open: Boolean(form.is_delivery_open),
+          order_cutoff_minutes_before_closing: Number(form.order_cutoff_minutes_before_closing) || 30,
           distance_calculation_mode: form.distance_calculation_mode || "AUTO",
           charge_from_zero_beyond_free_radius: Boolean(form.charge_from_zero_beyond_free_radius),
           haversine_routing_factor: Number(form.haversine_routing_factor) || 1.3627,
@@ -4866,6 +4994,10 @@ function SettingsPage() {
         weekly_schedule: updated.weekly_schedule || {},
         delivery_fee_per_km_paise: updated.delivery_fee_per_km_paise / 100,
         minimum_order_paise: updated.minimum_order_paise / 100,
+        accepting_orders: updated.is_restaurant_open ?? updated.accepting_orders,
+        is_restaurant_open: updated.is_restaurant_open ?? updated.accepting_orders,
+        is_delivery_open: updated.is_delivery_open !== undefined ? Boolean(updated.is_delivery_open) : Boolean(form.is_delivery_open),
+        order_cutoff_minutes_before_closing: updated.order_cutoff_minutes_before_closing ?? 30,
         distance_calculation_mode: updated.distance_calculation_mode || "AUTO",
         charge_from_zero_beyond_free_radius: Boolean(updated.charge_from_zero_beyond_free_radius),
         haversine_routing_factor: updated.haversine_routing_factor ?? 1.3627,
@@ -4955,6 +5087,14 @@ function SettingsPage() {
         label: "Restaurant address",
         from: oldF.address || "—",
         to: form.address || "—",
+      });
+    }
+
+    if ((form.email || "") !== (oldF.email || "")) {
+      diffs.push({
+        label: "Email address",
+        from: oldF.email || "—",
+        to: form.email || "—",
       });
     }
 
@@ -5063,6 +5203,14 @@ function SettingsPage() {
         label: "Delivery fee beyond free radius",
         from: oldF.charge_from_zero_beyond_free_radius ? "Charge full distance from 0 km" : "Charge extra distance only",
         to: form.charge_from_zero_beyond_free_radius ? "Charge full distance from 0 km" : "Charge extra distance only",
+      });
+    }
+
+    if (Number(form.order_cutoff_minutes_before_closing ?? 30) !== Number(oldF.order_cutoff_minutes_before_closing ?? 30)) {
+      diffs.push({
+        label: "Online order cutoff before closing",
+        from: `${oldF.order_cutoff_minutes_before_closing ?? 30} mins`,
+        to: `${form.order_cutoff_minutes_before_closing ?? 30} mins`,
       });
     }
 
@@ -5244,6 +5392,16 @@ function SettingsPage() {
                     );
                   })()}
                 </div>
+                <label className="field-label" style={{ gridColumn: "span 2" }}>
+                  Email address
+                  <input
+                    type="email"
+                    maxLength={255}
+                    placeholder="support@kebabzilla.in"
+                    value={form.email || ""}
+                    onChange={(event) => change("email", event.target.value)}
+                  />
+                </label>
               </div>
 
               <div
@@ -5257,68 +5415,177 @@ function SettingsPage() {
                 <div
                   style={{
                     display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
+                    flexDirection: "column",
+                    gap: "0.85rem",
                     marginBottom: "1.25rem",
-                    flexWrap: "wrap",
-                    gap: "0.75rem",
                   }}
                 >
-                  <h3 style={{ margin: 0, fontSize: "1.1rem" }}>
-                    Opening days and hours
-                  </h3>
                   <div
                     style={{
                       display: "flex",
                       alignItems: "center",
-                      gap: "0.75rem",
+                      justifyContent: "space-between",
                       flexWrap: "wrap",
+                      gap: "0.75rem",
                     }}
                   >
-                    <span style={{ fontSize: "0.92rem", fontWeight: 600 }}>
-                      Open for Orders
-                    </span>
+                    <h3 style={{ margin: 0, fontSize: "1.1rem" }}>
+                      Opening days and hours
+                    </h3>
                     {form.admin_override_state !== null && form.admin_override_state !== undefined && (
-                      <span
-                        style={{
-                          fontSize: "0.75rem",
-                          fontWeight: 700,
-                          padding: "3px 9px",
-                          borderRadius: "6px",
-                          background: form.accepting_orders ? "#fef3c7" : "#fee2e2",
-                          color: form.accepting_orders ? "#92400e" : "#991b1b",
-                          border: form.accepting_orders ? "1px solid #fde68a" : "1px solid #fecaca",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: "6px",
-                        }}
-                      >
-                        OVERRIDE ACTIVE · {form.accepting_orders ? "Open" : "Paused"}{form.admin_override_until ? ` until ${formatOverrideTime(form.admin_override_until)}` : ""}
-                      </span>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                        <span
+                          style={{
+                            fontSize: "0.75rem",
+                            fontWeight: 700,
+                            padding: "3px 9px",
+                            borderRadius: "6px",
+                            background: form.accepting_orders ? "#fef3c7" : "#fee2e2",
+                            color: form.accepting_orders ? "#92400e" : "#991b1b",
+                            border: form.accepting_orders ? "1px solid #fde68a" : "1px solid #fecaca",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "6px",
+                          }}
+                        >
+                          OVERRIDE ACTIVE · {form.accepting_orders ? "Open" : "Closed"}{form.admin_override_until ? ` until ${formatOverrideTime(form.admin_override_until)}` : ""}
+                        </span>
+                        <button
+                          type="button"
+                          className="button button-sm button-secondary"
+                          style={{ padding: "3px 9px", fontSize: "0.75rem", height: "auto" }}
+                          disabled={busy}
+                          onClick={() => {
+                            const scheduledOpen = form.is_currently_scheduled_open ?? isCurrentlyOpenBySchedule(schedules);
+                            void persistAcceptingOrders(scheduledOpen);
+                          }}
+                        >
+                          Resume schedule
+                        </button>
+                      </div>
                     )}
-                    {form.admin_override_state !== null && form.admin_override_state !== undefined && (
-                      <button
-                        type="button"
-                        className="button button-sm button-secondary"
-                        style={{ padding: "3px 9px", fontSize: "0.75rem", height: "auto" }}
-                        disabled={busy}
-                        onClick={() => {
-                          const scheduledOpen = form.is_currently_scheduled_open ?? isCurrentlyOpenBySchedule(schedules);
-                          void persistAcceptingOrders(scheduledOpen);
-                        }}
-                      >
-                        Resume schedule
-                      </button>
-                    )}
-                    <label className="toggle-switch">
-                      <input
-                        type="checkbox"
-                        checked={form.accepting_orders}
-                        disabled={busy}
-                        onChange={handleToggleAcceptingOrders}
-                      />
-                      <span />
-                    </label>
+                  </div>
+
+                  {/* Dual Controls Card */}
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+                      gap: "0.75rem",
+                      padding: "1rem",
+                      background: "rgba(0, 0, 0, 0.02)",
+                      border: "1px solid var(--border)",
+                      borderRadius: "10px",
+                    }}
+                  >
+                    {/* Button 1: Restaurant / Walk-in Open */}
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: "0.75rem",
+                        padding: "0.75rem 1rem",
+                        background: form.accepting_orders ? "rgba(16, 185, 129, 0.08)" : "rgba(239, 68, 68, 0.08)",
+                        border: `1px solid ${form.accepting_orders ? "rgba(16, 185, 129, 0.3)" : "rgba(239, 68, 68, 0.3)"}`,
+                        borderRadius: "8px",
+                      }}
+                    >
+                      <div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                          <strong style={{ fontSize: "0.95rem" }}>Restaurant & Walk-in</strong>
+                          <span
+                            style={{
+                              fontSize: "0.72rem",
+                              fontWeight: 700,
+                              padding: "1px 7px",
+                              borderRadius: "4px",
+                              background: form.accepting_orders ? "#10b981" : "#ef4444",
+                              color: "#fff",
+                            }}
+                          >
+                            {form.accepting_orders ? "OPEN" : "CLOSED"}
+                          </span>
+                        </div>
+                        <small style={{ color: "var(--muted)", display: "block", marginTop: "2px", fontSize: "0.8rem" }}>
+                          {form.accepting_orders
+                            ? "Local shop open for counter & dine-in orders"
+                            : "Restaurant closed; online ordering disabled"}
+                        </small>
+                      </div>
+                      <label className="toggle-switch">
+                        <input
+                          type="checkbox"
+                          checked={form.accepting_orders}
+                          disabled={busy}
+                          onChange={handleToggleAcceptingOrders}
+                        />
+                        <span />
+                      </label>
+                    </div>
+
+                    {/* Button 2: Online Order */}
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: "0.75rem",
+                        padding: "0.75rem 1rem",
+                        background: !form.accepting_orders
+                          ? "rgba(156, 163, 175, 0.08)"
+                          : form.is_delivery_open
+                            ? "rgba(16, 185, 129, 0.08)"
+                            : "rgba(245, 158, 11, 0.08)",
+                        border: `1px solid ${
+                          !form.accepting_orders
+                            ? "rgba(156, 163, 175, 0.25)"
+                            : form.is_delivery_open
+                              ? "rgba(16, 185, 129, 0.3)"
+                              : "rgba(245, 158, 11, 0.3)"
+                        }`,
+                        borderRadius: "8px",
+                        opacity: !form.accepting_orders ? 0.65 : 1,
+                      }}
+                    >
+                      <div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                          <strong style={{ fontSize: "0.95rem" }}>Online Order</strong>
+                          <span
+                            style={{
+                              fontSize: "0.72rem",
+                              fontWeight: 700,
+                              padding: "1px 7px",
+                              borderRadius: "4px",
+                              background: !form.accepting_orders
+                                ? "#9ca3af"
+                                : form.is_delivery_open
+                                  ? "#10b981"
+                                  : "#f59e0b",
+                              color: "#fff",
+                            }}
+                          >
+                            {!form.accepting_orders ? "LOCKED" : form.is_delivery_open ? "ACTIVE" : "PAUSED"}
+                          </span>
+                        </div>
+                        <small style={{ color: "var(--muted)", display: "block", marginTop: "2px", fontSize: "0.8rem" }}>
+                          {!form.accepting_orders
+                            ? "Cannot enable online orders while restaurant is closed"
+                            : form.is_delivery_open
+                              ? "Online ordering active for customers"
+                              : "Online ordering paused (Walk-in only banner shown)"}
+                        </small>
+                      </div>
+                      <label className="toggle-switch" title={!form.accepting_orders ? "Restaurant must be open first" : undefined}>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(form.accepting_orders && form.is_delivery_open)}
+                          disabled={busy || !form.accepting_orders}
+                          onChange={(e) => void persistDeliveryToggle(e.target.checked)}
+                        />
+                        <span />
+                      </label>
+                    </div>
                   </div>
                 </div>
 
@@ -5418,6 +5685,22 @@ function SettingsPage() {
                   />
                 </label>
                 <label className="field-label">
+                  Online Order Cutoff Before Closing (minutes)
+                  <input
+                    type="number"
+                    min="0"
+                    max="240"
+                    step="1"
+                    value={form.order_cutoff_minutes_before_closing ?? 30}
+                    onChange={(event) =>
+                      change(
+                        "order_cutoff_minutes_before_closing",
+                        Math.max(0, parseInt(event.target.value) || 0)
+                      )
+                    }
+                  />
+                </label>
+                <label className="field-label">
                   Maximum Delivery Distance (in km)
                   <input
                     type="number"
@@ -5446,7 +5729,7 @@ function SettingsPage() {
                     }
                   />
                 </label>
-                <label className="field-label">
+                <label className="field-label full-field">
                   Delivery Fee Amount per km
                   <input
                     type="number"
@@ -6471,11 +6754,35 @@ function ActivityCenter() {
   );
 }
 
+const DEFAULT_FALLBACK_BANNER = "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=1200&q=80";
+
 function Offers() {
+  const [campaignTab, setCampaignTab] = useState<"email" | "sms">("email");
   const [audience, setAudience] = usePreference<string>("admin_offers_audience", "ALL");
-  const [channels, setChannels] = useState<string[]>(["EMAIL"]);
-  const [subject, setSubject] = useState("A little something from KebabZilla");
+  const [channels] = useState<string[]>(["EMAIL"]);
+  const [subject, setSubject] = useState("");
+  const [headline, setHeadline] = useState("");
+  const [subheading, setSubheading] = useState("");
   const [message, setMessage] = useState("");
+  const [discountHighlight, setDiscountHighlight] = useState("");
+  const [promoCode, setPromoCode] = useState("");
+  const [ctaText, setCtaText] = useState("");
+  const [ctaUrl, setCtaUrl] = useState("");
+  const [emailImages, setEmailImages] = useState<EmailImageItem[]>([]);
+  const [loadingImages, setLoadingImages] = useState(false);
+  const [backgroundImageUrl, setBackgroundImageUrl] = useState("");
+  const [backgroundOpacity, setBackgroundOpacity] = useState<number>(0.35);
+  const [outerBlur, setOuterBlur] = useState<number>(70);
+  const [invertLogo, setInvertLogo] = useState<boolean>(false);
+  const [themeColor, setThemeColor] = useState("#c34226");
+  const [customImageUrl, setCustomImageUrl] = useState("");
+  const [previewDevice, setPreviewDevice] = useState<"desktop" | "mobile">("desktop");
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [copiedPromo, setCopiedPromo] = useState(false);
+  const [confirmModalOpen, setConfirmModalOpen] = useState(false);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [logs, setLogs] = useState<
     {
       id: number;
@@ -6493,18 +6800,116 @@ function Offers() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [editingPreview, setEditingPreview] = useState(false);
   const [logQuery, setLogQuery] = useState("");
   const [logSort, setLogSort] = usePreference<string>("admin_offers_log_sort", "newest");
   const [selectedLog, setSelectedLog] = useState<(typeof logs)[number] | null>(null);
+  const currentSelectedLog = selectedLog
+    ? (logs.find((l) => l.id === selectedLog.id) ?? selectedLog)
+    : null;
+
   const refresh = useCallback(
     () => api<typeof logs>("/admin/offers").then(setLogs),
     [],
   );
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    const hasActive = logs.some((l) => l.status === "QUEUED" || l.status === "SENDING");
+    if (!hasActive) return;
+
+    const timer = setInterval(() => {
+      void refresh();
+    }, 2500);
+
+    return () => clearInterval(timer);
+  }, [logs, refresh]);
+
+  const refreshEmailImages = useCallback(async () => {
+    try {
+      setLoadingImages(true);
+      const items = await listEmailImages();
+      setEmailImages(items);
+      if (items.length > 0) {
+        setBackgroundImageUrl((curr) => curr || items[0].public_url || items[0].url);
+      }
+    } catch (err) {
+      console.warn("Could not load email images:", err);
+    } finally {
+      setLoadingImages(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshEmailImages();
+  }, [refreshEmailImages]);
+
+  function handleSelectPreset(presetUrl: string) {
+    setBackgroundImageUrl(presetUrl);
+    setCustomImageUrl("");
+  }
+
+  function handleCustomUrlChange(val: string) {
+    setCustomImageUrl(val);
+    const cleaned = val.trim().replace(/^["']|["']$/g, "");
+    setBackgroundImageUrl(cleaned);
+  }
+
+  function handleResetBackground() {
+    setBackgroundImageUrl("");
+    setCustomImageUrl("");
+  }
+
+  async function handleDeletePreset(filename: string) {
+    if (!window.confirm("Are you sure you want to delete this preset image from Cloud Storage (emailImages)?")) return;
+    try {
+      const ok = await deleteEmailImage(filename);
+      if (ok) {
+        setNotice(`Image deleted from Cloud Storage.`);
+        if (backgroundImageUrl.includes(filename) || customImageUrl.includes(filename)) {
+          setBackgroundImageUrl("");
+          setCustomImageUrl("");
+        }
+        await refreshEmailImages();
+      } else {
+        setError("Could not delete image from Cloud Storage.");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete image.");
+    }
+  }
+
+  async function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingImage(true);
+    setError("");
+    try {
+      const res = await uploadEmailImage(file);
+      const urlToUse = res.public_url || res.url || "";
+      setBackgroundImageUrl(urlToUse);
+      setCustomImageUrl("");
+      setNotice("Custom image uploaded directly to Cloud Storage (emailImages) and added to presets!");
+      await refreshEmailImages();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not upload image to cloud storage.");
+    } finally {
+      setUploadingImage(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  function handleTestCopyPromo(code: string) {
+    if (navigator.clipboard) {
+      void navigator.clipboard.writeText(code).then(() => {
+        setCopiedPromo(true);
+        setTimeout(() => setCopiedPromo(false), 2400);
+      });
+    }
+  }
+
   async function send() {
     setBusy(true);
     setError("");
@@ -6517,14 +6922,42 @@ function Offers() {
         provider_notes: string[];
       }>("/admin/offers", {
         method: "POST",
-        body: JSON.stringify({ audience, channels, subject, message }),
+        body: JSON.stringify({
+          audience,
+          channels,
+          subject,
+          message,
+          headline: headline.trim() || undefined,
+          subheading: subheading.trim() || undefined,
+          promo_code: promoCode.trim() || undefined,
+          discount_highlight: discountHighlight.trim() || undefined,
+          cta_text: ctaText.trim() || undefined,
+          cta_url: ctaUrl.trim() || undefined,
+          background_image_url: backgroundImageUrl.trim() || undefined,
+          theme_color: themeColor || undefined,
+          background_opacity: backgroundOpacity,
+          outer_blur: outerBlur,
+          invert_logo: invertLogo,
+        }),
       });
-      setNotice(
-        `${result.status}: ${result.sent_count}/${result.recipient_count} recipients sent. ${result.provider_notes.join("; ")}`,
-      );
+      if (result.status === "QUEUED" || result.status === "SENDING") {
+        setNotice(
+          `Offer campaign queued for background delivery (${result.recipient_count} recipients). Emails are sent smoothly in the background; delivery status will update automatically below.`
+        );
+      } else {
+        setNotice(
+          `${result.status}: ${result.sent_count}/${result.recipient_count} recipients sent. ${result.provider_notes.join("; ")}`
+        );
+      }
+      setConfirmModalOpen(false);
+      setSubject("");
+      setHeadline("");
+      setSubheading("");
       setMessage("");
-      setPreviewOpen(false);
-      setEditingPreview(false);
+      setDiscountHighlight("");
+      setPromoCode("");
+      setCtaText("");
+      setCtaUrl("");
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not send offer.");
@@ -6532,6 +6965,7 @@ function Offers() {
       setBusy(false);
     }
   }
+
   const visibleLogs = logs
     .filter((log) => {
       const textMatches = `${log.subject} ${log.message} ${log.status} ${log.audience} ${log.channels.join(" ")}`.toLowerCase().includes(logQuery.trim().toLowerCase());
@@ -6548,81 +6982,945 @@ function Offers() {
       if (logSort === "status") return a.status.localeCompare(b.status);
       return b.created_at.localeCompare(a.created_at);
     });
+
+  const activeHeroBg = backgroundImageUrl.trim() || (emailImages.length > 0 ? (emailImages[0].public_url || emailImages[0].url) : DEFAULT_FALLBACK_BANNER);
+
   return (
     <>
       <PageTitle
-        eyebrow="A LITTLE SOMETHING FOR YOUR GUESTS"
-        title="Customer offers"
-        description="Send a custom email to all customers, new customers, or returning customers. SMS broadcasts will be added once an SMS provider is configured."
+        eyebrow="MARKETING & PROMOTIONS STUDIO"
+        title="Customer offers & campaigns"
+        description="Design intuitive, beautiful HTML/CSS email campaigns with custom background photos, discount highlights, and live interactive preview. Images are automatically saved in Cloud Storage under emailImages."
       />
+
       {notice && <Notice tone="success">{notice}</Notice>}
       {error && <Notice>{error}</Notice>}
-      <form
-        className="admin-panel modal-form"
-        onSubmit={(event) => { event.preventDefault(); setEditingPreview(false); setPreviewOpen(true); }}
-      >
-        <label className="field-label">
-          Audience
-          <RoundedSelect ariaLabel="Choose offer audience" value={audience} onChange={setAudience} options={[{ value: "ALL", label: "All customers" }, { value: "NEW", label: "New customers · no orders yet" }, { value: "RETURNING", label: "Returning customers" }]} />
-        </label>
-        <div className="offer-channel-field">
-          <span>Send by</span>
-          <div className="offer-channel-picker">
-          {["EMAIL"].map((channel) => (
-            <button type="button" key={channel} aria-pressed={channels.includes(channel)} className={channels.includes(channel) ? "selected" : ""} onClick={() =>
-                  setChannels((old) =>
-                    old.includes(channel)
-                      ? old.filter((item) => item !== channel)
-                      : [...old, channel],
-                  )
-                }>{channel}</button>
-          ))}
+
+      {/* Campaign Channel Sub-Tabs: Email & SMS */}
+      <div className="offer-subtabs-nav">
+        <button
+          type="button"
+          className={`offer-subtab-btn ${campaignTab === "email" ? "active" : ""}`}
+          onClick={() => setCampaignTab("email")}
+        >
+          <Mail size={16} /> Email Campaigns
+        </button>
+        <button
+          type="button"
+          className={`offer-subtab-btn ${campaignTab === "sms" ? "active" : ""}`}
+          onClick={() => setCampaignTab("sms")}
+        >
+          <MessageSquare size={16} /> SMS Campaigns
+          <span className="offer-subtab-badge">Under Development</span>
+        </button>
+      </div>
+
+      {campaignTab === "sms" ? (
+        <section className="admin-panel offer-sms-placeholder-panel">
+          <div className="offer-sms-placeholder-content">
+            <div className="offer-sms-placeholder-icon">
+              <Smartphone size={38} />
+            </div>
+            <span className="eyebrow" style={{ color: "#d97706", marginBottom: 6 }}>MULTI-CHANNEL MARKETING</span>
+            <h2 style={{ fontSize: 24, fontWeight: 900, margin: "0 0 10px 0" }}>SMS Campaigns are Under Development</h2>
+            <p style={{ maxWidth: 540, margin: "0 auto 20px", color: "var(--muted, #626b64)", lineHeight: 1.6, fontSize: "0.92rem" }}>
+              Direct SMS marketing, transactional order updates via DLT-approved header IDs, and automated promo voucher blasts are currently being engineered.
+            </p>
+            <div className="offer-sms-features-grid">
+              <div className="offer-sms-feature-card">
+                <ShieldCheck size={18} color="#10b981" />
+                <strong>DLT Header Registration</strong>
+                <span>Complying with telecom regulatory sender standards</span>
+              </div>
+              <div className="offer-sms-feature-card">
+                <Sparkles size={18} color="#c34226" />
+                <strong>One-Click Flash Promos</strong>
+                <span>Instant short-link delivery to customer phone numbers</span>
+              </div>
+              <div className="offer-sms-feature-card">
+                <Users size={18} color="#6366f1" />
+                <strong>Opt-In Filtering</strong>
+                <span>Full compliance with customer promotional cookies &amp; preferences</span>
+              </div>
+            </div>
           </div>
-          <small className="field-optional">Sent from support@kebabzilla.in. SMS is not configured yet.</small>
-        </div>
-        <label className="field-label">
-          Offer message
-          <textarea
-            required
-            minLength={2}
-            maxLength={1000}
-            rows={5}
-            value={message}
-            onChange={(event) => setMessage(event.target.value)}
-          />
-        </label>
-        <Button type="submit" disabled={busy || !channels.length}>
-          Preview offer
-        </Button>
-      </form>
-      {previewOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setPreviewOpen(false); }}>
-        <section className="modal-card offer-preview-modal" role="dialog" aria-modal="true" aria-labelledby="offer-preview-title">
-          <div className="modal-heading"><div><span className="eyebrow">{editingPreview ? "EDIT CUSTOMER EMAIL" : "CUSTOMER EMAIL PREVIEW"}</span><h2 id="offer-preview-title">{editingPreview ? "Refine your offer" : subject}</h2></div><button className="icon-button" type="button" disabled={busy} onClick={() => setPreviewOpen(false)} aria-label="Close preview"><X size={18} /></button></div>
-          {editingPreview ? <div className="modal-form"><label className="field-label">Email subject<input required minLength={2} maxLength={160} value={subject} onChange={(event) => setSubject(event.target.value)} /></label><label className="field-label">Email body<textarea required minLength={2} maxLength={1000} rows={7} value={message} onChange={(event) => setMessage(event.target.value)} /></label></div> : <div className="offer-preview-email">
-            <div className="offer-preview-meta"><span>From</span><strong>KebabZilla &lt;support@kebabzilla.in&gt;</strong><span>To</span><strong>Selected {audience.toLowerCase()} customers</strong><span>Subject</span><strong>{subject}</strong></div>
-            <article className="offer-preview-body"><p>Hi,</p><p>{message}</p><p>KebabZilla</p></article>
-          </div>}
-          <Notice tone="info">{editingPreview ? "Update the subject or body, then review the email before sending." : "Review the content above. Sending is final and will email every selected customer."}</Notice>
-          <div className="modal-actions">{editingPreview ? <Button type="button" variant="secondary" disabled={busy || message.trim().length < 2 || subject.trim().length < 2} onClick={() => setEditingPreview(false)}>Review email</Button> : <Button type="button" variant="secondary" disabled={busy} onClick={() => setEditingPreview(true)}>Edit offer</Button>}<Button type="button" disabled={busy || message.trim().length < 2 || subject.trim().length < 2} onClick={() => void send()}>{busy ? "Sending…" : "Send this offer"} <ArrowRight size={15} /></Button></div>
         </section>
-      </div>}
+      ) : (
+        <>
+      <div className="offer-studio-layout">
+        {/* Left Column: Intuitive Customizer Controls */}
+        <div className="offer-studio-form">
+          {/* Card 1: Target Audience (Full-width) */}
+          <section className="offer-section-card">
+            <h3 className="offer-section-title">
+              <Users size={16} /> 1. Audience
+            </h3>
+            <label className="field-label" style={{ width: "100%", margin: 0 }}>
+              <span style={{ marginBottom: 6, display: "block" }}>Audience</span>
+              <RoundedSelect
+                className="offer-audience-select"
+                ariaLabel="Choose offer audience"
+                value={audience}
+                onChange={setAudience}
+                options={[
+                  { value: "ALL", label: "All registered customers" },
+                  { value: "NEW", label: "New customers (0 orders yet)" },
+                  { value: "RETURNING", label: "Returning customers (1+ orders)" },
+                ]}
+              />
+            </label>
+          </section>
+
+          {/* Card 2: Visual Styling & Background Image */}
+          <section className="offer-section-card">
+            <h3 className="offer-section-title">
+              <Palette size={16} /> 2. Background Image & Theme
+            </h3>
+
+            {/* Custom Accent Color Palette with Full RGB Wheel */}
+            <div>
+              <span className="field-label" style={{ marginBottom: 6, display: "block" }}>Accent Color</span>
+
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 14,
+                  padding: "10px 14px",
+                  background: "var(--bg-hover, #f8f6f2)",
+                  borderRadius: 10,
+                  border: "1px solid var(--line, #e8e5dd)",
+                }}
+              >
+                {/* Circular Interactive Color Swatch / Click to Open RGB Wheel */}
+                <label
+                  title="Click to open RGB Color Wheel"
+                  style={{
+                    position: "relative",
+                    width: 42,
+                    height: 42,
+                    borderRadius: "50%",
+                    cursor: "pointer",
+                    flexShrink: 0,
+                    backgroundColor: themeColor || "#c34226",
+                    border: "3px solid #ffffff",
+                    boxShadow: "0 2px 8px rgba(0,0,0,0.22)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    overflow: "hidden",
+                    transition: "transform 0.15s ease",
+                  }}
+                >
+                  <input
+                    type="color"
+                    value={themeColor && themeColor.startsWith("#") && themeColor.length === 7 ? themeColor : "#c34226"}
+                    onChange={(e) => setThemeColor(e.target.value)}
+                    style={{
+                      position: "absolute",
+                      inset: -15,
+                      width: 72,
+                      height: 72,
+                      opacity: 0,
+                      cursor: "pointer",
+                      border: "none",
+                    }}
+                  />
+                  <Pipette size={16} color="#ffffff" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.85))", pointerEvents: "none" }} />
+                </label>
+
+                {/* Hex Display & Click to open RGB Wheel label */}
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", flex: 1 }}>
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: "0.80rem", fontWeight: 800, color: "var(--muted, #626b64)", letterSpacing: 0.5 }}>HEX</span>
+                    <input
+                      type="text"
+                      value={themeColor}
+                      onChange={(e) => setThemeColor(e.target.value)}
+                      placeholder="#c34226"
+                      maxLength={9}
+                      aria-label="Hex color value"
+                      style={{
+                        padding: "7px 11px",
+                        fontSize: "0.88rem",
+                        fontFamily: "'Courier New', monospace",
+                        fontWeight: 800,
+                        letterSpacing: 1.5,
+                        borderRadius: 8,
+                        border: "1px solid var(--line, #ded8d0)",
+                        background: "#fff",
+                        width: 110,
+                        color: "var(--text, #1e2926)",
+                        textTransform: "uppercase",
+                      }}
+                    />
+                  </div>
+                  <span style={{ fontSize: "0.78rem", color: "var(--muted, #626b64)" }}>
+                    Click color circle to open RGB wheel
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Background Presets */}
+            {/* Background Presets from GCS emailImages/ */}
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                <span className="field-label" style={{ margin: 0 }}>Banner &amp; Background Presets (emailImages)</span>
+                <span className="field-optional">{emailImages.length} saved</span>
+              </div>
+
+              <div className="offer-bg-presets-grid">
+                {/* Always-visible '+ Add Image' tile */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
+                  style={{ display: "none" }}
+                  onChange={(e) => void handleImageUpload(e)}
+                />
+                <button
+                  type="button"
+                  className="offer-bg-preset-btn offer-bg-add-btn"
+                  disabled={uploadingImage}
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Upload custom image to Cloud Storage (emailImages)"
+                >
+                  <div className="offer-bg-add-content">
+                    {uploadingImage ? (
+                      <span style={{ fontSize: "0.68rem" }}>Uploading…</span>
+                    ) : (
+                      <>
+                        <Plus size={20} />
+                        <span>Add Image</span>
+                      </>
+                    )}
+                  </div>
+                </button>
+
+                {/* Saved presets from GCS */}
+                {emailImages.map((img) => {
+                  const resolvedUrl = img.url;
+                  const isActive = backgroundImageUrl === resolvedUrl || backgroundImageUrl === img.public_url;
+                  return (
+                    <div
+                      key={img.filename}
+                      className={`offer-bg-preset-btn ${isActive ? "active" : ""}`}
+                      onClick={() => handleSelectPreset(resolvedUrl)}
+                      title={img.filename}
+                    >
+                      <img src={resolveImageUrl(resolvedUrl)} alt={img.filename} />
+                      <span className="offer-bg-preset-label">{img.filename.slice(0, 10)}…</span>
+                      <button
+                        type="button"
+                        className="offer-bg-preset-delete"
+                        title="Delete image from Cloud Storage"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleDeletePreset(img.filename);
+                        }}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {emailImages.length === 0 && !loadingImages && (
+                <small className="field-optional" style={{ display: "block", marginTop: 6 }}>
+                  No saved images in Cloud Storage yet. Click <strong>+ Add Image</strong> above to upload custom banners.
+                </small>
+              )}
+
+              {backgroundImageUrl && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+                  <img
+                    src={resolveImageUrl(backgroundImageUrl)}
+                    alt="Active background"
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: 6,
+                      objectFit: "cover",
+                      border: "1px solid #e05334",
+                    }}
+                  />
+                  <span className="offer-cloud-badge">
+                    <Check size={13} /> Active Image Selected
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={handleResetBackground}
+                    style={{ padding: "3px 8px", fontSize: 11, height: "auto" }}
+                  >
+                    Clear
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            {/* Direct Image URL Input (single-use, not saved to cloud or database) */}
+            <div>
+              <label className="field-label" style={{ marginBottom: 0 }}>
+                <span>Direct Image URL <span className="field-optional">(single-use for this promo only, not saved to cloud)</span></span>
+                <div className="offer-url-input-group">
+                  <input
+                    type="url"
+                    placeholder="https://... image link"
+                    value={customImageUrl}
+                    onChange={(e) => handleCustomUrlChange(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleCustomUrlChange(customImageUrl);
+                      }
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={!customImageUrl.trim()}
+                    onClick={() => handleCustomUrlChange(customImageUrl)}
+                  >
+                    Apply
+                  </Button>
+                  {backgroundImageUrl && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={handleResetBackground}
+                    >
+                      Reset
+                    </Button>
+                  )}
+                </div>
+              </label>
+              <small className="field-optional" style={{ display: "block", marginTop: 4 }}>
+                Type or paste an external image link for this campaign only.
+              </small>
+            </div>
+
+            {/* Background Image Opacity Slider */}
+            <div style={{ marginTop: 16, padding: "12px 14px", background: "var(--bg-hover, #f8f6f2)", borderRadius: 10, border: "1px solid var(--line, #e8e5dd)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                <span style={{ fontSize: "0.84rem", fontWeight: 700, color: "var(--text, #1e2926)" }}>
+                  Background Image Opacity
+                </span>
+                <span style={{ fontSize: "0.82rem", fontWeight: 700, color: "#c34226", background: "rgba(195, 66, 38, 0.1)", padding: "2px 8px", borderRadius: 6 }}>
+                  {Math.round(backgroundOpacity * 100)}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min="5"
+                max="100"
+                step="5"
+                value={Math.round(backgroundOpacity * 100)}
+                onChange={(e) => setBackgroundOpacity(Number(e.target.value) / 100)}
+                style={{ width: "100%", accentColor: "#c34226", cursor: "pointer", margin: "4px 0" }}
+              />
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--muted, #626b64)" }}>
+                <span>Subtle (5%)</span>
+                <span>Balanced (35%)</span>
+                <span>Vivid (100%)</span>
+              </div>
+            </div>
+
+            {/* Invert Logo Color Toggle Switch */}
+            <div style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "var(--bg-hover, #f8f6f2)", borderRadius: 10, border: "1px solid var(--line, #e8e5dd)" }}>
+              <div>
+                <span style={{ fontSize: "0.84rem", fontWeight: 700, display: "block", color: "var(--text, #1e2926)" }}>
+                  Invert Brand Logo Colors
+                </span>
+                <span style={{ fontSize: "0.74rem", color: "var(--muted, #626b64)", display: "block" }}>
+                  Switch to dark charcoal logo text for bright or high-opacity backgrounds
+                </span>
+              </div>
+              <label
+                className="brand-logo-toggle-switch"
+                title={invertLogo ? "Logo Inverted (Dark)" : "Logo Normal (Off-White)"}
+              >
+                <input
+                  type="checkbox"
+                  className="brand-logo-toggle-input"
+                  checked={invertLogo}
+                  onChange={(e) => setInvertLogo(e.target.checked)}
+                />
+                <span className={`brand-logo-toggle-track ${invertLogo ? "active" : ""}`}>
+                  <span className="brand-logo-toggle-thumb" />
+                </span>
+              </label>
+            </div>
+
+            {/* Outer Ambient Blur Slider */}
+            <div style={{ marginTop: 12, padding: "12px 14px", background: "var(--bg-hover, #f8f6f2)", borderRadius: 10, border: "1px solid var(--line, #e8e5dd)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                <div>
+                  <span style={{ fontSize: "0.84rem", fontWeight: 700, color: "var(--text, #1e2926)", display: "block" }}>
+                    Outer Ambient Blur
+                  </span>
+                  <span style={{ fontSize: "0.74rem", color: "var(--muted, #626b64)", display: "block" }}>
+                    Adjust the blur radius of the food imagery outside the container
+                  </span>
+                </div>
+                <span style={{ fontSize: "0.82rem", fontWeight: 700, color: "#10b981", background: "rgba(16, 185, 129, 0.12)", padding: "2px 8px", borderRadius: 6, border: "1px solid rgba(16, 185, 129, 0.25)" }}>
+                  {outerBlur}px
+                </span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="120"
+                step="5"
+                value={outerBlur}
+                onChange={(e) => setOuterBlur(Number(e.target.value))}
+                style={{ width: "100%", accentColor: "#10b981", cursor: "pointer", margin: "4px 0" }}
+              />
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--muted, #626b64)" }}>
+                <span>Sharp (0px)</span>
+                <span>Subtle (30px)</span>
+                <span>Balanced (70px)</span>
+                <span>Maximum (120px)</span>
+              </div>
+            </div>
+          </section>
+
+          {/* Card 3: Offer Copy & Headline */}
+          <section className="offer-section-card">
+            <h3 className="offer-section-title">
+              <Sparkles size={16} /> 3. Offer Content & Headline
+            </h3>
+            <label className="field-label">
+              Email Subject Line
+              <input
+                required
+                minLength={2}
+                maxLength={160}
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                placeholder="e.g. Weekend Feast: 20% Off All Kebabs!"
+              />
+            </label>
+            <label className="field-label">
+              Banner Headline
+              <input
+                value={headline}
+                maxLength={200}
+                onChange={(e) => setHeadline(e.target.value)}
+                placeholder="e.g. Flame-Grilled Perfection Awaits!"
+              />
+            </label>
+            <label className="field-label">
+              Banner Subtitle / Teaser
+              <input
+                value={subheading}
+                maxLength={300}
+                onChange={(e) => setSubheading(e.target.value)}
+                placeholder="e.g. Handcrafted marinades, slow-cooked over authentic charcoal embers"
+              />
+            </label>
+            <label className="field-label">
+              Offer Story & Message
+              <textarea
+                required
+                minLength={2}
+                maxLength={5000}
+                rows={5}
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                placeholder="Describe your special deal or promotion..."
+              />
+            </label>
+          </section>
+
+          {/* Card 4: Discount Voucher & CTA */}
+          <section className="offer-section-card">
+            <h3 className="offer-section-title">
+              <Percent size={16} /> 4. Promo Code & Call to Action
+            </h3>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <label className="field-label">
+                Discount Highlight Badge
+                <input
+                  value={discountHighlight}
+                  maxLength={60}
+                  onChange={(e) => setDiscountHighlight(e.target.value)}
+                  placeholder="e.g. 20% OFF ALL KEBABS"
+                />
+              </label>
+              <label className="field-label">
+                Promo Code Voucher
+                <input
+                  value={promoCode}
+                  maxLength={40}
+                  onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
+                  placeholder="e.g. FEAST20"
+                />
+              </label>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <label className="field-label">
+                Button Label
+                <input
+                  value={ctaText}
+                  maxLength={80}
+                  onChange={(e) => setCtaText(e.target.value)}
+                  placeholder="e.g. Order Your Feast Now"
+                />
+              </label>
+              <label className="field-label">
+                Button Link (URL)
+                <input
+                  value={ctaUrl}
+                  maxLength={500}
+                  onChange={(e) => setCtaUrl(e.target.value)}
+                  placeholder="https://kebabzilla.in/#menu"
+                />
+              </label>
+            </div>
+
+            <Button
+              type="button"
+              disabled={busy || !channels.length || subject.trim().length < 2 || message.trim().length < 2}
+              onClick={() => setConfirmModalOpen(true)}
+              style={{ marginTop: 8 }}
+            >
+              Review & Broadcast Offer <ArrowRight size={16} />
+            </Button>
+          </section>
+        </div>
+
+        {/* Right Column: Live Interactive Email Preview */}
+        <div className="offer-preview-sticky-wrap">
+          <div className="offer-preview-controls-bar">
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span className="eyebrow" style={{ margin: 0 }}>LIVE EMAIL PREVIEW</span>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#10b981", background: "rgba(16, 185, 129, 0.12)", padding: "2px 8px", borderRadius: 12, border: "1px solid rgba(16, 185, 129, 0.25)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                ✨ {outerBlur}px Ambient Blur
+              </span>
+            </div>
+            <div className="offer-device-toggles">
+              <button
+                type="button"
+                className={`offer-device-btn ${previewDevice === "desktop" ? "active" : ""}`}
+                onClick={() => setPreviewDevice("desktop")}
+                title="Desktop View"
+              >
+                <Monitor size={15} /> Desktop
+              </button>
+              <button
+                type="button"
+                className={`offer-device-btn ${previewDevice === "mobile" ? "active" : ""}`}
+                onClick={() => setPreviewDevice("mobile")}
+                title="Mobile View"
+              >
+                <Smartphone size={15} /> Mobile
+              </button>
+            </div>
+          </div>
+
+          {/* Ambient Outer Background Stage (Heavily Blurred, food imagery outside container) */}
+          <div
+            className="offer-preview-ambient-stage"
+            style={{
+              position: "relative",
+              overflow: "hidden",
+              borderRadius: "22px",
+              padding: previewDevice === "desktop" ? "42px 32px" : "36px 18px",
+              background: "#080a0d",
+              display: "flex",
+              justifyContent: "center",
+              boxShadow: "0 14px 44px rgba(0, 0, 0, 0.55)",
+              border: "1px solid rgba(255, 255, 255, 0.08)",
+            }}
+          >
+            {/* Ambient Heavy Blurred Background Layer (Dynamic blur slider, vivid warm kebab glow) */}
+            <div
+              style={{
+                position: "absolute",
+                inset: -90,
+                backgroundImage: `url("${resolveImageUrl(activeHeroBg).replace(/"/g, '\\"')}")`,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+                filter: `blur(${outerBlur}px) saturate(160%) brightness(0.95)`,
+                WebkitFilter: `blur(${outerBlur}px) saturate(160%) brightness(0.95)`,
+                opacity: Math.max(0.42, Math.min(0.85, backgroundOpacity * 0.90)),
+                transform: "scale(1.35)",
+                pointerEvents: "none",
+              }}
+            />
+            {/* Ambient soft vignette tint (replaces the solid black sheet) */}
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                background: "radial-gradient(ellipse at center, rgba(10, 12, 16, 0.18) 0%, rgba(6, 8, 10, 0.45) 100%)",
+                pointerEvents: "none",
+              }}
+            />
+
+            {/* Email Container Frame with Whole-Container Background Image */}
+            <div
+              className="offer-live-email-card"
+              style={{
+                position: "relative",
+                zIndex: 1,
+                maxWidth: previewDevice === "desktop" ? "560px" : "360px",
+                width: "100%",
+                backgroundColor: "#111318",
+                backgroundImage: `url("${resolveImageUrl(activeHeroBg).replace(/"/g, '\\"')}")`,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+                borderRadius: "18px",
+                overflow: "hidden",
+                border: "1px solid rgba(255, 255, 255, 0.12)",
+                boxShadow: "0 22px 60px rgba(0, 0, 0, 0.8)",
+              }}
+            >
+              {/* Translucent Dark Overlay: Opacity adjusted live by backgroundOpacity */}
+              <div
+                style={{
+                  background: `linear-gradient(180deg, rgba(10, 12, 16, ${Math.max(0.15, Math.min(0.96, 1.0 - backgroundOpacity * 0.72))}) 0%, rgba(13, 15, 20, ${Math.min(0.98, Math.max(0.20, 1.0 - backgroundOpacity * 0.72) + 0.06)}) 50%, rgba(10, 12, 16, ${Math.min(0.99, Math.max(0.25, 1.0 - backgroundOpacity * 0.72) + 0.10)}) 100%)`,
+                }}
+              >
+                {/* Fake Inbox Header */}
+                <div className="offer-email-inbox-header">
+                  <span>From</span>
+                  <strong>KebabZilla &lt;support@kebabzilla.in&gt;</strong>
+                  <span>To</span>
+                  <strong>Selected {audience.toLowerCase()} customers</strong>
+                  <span>Subject</span>
+                  <strong>{subject || "Your offer subject..."}</strong>
+                </div>
+
+                {/* Storefront Brand Header with Invertible Official Logo from GCS */}
+                <div style={{ padding: "26px 20px 14px", textAlign: "center", lineHeight: 1 }}>
+                  <a href="https://kebabzilla.in" target="_blank" rel="noreferrer" style={{ textDecoration: "none", display: "inline-block" }}>
+                    <img
+                      src={invertLogo ? resolveImageUrl("/api/v1/public/email-images/kebabzilla-email-logo-dark.png") : resolveImageUrl("/api/v1/public/email-images/kebabzilla-email-logo.png")}
+                      alt="KebabZilla - Meat, Fire, Glory"
+                      style={{
+                        width: 180,
+                        maxWidth: "100%",
+                        height: "auto",
+                        display: "block",
+                        margin: "0 auto",
+                        border: 0,
+                      }}
+                    />
+                  </a>
+                </div>
+
+                {/* Offer Main Body - Clean Flow with No Opening Box */}
+                <div style={{ padding: "10px 28px 28px", textAlign: "center" }}>
+
+                {discountHighlight && (
+                  <div
+                    style={{
+                      display: "inline-block",
+                      padding: "6px 18px",
+                      background: themeColor,
+                      color: "#fff",
+                      fontWeight: 800,
+                      fontSize: 13,
+                      borderRadius: 20,
+                      letterSpacing: 1.5,
+                      textTransform: "uppercase",
+                      marginBottom: 14,
+                      boxShadow: "0 4px 16px rgba(0,0,0,0.4)",
+                    }}
+                  >
+                    ⭐ {discountHighlight}
+                  </div>
+                )}
+                <h2 style={{ margin: "0 0 12px 0", fontSize: 30, fontWeight: 900, color: "#ffffff", letterSpacing: -0.5, lineHeight: 1.25 }}>
+                  {headline || subject || <span style={{ opacity: 0.5 }}>Your Headline Here</span>}
+                </h2>
+                {subheading && (
+                  <p style={{ margin: "0 auto 22px", fontSize: 15, color: "#d1d5db", fontWeight: 500, maxWidth: 460 }}>
+                    {subheading}
+                  </p>
+                )}
+
+                <div style={{ fontSize: 14, color: "#e5e7eb", lineHeight: 1.7, whiteSpace: "pre-wrap", textAlign: "center", maxWidth: 480, margin: "0 auto 20px" }}>
+                  {message || <span style={{ color: "#9ca3af", fontStyle: "italic" }}>Write your offer message on the left to see it previewed here...</span>}
+                </div>
+
+                {/* Promo Code Box with Working Copy Button */}
+                {promoCode ? (
+                  <div className="offer-promo-voucher-box" style={{ background: "rgba(20, 24, 32, 0.75)", borderColor: themeColor, borderStyle: "dashed", borderRadius: 12, padding: "18px 22px", margin: "22px auto", textAlign: "center", maxWidth: 380 }}>
+                    <div style={{ fontSize: 10, fontWeight: 800, color: "#9ca3af", letterSpacing: 2, marginBottom: 5, textTransform: "uppercase" }}>
+                      USE PROMO CODE AT CHECKOUT
+                    </div>
+                    <div className="offer-promo-voucher-code" style={{ color: "#fbbf24", fontFamily: "'Courier New', monospace", fontSize: 26, fontWeight: 900, letterSpacing: 4, margin: "6px 0 12px" }}>
+                      {promoCode}
+                    </div>
+                    <button
+                      type="button"
+                      className={`offer-promo-copy-btn ${copiedPromo ? "copied" : ""}`}
+                      style={{ backgroundColor: copiedPromo ? "#10b981" : themeColor }}
+                      onClick={() => handleTestCopyPromo(promoCode)}
+                    >
+                      {copiedPromo ? "✓ Copied to Clipboard!" : (
+                        <>
+                          <Copy size={13} style={{ display: "inline-block", verticalAlign: "middle", marginRight: 4 }} />
+                          Copy Promo Code
+                        </>
+                      )}
+                    </button>
+                  </div>
+                ) : null}
+
+                {/* Call to Action Button */}
+                <div style={{ textAlign: "center", margin: "26px 0 12px 0" }}>
+                  <a
+                    href={ctaUrl || "https://kebabzilla.in/#menu"}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="offer-cta-button"
+                    style={{
+                      backgroundColor: themeColor,
+                      boxShadow: `0 6px 20px rgba(0, 0, 0, 0.45)`,
+                    }}
+                  >
+                    {ctaText || "Order Your Feast Now"} &rarr;
+                  </a>
+                  <div style={{ marginTop: 9, fontSize: 11, color: "#9ca3af" }}>
+                    Order direct for the fastest delivery &bull; Best price guarantee
+                  </div>
+                </div>
+              </div>
+
+              {/* Brand Footer: ONLY the support line */}
+              <div className="offer-email-brand-footer" style={{ background: "rgba(10, 12, 16, 0.5)", borderTop: "1px solid rgba(255, 255, 255, 0.08)", padding: "20px 16px", textAlign: "center" }}>
+                <p style={{ margin: 0, fontSize: "13px", color: "#9ca3af", lineHeight: 1.5 }}>
+                  If you need any support, mail us at <a href="mailto:support@kebabzilla.in" style={{ color: "#e05334", textDecoration: "none", fontWeight: 600 }}>support@kebabzilla.in</a>
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+      {/* Confirmation & Broadcast Modal */}
+      {confirmModalOpen && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !busy) setConfirmModalOpen(false);
+          }}
+        >
+          <section
+            className="modal-card offer-preview-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-offer-title"
+          >
+            <div className="modal-heading">
+              <div>
+                <span className="eyebrow">FINAL CONFIRMATION</span>
+                <h2 id="confirm-offer-title">Broadcast Customer Offer</h2>
+              </div>
+              <button
+                className="icon-button"
+                type="button"
+                disabled={busy}
+                onClick={() => setConfirmModalOpen(false)}
+                aria-label="Close modal"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="offer-preview-email" style={{ margin: "16px 24px" }}>
+              <div className="offer-preview-meta">
+                <span>From</span>
+                <strong>KebabZilla &lt;support@kebabzilla.in&gt;</strong>
+                <span>Audience</span>
+                <strong>Selected {audience.toLowerCase()} customers</strong>
+                <span>Subject</span>
+                <strong>{subject}</strong>
+                <span>Theme</span>
+                <strong style={{ color: themeColor }}>{themeColor}</strong>
+              </div>
+            </div>
+
+            <Notice tone="info">
+              Ready to send! This will generate and transmit the responsive HTML email with your custom kebab background and promo voucher to every customer in the <strong>{audience}</strong> audience.
+            </Notice>
+
+            <div className="modal-actions">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={busy}
+                onClick={() => setConfirmModalOpen(false)}
+              >
+                Back to Editing
+              </Button>
+              <Button
+                type="button"
+                disabled={busy}
+                onClick={() => void send()}
+              >
+                {busy ? "Broadcasting…" : "Send Offer Campaign Now"} <ArrowRight size={15} />
+              </Button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {/* Campaign Activity History Log */}
       <section className="admin-panel campaign-log-panel">
-        <h2>Campaign log</h2>
+        <h2>Campaign broadcast log</h2>
         <div className="activity-filter-bar">
-          <label className="admin-search"><Search size={16} /><input aria-label="Search campaign log" placeholder="Search campaigns" value={logQuery} onChange={(event) => setLogQuery(event.target.value)} /></label>
-          <RoundedSelect className="activity-sort-select" icon={<ArrowUpDown size={15} />} ariaLabel="Sort campaign log" value={logSort} onChange={setLogSort} options={[{ value: "newest", label: "Newest first" }, { value: "oldest", label: "Oldest first" }, { value: "day", label: "Today" }, { value: "week", label: "This week" }, { value: "month", label: "This month" }, { value: "status", label: "Status A–Z" }]} />
+          <label className="admin-search">
+            <Search size={16} />
+            <input
+              aria-label="Search campaign log"
+              placeholder="Search campaigns"
+              value={logQuery}
+              onChange={(event) => setLogQuery(event.target.value)}
+            />
+          </label>
+          <RoundedSelect
+            className="activity-sort-select"
+            icon={<ArrowUpDown size={15} />}
+            ariaLabel="Sort campaign log"
+            value={logSort}
+            onChange={setLogSort}
+            options={[
+              { value: "newest", label: "Newest first" },
+              { value: "oldest", label: "Oldest first" },
+              { value: "day", label: "Today" },
+              { value: "week", label: "This week" },
+              { value: "month", label: "This month" },
+              { value: "status", label: "Status A–Z" },
+            ]}
+          />
         </div>
         <div className="campaign-log-scroll-wrap">
-          {visibleLogs.length ? visibleLogs.map((log) => (
-            <button type="button" className="campaign-log-row" key={log.id} onClick={() => setSelectedLog(log)}>
-              <span className="campaign-log-copy"><strong>{log.subject}</strong><span>{log.message}</span></span>
-              <span className="campaign-log-delivery">{log.channels.map((channel) => <span key={channel}>{channel} · {log.delivery_counts?.[channel]?.sent_count || 0}/{log.delivery_counts?.[channel]?.recipient_count || 0}</span>)}</span>
-              <time>{friendlyDate(log.created_at)}</time>
-            </button>
-          )) : <EmptyState title="No campaigns found" description="Try a different search." />}
+          {visibleLogs.length ? (
+            visibleLogs.map((log) => (
+              <button
+                type="button"
+                className="campaign-log-row"
+                key={log.id}
+                onClick={() => setSelectedLog(log)}
+              >
+                <span className="campaign-log-copy">
+                  <strong>{log.subject}</strong>
+                  <span>{log.message}</span>
+                </span>
+                <span className="campaign-log-delivery">
+                  <span className={`badge ${
+                    log.status === "SENT"
+                      ? "badge-success"
+                      : log.status === "SENDING" || log.status === "PARTIAL"
+                      ? "badge-amber"
+                      : log.status === "QUEUED"
+                      ? "badge-soft"
+                      : log.status === "FAILED"
+                      ? "badge-danger"
+                      : "badge-neutral"
+                  }`}>
+                    {log.status === "SENDING" ? "⚡ Sending…" : log.status}
+                  </span>
+                  {log.channels.map((channel) => (
+                    <span key={channel}>
+                      {channel} · {log.delivery_counts?.[channel]?.sent_count || 0}/
+                      {log.delivery_counts?.[channel]?.recipient_count || 0}
+                    </span>
+                  ))}
+                </span>
+                <time>{friendlyDate(log.created_at)}</time>
+              </button>
+            ))
+          ) : (
+            <EmptyState title="No campaigns found" description="Try a different search query." />
+          )}
         </div>
       </section>
-      {selectedLog && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedLog(null); }}><section className="modal-card campaign-detail-modal" role="dialog" aria-modal="true" aria-labelledby="campaign-detail-title"><div className="modal-heading"><div><span className="eyebrow">CAMPAIGN DETAILS</span><h2 id="campaign-detail-title">{selectedLog.subject}</h2></div><button className="icon-button" type="button" onClick={() => setSelectedLog(null)} aria-label="Close campaign details"><X size={18} /></button></div><p className="campaign-detail-message">{selectedLog.message}</p><div className={`campaign-channel-details campaign-channel-details-${selectedLog.channels.length}`}>{selectedLog.channels.map((channel) => { const detail = selectedLog.delivery_counts?.[channel] || { recipient_count: 0, sent_count: 0 }; return <section key={channel} className="campaign-channel-card"><span className="eyebrow">{channel}</span><h3>{detail.sent_count} delivered</h3><p>{detail.sent_count} of {detail.recipient_count} selected customers received this message via {channel.toLowerCase()}.</p></section>; })}</div><div className="campaign-detail-footer"><span>{selectedLog.audience} customers</span><time>{friendlyDate(selectedLog.created_at)}</time></div></section></div>}
+
+      {/* Selected Log Details Modal */}
+      {currentSelectedLog && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setSelectedLog(null);
+          }}
+        >
+          <section
+            className="modal-card campaign-detail-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="campaign-detail-title"
+          >
+            <div className="modal-heading">
+              <div>
+                <span className="eyebrow">CAMPAIGN DETAILS</span>
+                <h2 id="campaign-detail-title">{currentSelectedLog.subject}</h2>
+              </div>
+              <button
+                className="icon-button"
+                type="button"
+                onClick={() => setSelectedLog(null)}
+                aria-label="Close campaign details"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div style={{ padding: "0 24px 8px", display: "flex", gap: "8px", alignItems: "center" }}>
+              <span className={`badge ${
+                currentSelectedLog.status === "SENT"
+                  ? "badge-success"
+                  : currentSelectedLog.status === "SENDING" || currentSelectedLog.status === "PARTIAL"
+                  ? "badge-amber"
+                  : currentSelectedLog.status === "QUEUED"
+                  ? "badge-soft"
+                  : currentSelectedLog.status === "FAILED"
+                  ? "badge-danger"
+                  : "badge-neutral"
+              }`}>
+                {currentSelectedLog.status === "SENDING" ? "⚡ Sending…" : currentSelectedLog.status}
+              </span>
+              <span style={{ fontSize: "11px", color: "#756d65" }}>
+                Audience: {currentSelectedLog.audience}
+              </span>
+            </div>
+            <p className="campaign-detail-message">{currentSelectedLog.message}</p>
+            <div
+              className={`campaign-channel-details campaign-channel-details-${currentSelectedLog.channels.length}`}
+            >
+              {currentSelectedLog.channels.map((channel) => {
+                const detail = currentSelectedLog.delivery_counts?.[channel] || {
+                  recipient_count: 0,
+                  sent_count: 0,
+                };
+                return (
+                  <section key={channel} className="campaign-channel-card">
+                    <span className="eyebrow">{channel}</span>
+                    <h3>{detail.sent_count} delivered</h3>
+                    <p>
+                      {detail.sent_count} of {detail.recipient_count} selected customers received this message via{" "}
+                      {channel.toLowerCase()}.
+                    </p>
+                  </section>
+                );
+              })}
+            </div>
+            <div className="campaign-detail-footer">
+              <span>{currentSelectedLog.audience} customers</span>
+              <time>{friendlyDate(currentSelectedLog.created_at)}</time>
+            </div>
+          </section>
+        </div>
+      )}
+        </>
+      )}
     </>
   );
 }
@@ -7081,6 +8379,7 @@ export default function Admin() {
     <Routes>
       <Route index element={<Overview />} />
       <Route path="orders" element={<AdminOrders />} />
+      <Route path="billing" element={<Navigate to="/ops/billing" replace />} />
       <Route path="menu" element={<MenuManagement />} />
       <Route path="team" element={<Team />} />
       <Route path="reports" element={<Reports />} />

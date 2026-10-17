@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { ArrowRight, BadgeIndianRupee, Check, CircleCheck, ClipboardList, CookingPot, Flame, Plus, ReceiptText, Save, Trash2, Truck, UserRound, Search, Sparkles, X } from 'lucide-react'
 import { Link, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { api, formatINR, friendlyDate, getCustomItemLowestPrice, type CustomMenuItem, type CustomMenuSectionOption, type MenuItem, type MenuItemVariation, type Order } from '../api'
+import { api, formatINR, friendlyDate, getCustomItemLowestPrice, resolveImageUrl, type CustomMenuItem, type CustomMenuSectionOption, type MenuItem, type MenuItemVariation, type Order } from '../api'
 import { Badge, Button, EmptyState, Loading, MenuImageCarousel, Notice, PageTitle, PhoneInput, QuantityPicker, StatusBadge, formatPhoneWithPrefix, isValidIndianMobile } from '../components'
 
 function Queue() {
@@ -312,7 +312,7 @@ function Billing() {
   const [invoice, setInvoice] = useState<Order | null>(null)
   const location = useLocation()
   const navigate = useNavigate()
-  const { state } = location as { state: { draft?: { customer_name?: string; phone?: string; payload?: { items?: { id: number; quantity: number }[] }; items?: { id: number; quantity: number }[] } } | null }
+  const { state } = location as { state: { draft?: { customer_name?: string; phone?: string; payload?: { phone?: string; items?: any[] }; items?: any[] } } | null }
   const subtotal = cart.reduce((sum, line) => sum + (line.unit_price_paise ?? line.item.price_paise) * line.quantity, 0)
   const tax = 0
   const roundedTotalInr = Math.round((subtotal + tax) / 100)
@@ -364,12 +364,24 @@ function Billing() {
     if (!state?.draft || !menu.length) return
     const draft = state.draft
     const lines = draft.payload?.items || draft.items || []
-    setCart(lines.map((line) => {
+    setCart(lines.map((line: any) => {
       const item = menu.find((m) => m.id === line.id)
-      return item ? { item, quantity: line.quantity, lineKey: String(item.id), unit_price_paise: item.discounted_price_paise ?? item.price_paise } : null
+      if (!item) return null
+      const unitPrice = line.unit_price_paise ?? item.discounted_price_paise ?? item.price_paise
+      const lineKey = line.lineKey || (line.variation_name ? `${item.id}-${line.variation_name}` : String(item.id))
+      return {
+        item,
+        quantity: line.quantity,
+        variation_name: line.variation_name || undefined,
+        customizations: line.customizations || [],
+        unit_price_paise: unitPrice,
+        lineKey,
+        custom_menu_item_id: item.is_custom ? item.id : undefined,
+      }
     }).filter(Boolean) as BillingCartLine[])
     setName(draft.customer_name || '')
-    setPhone(draft.phone ? formatPhoneWithPrefix(draft.phone) : '+91')
+    const draftPhone = draft.payload?.phone || draft.phone
+    setPhone(draftPhone ? formatPhoneWithPrefix(draftPhone) : '+91')
     navigate(location.pathname, { replace: true, state: null })
   }, [location.pathname, menu, navigate, state])
 
@@ -487,10 +499,26 @@ function Billing() {
   async function saveDraft() {
     setError('')
     try {
-      await api('/staff/drafts', { method: 'POST', body: JSON.stringify({ customer_name: name, payload: { phone, items: cart.map((line) => ({ id: line.item.id, quantity: line.quantity })) } }) })
+      await api('/staff/drafts', {
+        method: 'POST',
+        body: JSON.stringify({
+          customer_name: name,
+          payload: {
+            phone,
+            items: cart.map((line) => ({
+              id: line.item.id,
+              quantity: line.quantity,
+              variation_name: line.variation_name || null,
+              customizations: line.customizations || [],
+              unit_price_paise: line.unit_price_paise,
+              lineKey: line.lineKey,
+            })),
+          },
+        }),
+      })
       setCart([])
       setName('')
-      setPhone('')
+      setPhone('+91')
       setError('Draft saved. You can pick it up any time from Saved drafts.')
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not save draft.') }
   }
@@ -530,9 +558,9 @@ function Billing() {
 
   if (invoice) return <div className="invoice-wrap"><article className="invoice-card"><div className="invoice-success"><span><Check size={20} /></span><div><div className="eyebrow">BILL PAID · WALK-IN</div><h1>All squared away.</h1></div></div><div className="invoice-brand"><span><Flame size={15} /></span> KebabZilla <small> · PAYMENT RECEIPT</small></div><div className="invoice-id"><span>INVOICE</span><strong>{invoice.order_id}</strong><small>{friendlyDate(invoice.created_at)}</small></div><div className="invoice-lines">{invoice.items.map((line, idx) => <div key={`${line.menu_item_id ?? idx}-${line.name}`}><span>{line.quantity} × {line.name}</span><strong>{formatINR(line.line_total_paise)}</strong></div>)}<div className="invoice-total"><span>Total paid</span><strong>{formatINR(invoice.total_paise)}</strong></div></div><div className="invoice-customer"><span><UserRound size={14} /> {invoice.customer_name}</span><Badge tone="success">CASH</Badge></div><div className="invoice-actions"><Button onClick={() => window.print()}><ReceiptText size={16} /> Print receipt</Button><Button variant="secondary" onClick={() => { setInvoice(null); setCart([]); setName(''); setPhone('') }}>New bill</Button></div></article></div>
 
-  return <><PageTitle eyebrow="AT THE COUNTER" title="Walk-in billing" description="Close out a dine-in bill when your guest is ready to leave." />
+  return <><PageTitle eyebrow="AT THE COUNTER" title="Walk-in billing" description="Close out a dine-in bill when your guest is ready to leave." action={<Link className="button button-secondary" to="/ops/drafts"><ReceiptText size={15} /> Saved drafts</Link>} />
     {error && <Notice tone={error.startsWith('Draft saved') ? 'success' : 'error'} onDismiss={() => setError('')} >{error}</Notice>}
-    <form onSubmit={submit} className="billing-layout"><section className="billing-menu"><div className="section-header"><div><h2>Menu</h2><span>Tap an item to add it</span></div><span className="menu-count">{menu.length} items</span></div><label className="menu-search billing-menu-search"><Search size={17} /><input type="search" aria-label="Search walk-in menu" value={menuSearch} onChange={(event) => setMenuSearch(event.target.value)} placeholder="Search menu items" /></label><div className="billing-item-grid">{menu.filter((item) => `${item.name} ${getCategoryName(item.category)} ${item.description}`.toLocaleLowerCase().includes(menuSearch.trim().toLocaleLowerCase())).map((item) => { const count = itemCountFor(item.id, Boolean(item.is_custom)); const hasVariations = Boolean(item.variations && item.variations.length > 0); return <div role="button" tabIndex={0} aria-pressed={count > 0} className={`billing-item ${count ? 'in-cart' : ''}`} key={`${item.is_custom ? 'c-' : 'm-'}${item.id}`} onClick={() => handleItemClick(item)} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); handleItemClick(item) } }}>{item.image_urls?.length || item.image_url ? <span className="billing-item-icon billing-item-photo"><MenuImageCarousel images={item.image_urls?.length ? item.image_urls : item.image_url ? [item.image_url] : []} alt={item.name} className="menu-gallery-billing" /></span> : <span className="billing-item-icon">{item.is_vegetarian ? '🥬' : '🍢'}</span>}<span><strong>{item.name} {item.is_custom ? <Badge tone="amber">Custom</Badge> : hasVariations ? <Badge tone="soft">Options</Badge> : null}</strong><small>{getCategoryName(item.category)} · {item.is_custom || hasVariations ? `From ${formatINR(item.price_paise)}` : formatINR(item.price_paise)}</small></span>{count > 0 ? <Badge tone="soft">×{count}</Badge> : item.is_custom || hasVariations ? <Sparkles size={15} /> : <Plus size={16} />}</div>})}</div></section>
+    <form onSubmit={submit} className="billing-layout"><section className="billing-menu"><label className="menu-search billing-menu-search"><Search size={17} /><input type="search" aria-label="Search walk-in menu" value={menuSearch} onChange={(event) => setMenuSearch(event.target.value)} placeholder="Search menu items" /></label><div className="billing-item-grid">{menu.filter((item) => `${item.name} ${getCategoryName(item.category)} ${item.description}`.toLocaleLowerCase().includes(menuSearch.trim().toLocaleLowerCase())).map((item) => { const count = itemCountFor(item.id, Boolean(item.is_custom)); const hasVariations = Boolean(item.variations && item.variations.length > 0); return <div role="button" tabIndex={0} aria-pressed={count > 0} className={`billing-item ${count ? 'in-cart' : ''}`} key={`${item.is_custom ? 'c-' : 'm-'}${item.id}`} onClick={() => handleItemClick(item)} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); handleItemClick(item) } }}>{item.image_urls?.length || item.image_url ? <span className="billing-item-icon billing-item-photo"><img src={resolveImageUrl(item.image_urls?.[0] || item.image_url || '')} alt={item.name} loading="lazy" /></span> : <span className="billing-item-icon">{item.is_vegetarian ? '🥬' : '🍢'}</span>}<span><strong>{item.name} {item.is_custom ? <Badge tone="amber">Custom</Badge> : hasVariations ? <Badge tone="soft">Options</Badge> : null}</strong><small>{getCategoryName(item.category)} · {item.is_custom || hasVariations ? `From ${formatINR(item.price_paise)}` : formatINR(item.price_paise)}</small></span>{count > 0 ? <Badge tone="soft">×{count}</Badge> : item.is_custom || hasVariations ? <Sparkles size={15} /> : <Plus size={16} />}</div>})}</div></section>
       <aside className="billing-ticket">
         <div className="ticket-heading">
           <span><ReceiptText size={17} /></span>
@@ -568,7 +596,10 @@ function Billing() {
           <strong>{formatINR(total)}</strong>
         </div>
         <Button type="submit" disabled={busy || !cart.length || !name.trim()} className="full-width">{busy ? 'Working…' : <>Complete bill · {formatINR(total)} <BadgeIndianRupee size={16} /></>}</Button>
-        <Button type="button" variant="secondary" className="full-width" disabled={!cart.length} onClick={() => void saveDraft()}><Save size={15} /> Save as draft</Button>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', width: '100%' }}>
+          <Button type="button" variant="secondary" disabled={!cart.length} onClick={() => void saveDraft()}><Save size={15} /> Save draft</Button>
+          <Link to="/ops/drafts" className="button button-secondary" style={{ textAlign: 'center', justifyContent: 'center' }}><ReceiptText size={15} /> Saved drafts</Link>
+        </div>
       </aside>
     </form>
     {customizingItem && (

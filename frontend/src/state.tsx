@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { api, setAccessToken, setCsrfToken, type Account, type Role } from './api'
+import { getCookieConsent, saveCookieConsent } from './cookies'
 
 export type AuthResponse = {
   account?: Account
@@ -58,6 +59,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (result.csrf_token) setCsrfToken(result.csrf_token)
     setAccount(result.account)
     localStorage.setItem('kz_account', JSON.stringify(result.account))
+
+    // Keep client-side cookie consent in sync with account promotional consent
+    if (result.account?.promotional_consent !== undefined) {
+      const current = getCookieConsent()
+      if (current.marketing !== result.account.promotional_consent) {
+        saveCookieConsent({ marketing: result.account.promotional_consent })
+      }
+    }
+
     return result.account
   }, [])
 
@@ -76,8 +86,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [accept])
 
   const register = useCallback(async (name: string, email: string, phone: string, password: string) => {
+    const consent = getCookieConsent()
     const result = await api<{ access_token?: string; csrf_token?: string; account: Account }>('/auth/register', {
-      method: 'POST', body: JSON.stringify({ name, email, phone: phone || null, password }),
+      method: 'POST', body: JSON.stringify({
+        name,
+        email,
+        phone: phone || null,
+        password,
+        promotional_consent: consent.marketing,
+      }),
     })
     return accept(result)
   }, [accept])

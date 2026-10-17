@@ -37,7 +37,7 @@ router = APIRouter(prefix="/staff", tags=["staff operations"], dependencies=[Dep
 
 @router.get("/menu", response_model=list[MenuItemOut])
 def staff_menu(db: DbSession):
-    return db.scalars(select(MenuItem).order_by(MenuItem.category_id, MenuItem.name)).all()
+    return db.scalars(select(MenuItem).order_by(MenuItem.name)).all()
 
 
 @router.get("/menu-pauses")
@@ -150,7 +150,16 @@ def staff_orders(db: DbSession, status_filter: OrderStatus | None = None):
     query = (
         select(Order)
         .outerjoin(Payment, Order.order_id == Payment.order_id)
-        .where(or_(Payment.method == PaymentMethod.CASH, Payment.status == PaymentStatus.PAID))
+        .where(
+            or_(
+                Payment.method == PaymentMethod.CASH,
+                Payment.status.in_([
+                    PaymentStatus.PAID,
+                    PaymentStatus.REFUND_PENDING,
+                    PaymentStatus.REFUNDED,
+                ]),
+            )
+        )
         .order_by(Order.created_at.desc())
         .limit(200)
     )

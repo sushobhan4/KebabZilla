@@ -95,15 +95,62 @@ class IdentityProvider:
         raise NotImplementedError("Configure a Google Identity Platform verifier before enabling this provider")
 
 
+from app.email_templates import (
+    render_account_created_email,
+    render_offer_email,
+    render_otp_email,
+    render_temporary_password_email,
+)
+
+
 class CustomerNotifier:
     """SMS/email delivery seam for order updates and delivery OTPs."""
 
-    async def send_delivery_otp(self, *, phone: str | None, order_number: str, otp: str) -> None:
-        # Provider-independent JSON contract; map it to the chosen transactional SMS service.
+    async def send_delivery_otp(
+        self,
+        *,
+        phone: str | None,
+        order_number: str,
+        otp: str,
+        email: str | None = None,
+        customer_name: str | None = None,
+    ) -> None:
+        # If email is provided and SMTP is configured, send the fancy HTML delivery OTP email
+        if email and settings.smtp_password:
+            try:
+                message = EmailMessage()
+                message["Subject"] = f"Your KebabZilla Delivery Code for Order #{order_number}"
+                message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
+                message["To"] = email
+                plain_text = (
+                    f"Hi {customer_name or 'there'},\n\n"
+                    f"Your KebabZilla delivery code for order {order_number} is: {otp}\n\n"
+                    "Share this code with your delivery partner to confirm delivery.\n\n"
+                    "KebabZilla"
+                )
+                html_content = render_otp_email(
+                    otp=otp,
+                    name=customer_name or "there",
+                    purpose="delivery_otp",
+                    expiry_minutes=60,
+                    email=email,
+                )
+                message.set_content(plain_text)
+                message.add_alternative(html_content, subtype="html")
+                with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as client:
+                    client.starttls()
+                    client.login(settings.smtp_username, settings.smtp_password)
+                    client.send_message(message)
+            except Exception as exc:
+                print(f"[CustomerNotifier] Delivery OTP email failed: {exc}")
+
+        # SMS delivery
         if settings.environment == "development":
             return
         if not phone or not settings.delivery_otp_api_url or not settings.delivery_otp_api_token:
-            raise HTTPException(status_code=503, detail="Delivery OTP messaging is not configured")
+            if not email:
+                raise HTTPException(status_code=503, detail="Delivery OTP messaging is not configured")
+            return
         async with httpx.AsyncClient(timeout=12) as client:
             response = await client.post(
                 settings.delivery_otp_api_url,
@@ -114,12 +161,12 @@ class CustomerNotifier:
                     "message": f"Your KebabZilla delivery code for {order_number} is {otp}. Share it with your delivery partner to confirm delivery.",
                 },
             )
-        if response.is_error:
+        if response.is_error and not email:
             raise HTTPException(status_code=502, detail="The delivery code could not be sent. Please retry dispatch.")
 
 
 class StaffAccountNotifier:
-    """Sends first-login credentials and invite links through the configured Workspace mailbox."""
+    """Sends first-login credentials, OTPs, invites and marketing offers with rich HTML/CSS/JS emails."""
 
     def send_account_created_notice(self, *, name: str, email: str, role: str) -> str:
         if not settings.smtp_password:
@@ -128,7 +175,7 @@ class StaffAccountNotifier:
         message["Subject"] = "Your KebabZilla account has been created"
         message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
         message["To"] = email
-        message.set_content(
+        plain_text = (
             f"Hi {name},\n\n"
             f"Your KebabZilla {role.lower()} account has been created.\n\n"
             f"Email: {email}\n\n"
@@ -137,6 +184,13 @@ class StaffAccountNotifier:
             f"If you have any questions or were not expecting this email, please contact your administrator.\n\n"
             f"Warm regards,\nThe KebabZilla Team"
         )
+        html_content = render_account_created_email(
+            name=name,
+            email=email,
+            role=role,
+        )
+        message.set_content(plain_text)
+        message.add_alternative(html_content, subtype="html")
         try:
             with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as client:
                 client.starttls()
@@ -156,7 +210,7 @@ class StaffAccountNotifier:
         message["Subject"] = "Your KebabZilla account is ready"
         message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
         message["To"] = email
-        message.set_content(
+        plain_text = (
             f"Hi {name},\n\n"
             f"Your KebabZilla {role.lower()} account has been created.\n\n"
             f"Email: {email}\n"
@@ -164,6 +218,14 @@ class StaffAccountNotifier:
             "Sign in and change this temporary password immediately. You will not be able to access the workspace until it is changed.\n\n"
             "If you were not expecting this email, please contact KebabZilla support."
         )
+        html_content = render_temporary_password_email(
+            name=name,
+            email=email,
+            role=role,
+            temporary_password=temporary_password,
+        )
+        message.set_content(plain_text)
+        message.add_alternative(html_content, subtype="html")
         try:
             with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as client:
                 client.starttls()
@@ -173,15 +235,47 @@ class StaffAccountNotifier:
             return "EMAIL_FAILED"
         return "EMAIL_SENT"
 
-    def send_offer(self, *, recipient: str, subject: str, message_text: str) -> bool:
-        """Send one customer offer through the same Workspace SMTP mailbox."""
+    def send_offer(
+        self,
+        *,
+        recipient: str,
+        subject: str,
+        message_text: str,
+        headline: str | None = None,
+        subheading: str | None = None,
+        promo_code: str | None = None,
+        discount_highlight: str | None = None,
+        cta_text: str | None = None,
+        cta_url: str | None = None,
+        background_image_url: str | None = None,
+        theme_color: str | None = None,
+    ) -> bool:
+        """Send one customer offer with customizable rich HTML/CSS template."""
         if not settings.smtp_password:
             return False
         message = EmailMessage()
         message["Subject"] = subject
         message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
         message["To"] = recipient
-        message.set_content(f"Hi,\n\n{message_text}\n\nKebabZilla")
+
+        plain_text = f"Hi,\n\n{message_text}\n\nKebabZilla"
+        if promo_code:
+            plain_text += f"\n\nUse Promo Code: {promo_code}"
+
+        html_content = render_offer_email(
+            subject=subject,
+            message=message_text,
+            headline=headline,
+            subheading=subheading,
+            promo_code=promo_code,
+            discount_highlight=discount_highlight,
+            cta_text=cta_text,
+            cta_url=cta_url,
+            background_image_url=background_image_url,
+            theme_color=theme_color,
+        )
+        message.set_content(plain_text)
+        message.add_alternative(html_content, subtype="html")
         try:
             with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as client:
                 client.starttls()
@@ -193,18 +287,29 @@ class StaffAccountNotifier:
 
     def send_password_reset_otp(self, *, name: str, email: str, otp: str) -> bool:
         if not settings.smtp_password:
+            print(f"[SECURITY PASSWORD RESET OTP] Code for {email}: {otp}")
             return False
         message = EmailMessage()
         message["Subject"] = "Your KebabZilla password reset code"
         message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
         message["To"] = email
-        message.set_content(
+
+        plain_text = (
             f"Hi {name},\n\n"
             f"Your KebabZilla password reset code is: {otp}\n\n"
             "This code expires in 10 minutes and can be used only once. "
             "If you did not request a password reset, you can safely ignore this email.\n\n"
             "KebabZilla"
         )
+        html_content = render_otp_email(
+            otp=otp,
+            name=name,
+            purpose="password_reset",
+            expiry_minutes=10,
+            email=email,
+        )
+        message.set_content(plain_text)
+        message.add_alternative(html_content, subtype="html")
         try:
             with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as client:
                 client.starttls()
@@ -223,13 +328,23 @@ class StaffAccountNotifier:
         message["Subject"] = "Your KebabZilla 2-Step Verification Code"
         message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
         message["To"] = email
-        message.set_content(
+
+        plain_text = (
             f"Hi {name},\n\n"
             f"Your KebabZilla 2-Step Verification Code is: {code}\n\n"
             "This code is required to access the staff workspace and expires in 10 minutes. "
             "Do not share this code with anyone.\n\n"
             "KebabZilla Security"
         )
+        html_content = render_otp_email(
+            otp=code,
+            name=name,
+            purpose="staff_2fa",
+            expiry_minutes=10,
+            email=email,
+        )
+        message.set_content(plain_text)
+        message.add_alternative(html_content, subtype="html")
         try:
             with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as client:
                 client.starttls()

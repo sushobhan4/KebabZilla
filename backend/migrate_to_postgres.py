@@ -128,6 +128,8 @@ def main():
                 print(f"[.] Table {table_name}: 0 rows to copy.")
                 continue
 
+            table = Base.metadata.tables[table_name]
+            valid_cols = {c.name for c in table.columns}
             json_cols = set(JSON_COLUMNS.get(table_name, []))
             cleaned_rows = []
             for r in rows:
@@ -139,10 +141,9 @@ def main():
                             d[col] = json.loads(val)
                         except Exception:
                             pass
-                cleaned_rows.append(d)
+                cleaned_rows.append({k: v for k, v in d.items() if k in valid_cols})
 
             # Insert into PostgreSQL
-            table = Base.metadata.tables[table_name]
             dest_conn.execute(table.insert(), cleaned_rows)
             dest_conn.commit()
             print(f"[+] Table {table_name}: successfully migrated {len(cleaned_rows)} rows.")
@@ -163,12 +164,12 @@ def main():
         dest_conn.execute(
             text("""
                 CREATE TABLE IF NOT EXISTS alembic_version (
-                    version_num VARCHAR(32) NOT NULL PRIMARY KEY
+                    version_num VARCHAR(64) NOT NULL PRIMARY KEY
                 );
             """)
         )
         dest_conn.execute(text("DELETE FROM alembic_version;"))
-        dest_conn.execute(text("INSERT INTO alembic_version (version_num) VALUES ('0046_drop_prices_and_custom_ids');"))
+        dest_conn.execute(text("INSERT INTO alembic_version (version_num) VALUES ('0049_remove_redundancy_and_legacy_tables');"))
         dest_conn.commit()
 
     print("\n[SUCCESS] Migration completed successfully!")

@@ -128,12 +128,23 @@ def assemble_order(
     enforce_opening_hours: bool = True,
 ) -> Order:
     config = restaurant_settings(db)
-    if not config.accepting_orders:
-        raise HTTPException(status_code=409, detail="The restaurant is not accepting orders right now")
+    now = datetime.now(timezone.utc)
+    status_info = evaluate_restaurant_and_delivery_status(config, now)
+
+    if order_type == "DINE_IN":
+        if not status_info["is_restaurant_open"]:
+            raise HTTPException(status_code=409, detail="The restaurant is currently closed")
+    elif enforce_opening_hours:
+        if not status_info["is_restaurant_open"]:
+            raise HTTPException(status_code=409, detail="The restaurant is currently closed")
+        if not status_info["is_delivery_open"]:
+            raise HTTPException(
+                status_code=409,
+                detail="Online delivery is currently unavailable. Our shop is open for walk-in orders at our counter.",
+            )
 
     std_menu_ids = {line.menu_item_id for line in lines if line.menu_item_id is not None}
     custom_menu_ids = {line.custom_menu_item_id for line in lines if getattr(line, "custom_menu_item_id", None) is not None}
-    now = datetime.now(timezone.utc)
 
     std_items = db.scalars(select(MenuItem).where(MenuItem.id.in_(std_menu_ids), MenuItem.is_available.is_(True))).all() if std_menu_ids else []
     std_by_id = {item.id: item for item in std_items}
@@ -161,6 +172,10 @@ def assemble_order(
         if scheduled_for <= now:
             raise HTTPException(status_code=400, detail="Choose a future order time")
         _validate_opening_time(config, scheduled_for)
+        if order_type != "DINE_IN":
+            sched_status = evaluate_restaurant_and_delivery_status(config, scheduled_for)
+            if not sched_status["is_delivery_open"]:
+                raise HTTPException(status_code=409, detail="Online delivery is unavailable at that scheduled time")
     elif enforce_opening_hours:
         _validate_opening_time(config, now)
 
@@ -178,25 +193,42 @@ def assemble_order(
                 if link.custom_menu_item_id is not None:
                     active_custom_discounts[link.custom_menu_item_id] = discount.discount_percent
 
+    def _opt_name(opt) -> str:
+        if hasattr(opt, "name"):
+            return opt.name or ""
+        if isinstance(opt, dict):
+            return opt.get("name", "")
+        return ""
+
+    def _opt_extra(opt) -> int:
+        if hasattr(opt, "extra_paise"):
+            val = opt.extra_paise
+        elif isinstance(opt, dict):
+            val = opt.get("extra_paise", 0)
+        else:
+            val = 0
+        return max(0, int(val or 0))
+
     def line_unit_price(line) -> int:
         mid = line.menu_item_id
         cid = getattr(line, "custom_menu_item_id", None)
         if cid in custom_by_id or (mid not in std_by_id and mid in custom_by_id):
             c_item = custom_by_id.get(cid) or custom_by_id[mid]
             base = c_item.base_price_paise
-            extra = sum(opt.get("extra_paise", 0) for opt in (getattr(line, "customizations", None) or []))
+            extra = sum(_opt_extra(opt) for opt in (getattr(line, "customizations", None) or []))
             raw_total = base + extra
             percent = active_custom_discounts.get(c_item.id)
             if percent is not None:
                 return max(1, round(raw_total * (100 - percent) / 100))
-            return raw_total
+            return max(1, raw_total)
 
         item = std_by_id[mid]
         var_name = getattr(line, "variation_name", None)
         if not var_name and getattr(line, "customizations", None):
             for c in line.customizations:
-                if any(v.get("name", "").lower() == c.get("name", "").lower() for v in (item.variations or [])):
-                    var_name = c.get("name")
+                c_name = _opt_name(c)
+                if any(v.get("name", "").lower() == c_name.lower() for v in (item.variations or [])):
+                    var_name = c_name
                     break
 
         if var_name and item.variations:
@@ -208,8 +240,8 @@ def assemble_order(
         percent = active_discounts.get(item.id)
         if percent is not None:
             base = max(1, round(base * (100 - percent) / 100))
-        extra = sum(opt.get("extra_paise", 0) for opt in (getattr(line, "customizations", None) or []) if opt.get("name") != var_name)
-        return base + extra
+        extra = sum(_opt_extra(opt) for opt in (getattr(line, "customizations", None) or []) if _opt_name(opt) != var_name)
+        return max(1, base + extra)
 
     subtotal = sum(line_unit_price(line) * line.quantity for line in lines)
     if check_minimum and subtotal < config.minimum_order_paise:
@@ -235,11 +267,16 @@ def assemble_order(
         var_name = getattr(line, "variation_name", None)
         if not var_name and item_id and getattr(line, "customizations", None) and item_id in std_by_id:
             for c in line.customizations:
-                if any(v.get("name", "").lower() == c.get("name", "").lower() for v in (std_by_id[item_id].variations or [])):
-                    var_name = c.get("name")
+                c_name = _opt_name(c)
+                if any(v.get("name", "").lower() == c_name.lower() for v in (std_by_id[item_id].variations or [])):
+                    var_name = c_name
                     break
 
         unit_price = line_unit_price(line)
+        customizations_dicts = [
+            c.model_dump() if hasattr(c, "model_dump") else c
+            for c in (getattr(line, "customizations", None) or [])
+        ]
 
         order_items.append(
             OrderItem(
@@ -247,7 +284,7 @@ def assemble_order(
                 variation_name=var_name,
                 quantity=line.quantity,
                 unit_price_paise=unit_price,
-                customizations=getattr(line, "customizations", None) or [],
+                customizations=customizations_dicts,
             )
         )
 
@@ -532,6 +569,140 @@ def calculate_override_until(config: RestaurantSettings, value: datetime | None,
         return None
 
 
+def get_current_closing_time(config: RestaurantSettings, value: datetime | None = None) -> datetime | None:
+    """Return the closing datetime for the active open session, or None if currently closed."""
+    if value is None:
+        value = datetime.now(timezone.utc)
+    tz = ZoneInfo(settings.business_timezone)
+    local = value.astimezone(tz)
+
+    is_open, _ = is_restaurant_open(config, value)
+    if not is_open:
+        return None
+
+    intervals = get_schedule_intervals_for_range(config, local)
+    sched_close = None
+    if intervals:
+        inside = next((it for it in intervals if it[0] <= local <= it[1]), None)
+        if inside:
+            sched_close = inside[1]
+
+    override_state = getattr(config, "admin_override_state", None)
+    override_until = getattr(config, "admin_override_until", None)
+    if override_state is True and override_until is not None:
+        if override_until.tzinfo is None:
+            override_until = override_until.replace(tzinfo=timezone.utc)
+        until_local = override_until.astimezone(tz)
+        if sched_close is not None:
+            return max(sched_close, until_local)
+        return until_local
+
+    return sched_close
+
+
+def evaluate_restaurant_and_delivery_status(config: RestaurantSettings, value: datetime | None = None) -> dict:
+    """Evaluate full restaurant and online delivery ordering state.
+
+    State tiers:
+    - RESTAURANT_CLOSED: Physical shop is closed (by schedule or admin pause). Online ordering & walk-in closed.
+    - DELIVERY_PAUSED: Restaurant is open, but online delivery is toggled OFF by admin. Walk-ins open.
+    - DELIVERY_CUTOFF: Restaurant is open, but cutoff window (e.g. 30m before close) reached. Walk-ins open.
+    - CLOSING_SOON: Restaurant and delivery open, but approaching cutoff window (30m before cutoff).
+    - OPEN: Everything normally open.
+    """
+    if value is None:
+        value = datetime.now(timezone.utc)
+    tz = ZoneInfo(settings.business_timezone)
+    local = value.astimezone(tz)
+
+    is_shop_open, reason = is_restaurant_open(config, value)
+    cutoff_minutes = max(0, getattr(config, "order_cutoff_minutes_before_closing", 30) or 0)
+    admin_delivery_open = bool(getattr(config, "is_delivery_open", True))
+
+    if not is_shop_open:
+        return {
+            "is_restaurant_open": False,
+            "is_delivery_open": False,
+            "accepting_orders": False,
+            "delivery_status": "RESTAURANT_CLOSED",
+            "delivery_status_heading": "Sorry, we are closed",
+            "delivery_status_message": "Our shop is currently closed. Please check back during operating hours.",
+            "order_cutoff_minutes_before_closing": cutoff_minutes,
+            "closing_in_minutes": None,
+            "closing_time": None,
+            "schedule_status": reason,
+        }
+
+    closing_time = get_current_closing_time(config, value)
+    closing_time_str = closing_time.isoformat() if closing_time else None
+    closing_in_minutes = max(0, int(round((closing_time - local).total_seconds() / 60))) if closing_time else None
+
+    if not admin_delivery_open:
+        return {
+            "is_restaurant_open": True,
+            "is_delivery_open": False,
+            "accepting_orders": False,
+            "delivery_status": "DELIVERY_PAUSED",
+            "delivery_status_heading": "Currently not delivering",
+            "delivery_status_message": "Our shop is open! We are currently only accepting walk-in orders at our counter.",
+            "order_cutoff_minutes_before_closing": cutoff_minutes,
+            "closing_in_minutes": closing_in_minutes,
+            "closing_time": closing_time_str,
+            "schedule_status": reason,
+        }
+
+    if closing_time is not None:
+        cutoff_dt = closing_time - timedelta(minutes=cutoff_minutes)
+        warning_dt = cutoff_dt - timedelta(minutes=30)
+
+        if local >= cutoff_dt:
+            cutoff_msg = "Our shop is open! We are currently only accepting walk-in orders at our counter."
+            if closing_in_minutes:
+                cutoff_msg = f"{cutoff_msg} The restaurant is closing in {closing_in_minutes} minutes."
+            return {
+                "is_restaurant_open": True,
+                "is_delivery_open": False,
+                "accepting_orders": False,
+                "delivery_status": "DELIVERY_CUTOFF",
+                "delivery_status_heading": "Currently not delivering",
+                "delivery_status_message": cutoff_msg,
+                "order_cutoff_minutes_before_closing": cutoff_minutes,
+                "closing_in_minutes": closing_in_minutes,
+                "cutoff_in_minutes": 0,
+                "closing_time": closing_time_str,
+                "schedule_status": reason,
+            }
+
+        if local >= warning_dt:
+            cutoff_in_minutes = max(1, int(round((cutoff_dt - local).total_seconds() / 60)))
+            return {
+                "is_restaurant_open": True,
+                "is_delivery_open": True,
+                "accepting_orders": True,
+                "delivery_status": "CLOSING_SOON",
+                "delivery_status_heading": "Hurry up closing soon",
+                "delivery_status_message": f"The restaurant is closing in {cutoff_in_minutes} minutes.",
+                "order_cutoff_minutes_before_closing": cutoff_minutes,
+                "closing_in_minutes": closing_in_minutes,
+                "cutoff_in_minutes": cutoff_in_minutes,
+                "closing_time": closing_time_str,
+                "schedule_status": reason,
+            }
+
+    return {
+        "is_restaurant_open": True,
+        "is_delivery_open": True,
+        "accepting_orders": True,
+        "delivery_status": "OPEN",
+        "delivery_status_heading": "Menu",
+        "delivery_status_message": "Choose what you’d like to order.",
+        "order_cutoff_minutes_before_closing": cutoff_minutes,
+        "closing_in_minutes": closing_in_minutes,
+        "closing_time": closing_time_str,
+        "schedule_status": reason,
+    }
+
+
 def get_next_schedule_refresh(config: RestaurantSettings, value: datetime | None = None) -> datetime | None:
     """Return the next timestamp when the restaurant order status naturally refreshes or changes."""
     if value is None:
@@ -552,7 +723,16 @@ def get_next_schedule_refresh(config: RestaurantSettings, value: datetime | None
 
     curr_inside = next((it for it in intervals if it[0] <= local <= it[1]), None)
     if curr_inside:
-        return curr_inside[1]
+        closing_time = curr_inside[1]
+        cutoff_minutes = max(0, getattr(config, "order_cutoff_minutes_before_closing", 30) or 0)
+        cutoff_dt = closing_time - timedelta(minutes=cutoff_minutes)
+        warning_dt = cutoff_dt - timedelta(minutes=30)
+        if local < warning_dt:
+            return warning_dt
+        if local < cutoff_dt:
+            return cutoff_dt
+        return closing_time
+
     next_it = next((it for it in intervals if it[0] > local), None)
     if next_it:
         return next_it[0]
@@ -585,10 +765,6 @@ def is_restaurant_open(config: RestaurantSettings, value: datetime | None = None
             else:
                 return False, f"Closed (Paused by admin until {friendly_time})"
 
-    # Legacy fallback: admin_override_open without override_until
-    if getattr(config, "admin_override_open", False) is True and override_until is None:
-        return True, "Open (Admin override)"
-
     # Natural schedule state
     return is_scheduled_open(config, value)
 
@@ -599,7 +775,7 @@ def _validate_opening_time(config: RestaurantSettings, value: datetime) -> None:
         raise HTTPException(status_code=409, detail=f"The restaurant is closed at that time ({reason})")
 
 
-def order_payload(order: Order, *, include_delivery_otp: bool = False) -> dict:
+def order_payload(order: Order, *, include_delivery_otp: bool = False, include_customer_email: bool = True) -> dict:
     customer = order.customer
     delivery = order.delivery
     payment = order.payment
@@ -680,7 +856,7 @@ def order_payload(order: Order, *, include_delivery_otp: bool = False) -> dict:
         "order_id": order.order_id,
         "customer_id": order.customer_id,
         "customer_name": order.customer_name or (customer.name if customer else "Walk-in"),
-        "customer_email": customer.email if customer else "",
+        "customer_email": (customer.email if customer else "") if include_customer_email else "",
         "customer_phone": order.customer_phone or (customer.phone if customer else None),
         "status": order.status,
         "order_type": order.order_type,

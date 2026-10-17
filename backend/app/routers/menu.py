@@ -137,11 +137,9 @@ def delete_gcs_menu_image_endpoint(filename: str, db: DbSession):
 
 
 
-@router.get("/categories", response_model=list[MenuCategoryOut], dependencies=[Depends(require_roles(Role.ADMIN))])
+@router.get("/categories", response_model=list[MenuCategoryOut])
 def list_categories(db: DbSession):
-    saved = db.scalars(select(MenuCategory).order_by(MenuCategory.name)).all()
-    saved_names = {category.name for category in saved}
-    return saved
+    return db.scalars(select(MenuCategory).order_by(MenuCategory.name)).all()
 
 
 @router.post("/categories", response_model=MenuCategoryOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_roles(Role.ADMIN))])
@@ -166,16 +164,12 @@ def delete_category(category_id: int, db: DbSession):
     if category is None:
         raise HTTPException(status_code=404, detail="Category not found")
     affected_menu = db.scalar(select(func.count()).select_from(menu_item_categories).where(menu_item_categories.c.category_id == category_id)) or 0
-    legacy_affected = db.scalar(select(func.count(MenuItem.id)).where(MenuItem.category_id == category_id)) or 0
-    affected = max(affected_menu, legacy_affected)
 
     db.execute(menu_item_categories.delete().where(menu_item_categories.c.category_id == category_id))
-    db.query(MenuItem).filter(MenuItem.category_id == category_id).update({MenuItem.category_id: None}, synchronize_session=False)
-    db.query(CustomMenuItem).filter(CustomMenuItem.category_id == category_id).update({CustomMenuItem.category_id: None}, synchronize_session=False)
     db.delete(category)
     db.commit()
     invalidate_menu_cache()
-    return {"affected_menus": affected}
+    return {"affected_menus": affected_menu}
 
 
 @router.get("", response_model=list[MenuItemOut])
@@ -187,7 +181,7 @@ def list_menu(db: DbSession, response: Response):
         return cached
 
     now = datetime.now(timezone.utc)
-    query = select(MenuItem).where(MenuItem.is_available.is_(True), MenuItem.is_customizable.is_(False)).order_by(MenuItem.category_id, MenuItem.name)
+    query = select(MenuItem).where(MenuItem.is_available.is_(True), MenuItem.is_customizable.is_(False)).order_by(MenuItem.name)
     items = db.scalars(query).all()
     counts = dict(db.execute(
         select(OrderItem.menu_item_id, func.sum(OrderItem.quantity))
@@ -221,7 +215,7 @@ def list_menu(db: DbSession, response: Response):
 
 @router.get("/manage", response_model=list[MenuItemOut], dependencies=[Depends(require_roles(Role.ADMIN))])
 def list_all_menu(db: DbSession):
-    return db.scalars(select(MenuItem).where(MenuItem.is_customizable.is_(False)).order_by(MenuItem.category_id, MenuItem.name)).all()
+    return db.scalars(select(MenuItem).where(MenuItem.is_customizable.is_(False)).order_by(MenuItem.name)).all()
 
 
 @router.post("", response_model=MenuItemOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_roles(Role.ADMIN))])
@@ -237,8 +231,8 @@ def create_menu_item(data: MenuItemInput, db: DbSession):
     values.pop("category", None)
     values.pop("categories", None)
     values.pop("category_ids", None)
+    values.pop("category_id", None)
     legacy_image = values.pop("image_url", None)
-    values["category_id"] = resolved_cats[0].id if resolved_cats else None
     values["image_urls"] = values["image_urls"] or ([legacy_image] if legacy_image else [])
     item = MenuItem(id=get_next_menu_id(db), **values)
     item.categories = resolved_cats
@@ -268,10 +262,10 @@ def update_menu_item(item_id: int, data: MenuItemInput, db: DbSession):
     values.pop("category", None)
     values.pop("categories", None)
     values.pop("category_ids", None)
+    values.pop("category_id", None)
     legacy_image = values.pop("image_url", None)
     new_urls = values["image_urls"] or ([legacy_image] if legacy_image else [])
     values["image_urls"] = new_urls
-    values["category_id"] = resolved_cats[0].id if resolved_cats else None
     for key, value in values.items():
         setattr(item, key, value)
     item.categories = resolved_cats

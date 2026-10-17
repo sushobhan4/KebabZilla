@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { Activity, ArrowLeft, BarChart3, ClipboardList, CookingPot, LayoutDashboard, LogIn, LogOut, Menu as MenuIcon, PackageCheck, Plus, Settings, Users, X, Send, Percent, ChevronDown, ChevronLeft, ChevronRight, Phone, MapPin } from 'lucide-react'
+import { Activity, ArrowLeft, BarChart3, ClipboardList, CookingPot, LayoutDashboard, LogIn, LogOut, Menu as MenuIcon, PackageCheck, Plus, Settings, Users, X, Send, Percent, ChevronDown, ChevronLeft, ChevronRight, Phone, MapPin, ReceiptText, Mail } from 'lucide-react'
 import { useAuth, useRestaurant } from './state'
 import type { Role } from './api'
 import { Brand, Button, Notice } from './components'
@@ -17,19 +17,27 @@ const Admin = lazy(() => import('./pages/Admin'))
 const AuthPage = lazy(() => import('./pages/AuthPage'))
 const Profile = lazy(() => import('./pages/Profile'))
 const ForcedPasswordChange = lazy(() => import('./pages/ForcedPasswordChange'))
+const CopyOtpPage = lazy(() => import('./pages/CopyOtpPage'))
 
 type NavItem = { to: string; label: string; icon: ReactNode; end?: boolean; tone?: 'employee' | 'delivery' }
 
 function defaultQuickPaths(role: Role): string[] {
-  if (role === 'ADMIN') return ['/admin', '/admin/orders', '/admin/menu']
-  if (role === 'EMPLOYEE') return ['/ops', '/ops/menu']
+  if (role === 'ADMIN') return ['/admin', '/admin/orders', '/admin/menu', '/ops/billing']
+  if (role === 'EMPLOYEE') return ['/ops', '/ops/billing', '/ops/menu']
   if (role === 'DELIVERY') return ['/delivery']
   return []
 }
 
 function savedQuickPaths(role: Role): string[] {
   const saved = getPreference<string[]>(`kz_quick_${role}`, defaultQuickPaths(role))
-  return (saved || []).filter((path) => path !== '/admin/preview' && path !== '/admin/takeover' && path !== '/ops/drafts')
+  const filtered = (saved || []).filter((path) => path !== '/admin/preview' && path !== '/admin/takeover')
+  if (role === 'ADMIN' && !filtered.includes('/ops/billing')) {
+    filtered.push('/ops/billing')
+  }
+  if (role === 'EMPLOYEE' && !filtered.includes('/ops/billing')) {
+    filtered.push('/ops/billing')
+  }
+  return filtered
 }
 
 function homeFor(role: Role) {
@@ -49,6 +57,7 @@ function navFor(role: Role): NavItem[] {
     { to: '/admin/offers', label: 'Broadcast Offer', icon: <Send size={17} /> },
     { to: '/admin/discounts', label: 'Discounts', icon: <Percent size={17} /> },
     { to: '/ops', label: 'Order queue', icon: <ClipboardList size={17} />, end: true, tone: 'employee' },
+    { to: '/ops/billing', label: 'Walk-in billing', icon: <ReceiptText size={17} />, tone: 'employee' },
     { to: '/ops/menu', label: 'Menu availability', icon: <CookingPot size={17} />, tone: 'employee' },
     { to: '/delivery', label: 'Delivery queue', icon: <PackageCheck size={17} />, end: true, tone: 'delivery' },
     { to: '/admin/reports', label: 'Sales reports', icon: <BarChart3 size={17} /> },
@@ -56,6 +65,7 @@ function navFor(role: Role): NavItem[] {
   ]
   if (role === 'EMPLOYEE') return [
     { to: '/ops', label: 'Order queue', icon: <ClipboardList size={17} />, end: true },
+    { to: '/ops/billing', label: 'Walk-in billing', icon: <ReceiptText size={17} /> },
     { to: '/ops/menu', label: 'Menu availability', icon: <CookingPot size={17} /> },
   ]
   if (role === 'DELIVERY') return [
@@ -457,6 +467,7 @@ export default function App() {
           <Route path="/recovery" element={account ? <Navigate to={homeFor(account.role)} replace /> : <AuthPage mode="recovery" />} />
           <Route path="/reset-password" element={account ? <Navigate to={homeFor(account.role)} replace /> : <AuthPage mode="recovery" />} />
           <Route path="/activate" element={account ? <Navigate to={homeFor(account.role)} replace /> : <AuthPage mode="recovery" />} />
+          <Route path="/copy-otp" element={<CopyOtpPage />} />
           <Route path="/workspace" element={account ? <Navigate to={homeFor(account.role)} replace /> : <Navigate to="/login" replace />} />
           <Route path="/orders" element={<RoleGuard roles={['USER']}><OrdersPage /></RoleGuard>} />
           <Route path="/profile" element={<RoleGuard roles={['USER', 'ADMIN', 'EMPLOYEE', 'DELIVERY']}><Profile /></RoleGuard>} />
@@ -488,6 +499,16 @@ export default function App() {
         </div>
       </div>
       <div className="footer-contact-col">
+        {restaurant?.email && (
+          <a
+            href={`mailto:${restaurant.email}`}
+            className="footer-email-link"
+            title="Email us"
+          >
+            <Mail size={14} className="footer-icon" />
+            <span>{restaurant.email}</span>
+          </a>
+        )}
         {phoneList.length > 0 && (
           <div className="footer-phone-list">
             <Phone size={14} className="footer-icon" />

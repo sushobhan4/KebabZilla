@@ -81,6 +81,8 @@ async def razorpay_webhook(request: Request, db: DbSession, x_razorpay_signature
                         await issue_razorpay_refund(order, payment)
                     else:
                         payment.status = PaymentStatus.PAID if payment.status not in {PaymentStatus.REFUNDED, PaymentStatus.REFUND_PENDING} else payment.status
+                    if order.customer_id:
+                        db.query(CartItem).filter(CartItem.customer_id == order.customer_id).delete(synchronize_session=False)
                 db.commit()
         elif event.get("event") in {"refund.processed", "refund.failed"}:
             refund = event["payload"]["refund"]["entity"]

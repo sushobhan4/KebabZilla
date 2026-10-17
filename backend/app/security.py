@@ -41,13 +41,9 @@ def compute_device_fingerprint(user_agent: str | None) -> str:
 def get_cookie_security_params() -> dict:
     is_production = settings.environment.casefold() == "production"
     secure = settings.session_cookie_secure if settings.session_cookie_secure is not None else is_production
-
     samesite = settings.session_cookie_samesite.lower()
-    if is_production and secure:
-        # In production cross-origin deployment (e.g. GitHub Pages -> Cloud Run), SameSite="none" is required
-        if samesite == "lax":
-            samesite = "none"
-    elif not secure:
+
+    if not secure and samesite == "none":
         # Browsers reject SameSite=None without Secure=True
         samesite = "lax"
 

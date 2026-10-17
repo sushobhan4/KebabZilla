@@ -13,8 +13,8 @@ router = APIRouter(prefix="/orders", tags=["customer orders"])
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_order(data: OrderCreate, account: CurrentAccount, db: DbSession):
-    if account.role != Role.USER:
-        raise HTTPException(status_code=403, detail="Customer ordering is only available to customer accounts")
+    if account.role not in (Role.USER, Role.ADMIN):
+        raise HTTPException(status_code=403, detail="Customer ordering is only available to customer and administrator accounts")
     if data.payment_method == PaymentMethod.RAZORPAY:
         if not settings.razorpay_key_id or not settings.razorpay_key_secret:
             raise HTTPException(status_code=503, detail="Online payment is not configured. Choose cash or contact the restaurant.")
@@ -61,11 +61,7 @@ def razorpay_key_id() -> str:
 def my_orders(account: CurrentAccount, db: DbSession):
     orders = db.scalars(
         select(Order)
-        .outerjoin(Payment, Order.order_id == Payment.order_id)
-        .where(
-            Order.customer_id == account.id,
-            or_(Payment.method == PaymentMethod.CASH, Payment.status == PaymentStatus.PAID),
-        )
+        .where(Order.customer_id == account.id)
         .order_by(Order.created_at.desc())
         .limit(100)
     ).all()
@@ -104,9 +100,12 @@ def abandon_order(order_id: str, account: CurrentAccount, db: DbSession):
 @router.get("/{order_id}")
 def order_details(order_id: str, account: CurrentAccount, db: DbSession):
     order = db.get(Order, order_id)
-    if order is None or order.customer_id != account.id:
+    if order is None:
         raise HTTPException(status_code=404, detail="Order not found")
-    return order_payload(order, include_delivery_otp=True)
+    if order.customer_id != account.id and account.role not in (Role.ADMIN, Role.EMPLOYEE):
+        raise HTTPException(status_code=404, detail="Order not found")
+    is_customer = order.customer_id == account.id
+    return order_payload(order, include_delivery_otp=is_customer)
 
 
 @router.post("/{order_id}/cancel")

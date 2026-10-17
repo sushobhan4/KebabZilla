@@ -49,12 +49,15 @@ class Settings(BaseSettings):
     gcs_bucket_name: str = "kebabzilla_cloud_storage"
     gcs_project_id: str = "kebabzilla"
     gcs_menu_images_folder: str = "menuImages"
+    gcs_email_images_folder: str = "emailImages"
+    public_backend_url: str = "https://api.kebabzilla.in"
 
     @model_validator(mode="before")
     @classmethod
     def map_legacy_env_aliases(cls, data: dict) -> dict:
         import os
         alias_map = {
+            "public_backend_url": ["PUBLIC_BACKEND_URL", "BACKEND_URL", "publicBackendUrl", "BACKEND_PUBLIC_URL"],
             "jwt_secret": ["JWTsecret", "jwtSecret", "JWT_SECRET"],
             "database_url": ["databaseURL", "databaseUrl", "DATABASE_URL"],
             "cors_origins": ["corsOrigins", "CORS_ORIGINS"],
