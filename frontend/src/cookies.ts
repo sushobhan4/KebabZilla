@@ -10,7 +10,8 @@ export type CookieConsentState = {
   decided: boolean;
   essential: boolean;
   preferences: boolean;
-  analytics: boolean;
+  marketing: boolean;
+  analytics?: boolean;
   decidedAt?: string;
 };
 
@@ -62,7 +63,20 @@ export function getCookieConsent(): CookieConsentState {
       const local = localStorage.getItem(CONSENT_COOKIE_KEY);
       if (local) {
         try {
-          return JSON.parse(local);
+          const parsed = JSON.parse(local);
+          const marketingVal = parsed.marketing !== undefined
+            ? Boolean(parsed.marketing)
+            : parsed.analytics !== undefined
+              ? Boolean(parsed.analytics)
+              : true;
+          return {
+            decided: Boolean(parsed.decided),
+            essential: true,
+            preferences: Boolean(parsed.preferences),
+            marketing: marketingVal,
+            analytics: marketingVal,
+            decidedAt: parsed.decidedAt,
+          };
         } catch {
           // ignore parsing error
         }
@@ -72,17 +86,24 @@ export function getCookieConsent(): CookieConsentState {
       decided: false,
       essential: true,
       preferences: true, // Default to true until user explicitly rejects or customizes
+      marketing: true,
       analytics: true,
     };
   }
 
   try {
     const parsed = JSON.parse(raw);
+    const marketingVal = parsed.marketing !== undefined
+      ? Boolean(parsed.marketing)
+      : parsed.analytics !== undefined
+        ? Boolean(parsed.analytics)
+        : true;
     return {
       decided: Boolean(parsed.decided),
       essential: true,
       preferences: Boolean(parsed.preferences),
-      analytics: Boolean(parsed.analytics),
+      marketing: marketingVal,
+      analytics: marketingVal,
       decidedAt: parsed.decidedAt,
     };
   } catch {
@@ -90,8 +111,37 @@ export function getCookieConsent(): CookieConsentState {
       decided: false,
       essential: true,
       preferences: true,
+      marketing: true,
       analytics: true,
     };
+  }
+}
+
+/**
+ * Forward marketing consent toggle directly to the database for signed-in accounts
+ */
+export async function syncMarketingConsentToDatabase(marketing: boolean): Promise<void> {
+  if (typeof window === 'undefined') return;
+  let token: string | null = null;
+  try {
+    token = localStorage.getItem('kz_access_token');
+  } catch {}
+  if (!token) return; // Stored locally until user signs in or registers
+
+  try {
+    const rawBase = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '');
+    const apiBase = rawBase.endsWith('/api/v1') ? rawBase : `${rawBase}/api/v1`;
+    await fetch(`${apiBase}/auth/promotional-consent`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      credentials: 'include',
+      body: JSON.stringify({ promotional_consent: marketing }),
+    });
+  } catch (err) {
+    console.warn('Could not sync marketing consent to database:', err);
   }
 }
 
@@ -100,11 +150,18 @@ export function getCookieConsent(): CookieConsentState {
  */
 export function saveCookieConsent(next: Partial<CookieConsentState>): void {
   const current = getCookieConsent();
+  const marketingVal = next.marketing !== undefined
+    ? Boolean(next.marketing)
+    : next.analytics !== undefined
+      ? Boolean(next.analytics)
+      : current.marketing;
+
   const updated: CookieConsentState = {
     decided: next.decided !== undefined ? Boolean(next.decided) : true,
     essential: true,
     preferences: next.preferences !== undefined ? Boolean(next.preferences) : current.preferences,
-    analytics: next.analytics !== undefined ? Boolean(next.analytics) : current.analytics,
+    marketing: marketingVal,
+    analytics: marketingVal,
     decidedAt: new Date().toISOString(),
   };
 
@@ -117,6 +174,11 @@ export function saveCookieConsent(next: Partial<CookieConsentState>): void {
   // If preferences were rejected, clean up any existing preference session cookies
   if (!updated.preferences) {
     clearAllPreferenceCookies();
+  }
+
+  // Forward marketing consent toggle directly to the database
+  if (next.marketing !== undefined || next.analytics !== undefined || next.decided) {
+    void syncMarketingConsentToDatabase(updated.marketing);
   }
 
   if (typeof window !== 'undefined') {

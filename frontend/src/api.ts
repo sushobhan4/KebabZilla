@@ -88,6 +88,7 @@ export type Account = {
   role: Role
   must_change_password: boolean
   is_accepting_deliveries?: boolean
+  promotional_consent?: boolean
   created_at: string
 }
 
@@ -227,6 +228,15 @@ export type Restaurant = {
   delivery_fee_per_km_paise: number
   charge_from_zero_beyond_free_radius?: boolean
   accepting_orders: boolean
+  is_restaurant_open?: boolean
+  is_delivery_open?: boolean
+  order_cutoff_minutes_before_closing?: number
+  delivery_status?: 'OPEN' | 'CLOSING_SOON' | 'DELIVERY_CUTOFF' | 'DELIVERY_PAUSED' | 'RESTAURANT_CLOSED'
+  delivery_status_heading?: string
+  delivery_status_message?: string
+  closing_in_minutes?: number | null
+  cutoff_in_minutes?: number | null
+  closing_time?: string | null
   admin_override_open?: boolean
   admin_override_state?: boolean | null
   admin_override_until?: string | null
@@ -323,6 +333,7 @@ export type UploadImageResult = {
   filename: string
   content_type: string
   size_bytes: number
+  public_url?: string
 }
 
 export async function uploadMenuImage(file: File): Promise<UploadImageResult> {
@@ -332,6 +343,43 @@ export async function uploadMenuImage(file: File): Promise<UploadImageResult> {
     method: 'POST',
     body: formData,
   })
+}
+
+export type EmailImageItem = {
+  filename: string
+  url: string
+  public_url: string
+  size_bytes: number
+  created_at?: string | null
+}
+
+export async function uploadEmailImage(file: File): Promise<UploadImageResult> {
+  const formData = new FormData()
+  formData.append('file', file)
+  return api<UploadImageResult>('/admin/email-images/upload', {
+    method: 'POST',
+    body: formData,
+  })
+}
+
+export async function listEmailImages(): Promise<EmailImageItem[]> {
+  return api<EmailImageItem[]>('/admin/email-images')
+}
+
+export async function deleteEmailImage(filename: string): Promise<boolean> {
+  if (!filename) return false
+  const cleanName = filename.startsWith('/api/v1/public/email-images/')
+    ? filename.slice('/api/v1/public/email-images/'.length)
+    : filename.split('/').pop() || filename
+  try {
+    await api<{ deleted: boolean }>(`/admin/email-images/${encodeURIComponent(cleanName)}`, {
+      method: 'DELETE',
+    })
+    return true
+  } catch (err) {
+    console.warn('Could not delete email image from GCS:', err)
+    return false
+  }
 }
 
 export async function deleteMenuImage(urlOrFilename: string): Promise<boolean> {
@@ -352,16 +400,54 @@ export async function deleteMenuImage(urlOrFilename: string): Promise<boolean> {
 
 export function resolveImageUrl(url: string): string {
   if (!url) return ''
-  if (url.startsWith('/')) {
-    return `${API_BASE}${url}`
+  let trimmed = url.trim()
+
+  // Normalize legacy or shortcut email-images paths to standard public route
+  if (trimmed.startsWith('/emailImages/')) {
+    trimmed = '/api/v1/public/email-images/' + trimmed.slice('/emailImages/'.length)
+  } else if (trimmed.startsWith('/email-images/')) {
+    trimmed = '/api/v1/public/email-images/' + trimmed.slice('/email-images/'.length)
+  } else if (trimmed.startsWith('/public/email-images/')) {
+    trimmed = '/api/v1/public/email-images/' + trimmed.slice('/public/email-images/'.length)
   }
-  try {
-    const parsed = new URL(url)
-    const fileId = parsed.hostname === 'drive.google.com'
-      ? parsed.pathname.match(/\/file\/d\/([^/]+)/)?.[1] || parsed.searchParams.get('id')
-      : null
-    return fileId ? `${API_BASE}/menu/images/${encodeURIComponent(fileId)}` : url
-  } catch {
-    return url
+
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:')) {
+    try {
+      const parsed = new URL(trimmed)
+      const fileId = parsed.hostname === 'drive.google.com'
+        ? parsed.pathname.match(/\/file\/d\/([^/]+)/)?.[1] || parsed.searchParams.get('id')
+        : null
+      if (fileId) return `${API_BASE}/menu/images/${encodeURIComponent(fileId)}`
+
+      if (
+        (parsed.hostname === 'kebabzilla.in' || parsed.hostname === 'api.kebabzilla.in' || parsed.hostname.includes('run.app')) &&
+        (parsed.pathname.includes('/public/email-images/') || parsed.pathname.includes('/email-images/') || parsed.pathname.includes('/emailImages/'))
+      ) {
+        const cleanBase = API_BASE.endsWith('/api/v1') ? API_BASE.slice(0, -'/api/v1'.length) : API_BASE
+        const filename = parsed.pathname.split('/').pop() || ''
+        const normalizedPath = `/api/v1/public/email-images/${filename}`
+        return cleanBase ? `${cleanBase}${normalizedPath}` : normalizedPath
+      }
+
+      return trimmed
+    } catch {
+      return trimmed
+    }
   }
+  const cleanBase = API_BASE.endsWith('/api/v1') ? API_BASE.slice(0, -'/api/v1'.length) : API_BASE
+  if (trimmed.startsWith('/api/v1/')) {
+    return cleanBase ? `${cleanBase}${trimmed}` : trimmed
+  }
+  if (trimmed.startsWith('/')) {
+    return `${API_BASE}${trimmed}`
+  }
+  return trimmed
 }
+
+export async function updatePromotionalConsent(promotional_consent: boolean): Promise<Account> {
+  return api<Account>('/auth/promotional-consent', {
+    method: 'PATCH',
+    body: JSON.stringify({ promotional_consent }),
+  })
+}
+

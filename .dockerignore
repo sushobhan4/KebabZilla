@@ -1,17 +1,64 @@
+# Version control & CI
 .git
 .github
-frontend/node_modules
-frontend/dist
+
+# Environment variables & Secrets (Never bake into Docker images)
+.env*
+!.env.example
+backend/.env*
+frontend/.env*
+*.pem
+*.key
+*.cert
+*.crt
+*.pfx
+*.p12
+*.pkcs12
+service-account*.json
+*credentials*.json
+client_secret*.json
+google-services.json
+
+# Frontend build & dependencies
+frontend/
+
+# Python Virtual Environments, Caches & Tests
 backend/.venv
-backend/__pycache__
-backend/app/__pycache__
-backend/app/routers/__pycache__
-backend/alembic/__pycache__
-backend/alembic/versions/__pycache__
-backend/alembic/legacy_versions
+.venv
+venv
+__pycache__
+**/__pycache__
+*.py[cod]
+backend/.pytest_cache
+backend/.ruff_cache
+backend/.mypy_cache
+backend/tests
+.coverage
+htmlcov
+
+# Local databases
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
 backend/*.db
 backend/*.db-shm
 backend/*.db-wal
+
+# User uploads & ephemeral files
+uploads
+backend/uploads
 *.log
-.env
-backend/.env
+
+# Firebase & local deploy configs
+.firebase
+firebase.json
+.firebaserc
+firebase-public
+
+# OS & IDE Clutter
+.DS_Store
+Thumbs.db
+.vscode
+.idea

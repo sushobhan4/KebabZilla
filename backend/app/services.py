@@ -128,12 +128,23 @@ def assemble_order(
     enforce_opening_hours: bool = True,
 ) -> Order:
     config = restaurant_settings(db)
-    if not config.accepting_orders:
-        raise HTTPException(status_code=409, detail="The restaurant is not accepting orders right now")
+    now = datetime.now(timezone.utc)
+    status_info = evaluate_restaurant_and_delivery_status(config, now)
+
+    if order_type == "DINE_IN":
+        if not status_info["is_restaurant_open"]:
+            raise HTTPException(status_code=409, detail="The restaurant is currently closed")
+    elif enforce_opening_hours:
+        if not status_info["is_restaurant_open"]:
+            raise HTTPException(status_code=409, detail="The restaurant is currently closed")
+        if not status_info["is_delivery_open"]:
+            raise HTTPException(
+                status_code=409,
+                detail="Online delivery is currently unavailable. Our shop is open for walk-in orders at our counter.",
+            )
 
     std_menu_ids = {line.menu_item_id for line in lines if line.menu_item_id is not None}
     custom_menu_ids = {line.custom_menu_item_id for line in lines if getattr(line, "custom_menu_item_id", None) is not None}
-    now = datetime.now(timezone.utc)
 
     std_items = db.scalars(select(MenuItem).where(MenuItem.id.in_(std_menu_ids), MenuItem.is_available.is_(True))).all() if std_menu_ids else []
     std_by_id = {item.id: item for item in std_items}
@@ -161,6 +172,10 @@ def assemble_order(
         if scheduled_for <= now:
             raise HTTPException(status_code=400, detail="Choose a future order time")
         _validate_opening_time(config, scheduled_for)
+        if order_type != "DINE_IN":
+            sched_status = evaluate_restaurant_and_delivery_status(config, scheduled_for)
+            if not sched_status["is_delivery_open"]:
+                raise HTTPException(status_code=409, detail="Online delivery is unavailable at that scheduled time")
     elif enforce_opening_hours:
         _validate_opening_time(config, now)
 
@@ -532,6 +547,140 @@ def calculate_override_until(config: RestaurantSettings, value: datetime | None,
         return None
 
 
+def get_current_closing_time(config: RestaurantSettings, value: datetime | None = None) -> datetime | None:
+    """Return the closing datetime for the active open session, or None if currently closed."""
+    if value is None:
+        value = datetime.now(timezone.utc)
+    tz = ZoneInfo(settings.business_timezone)
+    local = value.astimezone(tz)
+
+    is_open, _ = is_restaurant_open(config, value)
+    if not is_open:
+        return None
+
+    intervals = get_schedule_intervals_for_range(config, local)
+    sched_close = None
+    if intervals:
+        inside = next((it for it in intervals if it[0] <= local <= it[1]), None)
+        if inside:
+            sched_close = inside[1]
+
+    override_state = getattr(config, "admin_override_state", None)
+    override_until = getattr(config, "admin_override_until", None)
+    if override_state is True and override_until is not None:
+        if override_until.tzinfo is None:
+            override_until = override_until.replace(tzinfo=timezone.utc)
+        until_local = override_until.astimezone(tz)
+        if sched_close is not None:
+            return max(sched_close, until_local)
+        return until_local
+
+    return sched_close
+
+
+def evaluate_restaurant_and_delivery_status(config: RestaurantSettings, value: datetime | None = None) -> dict:
+    """Evaluate full restaurant and online delivery ordering state.
+
+    State tiers:
+    - RESTAURANT_CLOSED: Physical shop is closed (by schedule or admin pause). Online ordering & walk-in closed.
+    - DELIVERY_PAUSED: Restaurant is open, but online delivery is toggled OFF by admin. Walk-ins open.
+    - DELIVERY_CUTOFF: Restaurant is open, but cutoff window (e.g. 30m before close) reached. Walk-ins open.
+    - CLOSING_SOON: Restaurant and delivery open, but approaching cutoff window (30m before cutoff).
+    - OPEN: Everything normally open.
+    """
+    if value is None:
+        value = datetime.now(timezone.utc)
+    tz = ZoneInfo(settings.business_timezone)
+    local = value.astimezone(tz)
+
+    is_shop_open, reason = is_restaurant_open(config, value)
+    cutoff_minutes = max(0, getattr(config, "order_cutoff_minutes_before_closing", 30) or 0)
+    admin_delivery_open = bool(getattr(config, "is_delivery_open", True))
+
+    if not is_shop_open:
+        return {
+            "is_restaurant_open": False,
+            "is_delivery_open": False,
+            "accepting_orders": False,
+            "delivery_status": "RESTAURANT_CLOSED",
+            "delivery_status_heading": "Sorry, we are closed",
+            "delivery_status_message": "Our shop is currently closed. Please check back during operating hours.",
+            "order_cutoff_minutes_before_closing": cutoff_minutes,
+            "closing_in_minutes": None,
+            "closing_time": None,
+            "schedule_status": reason,
+        }
+
+    closing_time = get_current_closing_time(config, value)
+    closing_time_str = closing_time.isoformat() if closing_time else None
+    closing_in_minutes = max(0, int(round((closing_time - local).total_seconds() / 60))) if closing_time else None
+
+    if not admin_delivery_open:
+        return {
+            "is_restaurant_open": True,
+            "is_delivery_open": False,
+            "accepting_orders": False,
+            "delivery_status": "DELIVERY_PAUSED",
+            "delivery_status_heading": "Currently not delivering",
+            "delivery_status_message": "Our shop is open! We are currently only accepting walk-in orders at our counter.",
+            "order_cutoff_minutes_before_closing": cutoff_minutes,
+            "closing_in_minutes": closing_in_minutes,
+            "closing_time": closing_time_str,
+            "schedule_status": reason,
+        }
+
+    if closing_time is not None:
+        cutoff_dt = closing_time - timedelta(minutes=cutoff_minutes)
+        warning_dt = cutoff_dt - timedelta(minutes=30)
+
+        if local >= cutoff_dt:
+            cutoff_msg = "Our shop is open! We are currently only accepting walk-in orders at our counter."
+            if closing_in_minutes:
+                cutoff_msg = f"{cutoff_msg} The restaurant is closing in {closing_in_minutes} minutes."
+            return {
+                "is_restaurant_open": True,
+                "is_delivery_open": False,
+                "accepting_orders": False,
+                "delivery_status": "DELIVERY_CUTOFF",
+                "delivery_status_heading": "Currently not delivering",
+                "delivery_status_message": cutoff_msg,
+                "order_cutoff_minutes_before_closing": cutoff_minutes,
+                "closing_in_minutes": closing_in_minutes,
+                "cutoff_in_minutes": 0,
+                "closing_time": closing_time_str,
+                "schedule_status": reason,
+            }
+
+        if local >= warning_dt:
+            cutoff_in_minutes = max(1, int(round((cutoff_dt - local).total_seconds() / 60)))
+            return {
+                "is_restaurant_open": True,
+                "is_delivery_open": True,
+                "accepting_orders": True,
+                "delivery_status": "CLOSING_SOON",
+                "delivery_status_heading": "Hurry up closing soon",
+                "delivery_status_message": f"The restaurant is closing in {cutoff_in_minutes} minutes.",
+                "order_cutoff_minutes_before_closing": cutoff_minutes,
+                "closing_in_minutes": closing_in_minutes,
+                "cutoff_in_minutes": cutoff_in_minutes,
+                "closing_time": closing_time_str,
+                "schedule_status": reason,
+            }
+
+    return {
+        "is_restaurant_open": True,
+        "is_delivery_open": True,
+        "accepting_orders": True,
+        "delivery_status": "OPEN",
+        "delivery_status_heading": "Menu",
+        "delivery_status_message": "Choose what you’d like to order.",
+        "order_cutoff_minutes_before_closing": cutoff_minutes,
+        "closing_in_minutes": closing_in_minutes,
+        "closing_time": closing_time_str,
+        "schedule_status": reason,
+    }
+
+
 def get_next_schedule_refresh(config: RestaurantSettings, value: datetime | None = None) -> datetime | None:
     """Return the next timestamp when the restaurant order status naturally refreshes or changes."""
     if value is None:
@@ -552,7 +701,16 @@ def get_next_schedule_refresh(config: RestaurantSettings, value: datetime | None
 
     curr_inside = next((it for it in intervals if it[0] <= local <= it[1]), None)
     if curr_inside:
-        return curr_inside[1]
+        closing_time = curr_inside[1]
+        cutoff_minutes = max(0, getattr(config, "order_cutoff_minutes_before_closing", 30) or 0)
+        cutoff_dt = closing_time - timedelta(minutes=cutoff_minutes)
+        warning_dt = cutoff_dt - timedelta(minutes=30)
+        if local < warning_dt:
+            return warning_dt
+        if local < cutoff_dt:
+            return cutoff_dt
+        return closing_time
+
     next_it = next((it for it in intervals if it[0] > local), None)
     if next_it:
         return next_it[0]
@@ -584,10 +742,6 @@ def is_restaurant_open(config: RestaurantSettings, value: datetime | None = None
                 return True, sched_reason if sched_open else f"Open (Admin override until {friendly_time})"
             else:
                 return False, f"Closed (Paused by admin until {friendly_time})"
-
-    # Legacy fallback: admin_override_open without override_until
-    if getattr(config, "admin_override_open", False) is True and override_until is None:
-        return True, "Open (Admin override)"
 
     # Natural schedule state
     return is_scheduled_open(config, value)

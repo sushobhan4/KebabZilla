@@ -183,6 +183,9 @@ class LiquidGlassManager {
   private cachedHeaderH = -1;
   private cachedSearchH = -1;
   private lastStuckState: boolean | null = null;
+  private activeTransitions = 0;
+  private lastTransitionTime = 0;
+  private pointerMoveRaf = false;
 
   constructor() {
     this.loadFromStorage();
@@ -385,6 +388,17 @@ class LiquidGlassManager {
     window.addEventListener("wheel", this.handleInteraction, { passive: true });
     window.addEventListener("touchmove", this.handleInteraction, { passive: true });
     window.addEventListener("touchstart", this.handleInteraction, { passive: true });
+    window.addEventListener("pointermove", this.handlePointerMove, { passive: true });
+    window.addEventListener("pointerover", this.handleHover, { passive: true });
+    window.addEventListener("pointerout", this.handleHover, { passive: true });
+    window.addEventListener("mouseover", this.handleHover, { passive: true });
+    window.addEventListener("mouseout", this.handleHover, { passive: true });
+    window.addEventListener("transitionrun", this.handleTransition, { passive: true });
+    window.addEventListener("transitionstart", this.handleTransition, { passive: true });
+    window.addEventListener("transitionend", this.handleTransitionEnd, { passive: true });
+    window.addEventListener("transitioncancel", this.handleTransitionEnd, { passive: true });
+    window.addEventListener("animationstart", this.handleTransition, { passive: true });
+    window.addEventListener("animationend", this.handleTransitionEnd, { passive: true });
 
     this.scheduleRender(8);
   }
@@ -410,6 +424,17 @@ class LiquidGlassManager {
     window.removeEventListener("wheel", this.handleInteraction);
     window.removeEventListener("touchmove", this.handleInteraction);
     window.removeEventListener("touchstart", this.handleInteraction);
+    window.removeEventListener("pointermove", this.handlePointerMove);
+    window.removeEventListener("pointerover", this.handleHover);
+    window.removeEventListener("pointerout", this.handleHover);
+    window.removeEventListener("mouseover", this.handleHover);
+    window.removeEventListener("mouseout", this.handleHover);
+    window.removeEventListener("transitionrun", this.handleTransition);
+    window.removeEventListener("transitionstart", this.handleTransition);
+    window.removeEventListener("transitionend", this.handleTransitionEnd);
+    window.removeEventListener("transitioncancel", this.handleTransitionEnd);
+    window.removeEventListener("animationstart", this.handleTransition);
+    window.removeEventListener("animationend", this.handleTransitionEnd);
 
     for (const [el, canvas] of this.elementCanvases) {
       canvas.remove();
@@ -496,6 +521,35 @@ class LiquidGlassManager {
       }
     }
     this.scheduleRender(8);
+  };
+
+  private handlePointerMove = () => {
+    if (this.pointerMoveRaf) return;
+    this.pointerMoveRaf = true;
+    requestAnimationFrame(() => {
+      this.pointerMoveRaf = false;
+      if (!this.isRunning) return;
+      this.scheduleRender(14);
+    });
+  };
+
+  private handleHover = () => {
+    if (!this.isRunning) return;
+    // Provide a burst covering full CSS hover transitions (~300ms)
+    this.scheduleRender(22);
+  };
+
+  private handleTransition = () => {
+    if (!this.isRunning) return;
+    this.activeTransitions = Math.min(25, this.activeTransitions + 1);
+    this.lastTransitionTime = performance.now();
+    this.scheduleRender(20);
+  };
+
+  private handleTransitionEnd = () => {
+    if (!this.isRunning) return;
+    this.activeTransitions = Math.max(0, this.activeTransitions - 1);
+    this.scheduleRender(6);
   };
 
   private handleScrollOrResize = (e?: Event) => {
@@ -654,27 +708,37 @@ class LiquidGlassManager {
     const isStartupGracePeriod = now - this.initStartTime < 2500;
     const isRecentResize = now - this.lastResizeTime < 800; // Protect against DevTools inspect open / window resize
 
+    // Safety timeout for active CSS transitions: auto-expire after 1.5s
+    if (this.activeTransitions > 0 && now - this.lastTransitionTime > 1500) {
+      this.activeTransitions = 0;
+    }
+
     // Monitor frame performance during active rendering bursts
     if (!isStartupGracePeriod && !isRecentResize) {
       if (this.lastBurstFrameTimestamp > 0) {
         const frameInterval = now - this.lastBurstFrameTimestamp;
-        // Frame interval > 65ms means < 15 FPS between consecutive active frames
-        if (frameInterval > 65) {
-          this.consecutiveLaggedFrames++;
-          if (this.consecutiveLaggedFrames >= 4) {
-            this.handleThrottlingTrigger(
-              `Active render frame interval dropped (${Math.round(1000 / frameInterval)} FPS / ${Math.round(frameInterval)}ms)`,
-            );
-            return;
+        // Only evaluate frame drops when interval <= 150ms (idle pauses between user events are NOT lag!)
+        if (frameInterval <= 150) {
+          if (frameInterval > 65) {
+            this.consecutiveLaggedFrames++;
+            if (this.consecutiveLaggedFrames >= 5) {
+              this.handleThrottlingTrigger(
+                `Active render frame interval dropped (${Math.round(1000 / frameInterval)} FPS / ${Math.round(frameInterval)}ms)`,
+              );
+              return;
+            }
+          } else if (frameInterval <= 35) {
+            this.consecutiveLaggedFrames = Math.max(0, this.consecutiveLaggedFrames - 1);
           }
-        } else if (frameInterval <= 35) {
-          this.consecutiveLaggedFrames = Math.max(0, this.consecutiveLaggedFrames - 1);
+        } else {
+          this.consecutiveLaggedFrames = 0;
         }
       }
       this.lastBurstFrameTimestamp = now;
     }
 
-    if ((this.isDirty || this.dirtyFramesRemaining > 0) && this.renderer) {
+    const hasActiveAnimation = this.activeTransitions > 0;
+    if ((this.isDirty || this.dirtyFramesRemaining > 0 || hasActiveAnimation) && this.renderer) {
       if (this.dirtyFramesRemaining > 0) {
         this.dirtyFramesRemaining--;
       }
@@ -704,7 +768,7 @@ class LiquidGlassManager {
       }
     }
 
-    if (this.dirtyFramesRemaining > 0 || this.isDirty) {
+    if (this.dirtyFramesRemaining > 0 || this.isDirty || this.activeTransitions > 0) {
       this.rafId = requestAnimationFrame(this.renderLoop);
     } else {
       this.rafId = null;
@@ -1070,7 +1134,7 @@ class LiquidGlassManager {
 
     // 2. Find candidate content containers underneath the glass
     const candidateBlocks = document.querySelectorAll<HTMLElement>(
-      ".hero-section, .value-strip, .menu-intro, .notice, .menu-tabs, .food-card, .story-banner, .store-bottom, .order-success",
+      ".hero-section, .value-strip, .menu-intro, .notice, .menu-tabs, .food-card, .story-banner, .store-bottom, .order-success, .empty-state, .order-panel, .cart-sheet, .auth-card",
     );
 
     // Render each intersecting block
@@ -1101,31 +1165,10 @@ class LiquidGlassManager {
       const destW = Math.round(bRect.width * dpr);
       const destH = Math.round(bRect.height * dpr);
 
-      let drawnWithCache = false;
-      // Do NOT use static cached snapshots for dynamic/scrolling elements like .menu-tabs and .food-card
-      // Always render live from DOM so images, badges, and active button highlights update with 0ms delay!
-      const isDynamic =
-        block.classList.contains("menu-tabs") ||
-        block.classList.contains("food-card") ||
-        !!block.querySelector(".menu-tabs");
-
-      if (this.capture && !isDynamic) {
-        drawnWithCache = this.capture.drawCachedElement(
-          block,
-          ctx,
-          destX,
-          destY,
-          destW,
-          destH,
-        );
-        if (!drawnWithCache) {
-          this.capture.captureElement(block).catch(() => {});
-        }
-      }
-
-      // If not yet cached by html-to-image or if dynamic, immediately draw with direct Canvas2D
-      // (guarantees text, images, and card styling refract with zero blank frames)
-      if (!drawnWithCache) {
+      // Render directly and synchronously using Canvas2D
+      // (guarantees text, images, badges, hover transforms and transitions refract in live real-time dynamic)
+      let directRendered = false;
+      try {
         this.renderBlockDirect(
           ctx,
           block,
@@ -1134,6 +1177,20 @@ class LiquidGlassManager {
           sampleRight,
           sampleBottom,
           dpr,
+        );
+        directRendered = true;
+      } catch (err) {
+        console.warn("LiquidGlassManager: direct block render fallback:", err);
+      }
+
+      if (!directRendered && this.capture) {
+        this.capture.drawCachedElement(
+          block,
+          ctx,
+          destX,
+          destY,
+          destW,
+          destH,
         );
       }
     }
@@ -1196,8 +1253,16 @@ class LiquidGlassManager {
       bStyle.borderColor !== "transparent" &&
       bStyle.borderColor !== "rgba(0, 0, 0, 0)";
 
+    const isHovered =
+      block.matches(":hover") || !!block.querySelector(":hover");
+
     if (hasBlockBg || hasBlockBorder) {
       ctx.save();
+      if (isHovered && block.classList.contains("food-card")) {
+        ctx.shadowColor = "rgba(0, 0, 0, 0.12)";
+        ctx.shadowBlur = 16 * dpr;
+        ctx.shadowOffsetY = 6 * dpr;
+      }
       ctx.beginPath();
       if (bRadius > 0 && ctx.roundRect)
         ctx.roundRect(destX, destY, destW, destH, bRadius);
@@ -1207,6 +1272,7 @@ class LiquidGlassManager {
         ctx.fillStyle = bBg;
         ctx.fill();
       }
+      ctx.shadowColor = "transparent";
       if (hasBlockBorder) {
         ctx.strokeStyle = bStyle.borderColor;
         ctx.lineWidth = bBorderW;
@@ -1217,7 +1283,7 @@ class LiquidGlassManager {
 
     // 2. Draw nested styled container boxes (e.g. .food-image, .hero-art-bg, buttons, pills, tags, labels)
     const subBoxes = block.querySelectorAll<HTMLElement>(
-      ".food-image, .hero-art-bg, .hero-note, .hero-food-main, .diet-dot, .food-best, .value-strip > div, .menu-tab, button, .add-food, .quantity-picker, .social-rating, .hero-delivery, .closed-menu-label, .notice, .custom-dish-badge, .discount-campaign-label, .food-zilla-pick",
+      ".food-image, .hero-art-bg, .hero-note, .hero-food-main, .diet-dot, .food-best, .value-strip > div, .menu-tab, button, .add-food, .quantity-picker, .social-rating, .hero-delivery, .closed-menu-label, .notice, .custom-dish-badge, .discount-campaign-label, .food-zilla-pick, .food-image-main-wrap",
     );
     for (let i = 0; i < subBoxes.length; i++) {
       const box = subBoxes[i];
@@ -1266,9 +1332,19 @@ class LiquidGlassManager {
         ctx.globalAlpha = blockOpacity * sOpacity;
       }
 
+      const stl = (parseFloat(sStyle.borderTopLeftRadius) || parseFloat(sStyle.borderRadius) || 0) * dpr;
+      const str = (parseFloat(sStyle.borderTopRightRadius) || parseFloat(sStyle.borderRadius) || 0) * dpr;
+      const sbr = (parseFloat(sStyle.borderBottomRightRadius) || parseFloat(sStyle.borderRadius) || 0) * dpr;
+      const sbl = (parseFloat(sStyle.borderBottomLeftRadius) || parseFloat(sStyle.borderRadius) || 0) * dpr;
+
       ctx.beginPath();
-      if (sRad > 0 && ctx.roundRect) ctx.roundRect(sx, sy, sw, sh, sRad);
-      else ctx.rect(sx, sy, sw, sh);
+      if ((stl > 0 || str > 0 || sbr > 0 || sbl > 0) && ctx.roundRect) {
+        ctx.roundRect(sx, sy, sw, sh, [stl, str, sbr, sbl]);
+      } else if (sRad > 0 && ctx.roundRect) {
+        ctx.roundRect(sx, sy, sw, sh, sRad);
+      } else {
+        ctx.rect(sx, sy, sw, sh);
+      }
 
       // Check if food-image has a gradient background (e.g. food-red, food-gold)
       if (box.classList.contains("food-red")) {
@@ -1341,11 +1417,43 @@ class LiquidGlassManager {
 
       ctx.save();
       const imgStyle = window.getComputedStyle(img);
-      const imgRadius = (parseFloat(imgStyle.borderRadius) || 0) * dpr;
-      if (imgRadius > 0 && ctx.roundRect) {
+
+      // Check if image is contained in an overflow:hidden frame (e.g. .food-image or .food-image-main-wrap)
+      const container =
+        img.closest<HTMLElement>(".food-image, .food-image-main-wrap") ||
+        (img.parentElement && window.getComputedStyle(img.parentElement).overflow === "hidden" ? img.parentElement : null);
+
+      if (container) {
+        const cRect = container.getBoundingClientRect();
+        const cx = Math.round((cRect.left - sampleLeft) * dpr);
+        const cy = Math.round((cRect.top - sampleTop) * dpr);
+        const cw = Math.round(cRect.width * dpr);
+        const ch = Math.round(cRect.height * dpr);
+
+        const cStyle = window.getComputedStyle(container);
+        const pStyle = container.parentElement ? window.getComputedStyle(container.parentElement) : cStyle;
+
+        const ctl = (parseFloat(cStyle.borderTopLeftRadius) || parseFloat(pStyle.borderTopLeftRadius) || parseFloat(bStyle.borderTopLeftRadius) || 14) * dpr;
+        const ctr = (parseFloat(cStyle.borderTopRightRadius) || parseFloat(pStyle.borderTopRightRadius) || parseFloat(bStyle.borderTopRightRadius) || 14) * dpr;
+        const cbr = (parseFloat(cStyle.borderBottomRightRadius) || parseFloat(pStyle.borderBottomRightRadius) || 0) * dpr;
+        const cbl = (parseFloat(cStyle.borderBottomLeftRadius) || parseFloat(pStyle.borderBottomLeftRadius) || 0) * dpr;
+
         ctx.beginPath();
-        ctx.roundRect(ix, iy, iw, ih, imgRadius);
+        if ((ctl > 0 || ctr > 0 || cbr > 0 || cbl > 0) && ctx.roundRect) {
+          ctx.roundRect(cx, cy, cw, ch, [ctl, ctr, cbr, cbl]);
+        } else if (ctx.roundRect) {
+          ctx.roundRect(cx, cy, cw, ch, 0);
+        } else {
+          ctx.rect(cx, cy, cw, ch);
+        }
         ctx.clip();
+      } else {
+        const imgRadius = (parseFloat(imgStyle.borderRadius) || 0) * dpr;
+        if (imgRadius > 0 && ctx.roundRect) {
+          ctx.beginPath();
+          ctx.roundRect(ix, iy, iw, ih, imgRadius);
+          ctx.clip();
+        }
       }
 
       const imgFilter =
@@ -1406,6 +1514,12 @@ class LiquidGlassManager {
     let node = walker.nextNode();
     const range = document.createRange();
 
+    // Detect if block has a CSS scale factor applied (e.g. scale(1.02) on hover)
+    const blockScale =
+      block.offsetWidth > 0 && bRect.width > 0
+        ? bRect.width / block.offsetWidth
+        : 1;
+
     while (node) {
       const text = (node.textContent || "").trim();
       if (text) {
@@ -1422,7 +1536,8 @@ class LiquidGlassManager {
                 pStyle.visibility !== "hidden" &&
                 parseFloat(pStyle.opacity || "1") > 0
               ) {
-                const fontSize = (parseFloat(pStyle.fontSize) || 14) * dpr;
+                const baseFontSize = parseFloat(pStyle.fontSize) || 14;
+                const fontSize = baseFontSize * blockScale * dpr;
                 const fontWeight = pStyle.fontWeight || "400";
                 const fontFamily =
                   pStyle.fontFamily || "Inter, -apple-system, sans-serif";

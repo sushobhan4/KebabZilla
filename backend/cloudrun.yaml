@@ -9,10 +9,8 @@ spec:
   template:
     metadata:
       annotations:
-        # Attach Cloud SQL instance (format: PROJECT_ID:REGION:INSTANCE_NAME)
-        run.googleapis.com/cloudsql-instances: PROJECT_ID:REGION:INSTANCE_NAME
-        autoscaling.knative.dev/minScale: "0"
-        autoscaling.knative.dev/maxScale: "10"
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/maxScale: "20"
     spec:
       containerConcurrency: 80
       timeoutSeconds: 300
@@ -29,8 +27,8 @@ spec:
             - name: ENVIRONMENT
               value: "production"
             - name: DATABASE_URL
-              # Cloud SQL Unix Socket format:
-              value: "postgresql+psycopg://kebabzilla_user:DB_PASSWORD@/kebabzilla?host=/cloudsql/PROJECT_ID:REGION:INSTANCE_NAME"
+              # Supabase PostgreSQL Pooler format (Session mode, Port 5432):
+              value: "postgresql+psycopg://postgres.PROJECT_REF:DB_PASSWORD@aws-0-ap-south-1.pooler.supabase.com:5432/postgres?sslmode=require"
             - name: CORS_ORIGINS
               # Comma-separated frontend domains (e.g. GitHub Pages or custom domain)
               value: "https://your-username.github.io,https://kebabzilla.in"

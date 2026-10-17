@@ -1,0 +1,19 @@
+{
+  "hosting": {
+    "public": "firebase-public",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "run": {
+          "serviceId": "kebabzilla-backend",
+          "region": "asia-south2"
+        }
+      }
+    ]
+  }
+}

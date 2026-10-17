@@ -1,16 +1,83 @@
+# Environment Variables & Secrets
 .env
 .env.*
+.env.local
+.env.development
+.env.test
+.env.production
 !.env.example
-frontend/node_modules/
-frontend/dist/
-backend/.venv/
-backend/__pycache__/
-backend/**/*.py[cod]
-backend/.pytest_cache/
-backend/.ruff_cache/
-backend/alembic/versions/__pycache__/
-*.log
+backend/.env
+backend/.env.*
+backend/.env.local
+backend/.env.production
+frontend/.env.local
+frontend/.env.*
+!frontend/.env.example
+
+# Credentials, Keys, Certificates & Tokens
+*.pem
+*.key
+*.cert
+*.crt
+*.pfx
+*.p12
+*.pkcs12
+service-account*.json
+*credentials*.json
+client_secret*.json
+google-services.json
+
+# Local Databases & Journals
 *.db
 *.db-shm
 *.db-wal
+*.sqlite
+*.sqlite3
+
+# Python Virtual Environments, Bytecode & Caches
+backend/.venv/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.log
+
+# Frontend & Build Outputs
+frontend/node_modules/
+frontend/dist/
+dist/
+build/
+.npm/
+.eslintcache/
+.vite/
+
+# Firebase & Deployment Caches
+.firebase/
+firebase-debug.log*
+firestore-debug.log*
+ui-debug.log*
+
+# User Uploads
+uploads/
+backend/uploads/
+
+# Operating System & IDE Clutter
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

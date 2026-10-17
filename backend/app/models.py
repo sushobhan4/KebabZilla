@@ -51,6 +51,7 @@ class Account(Base):
     phone: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[Role] = mapped_column(Enum(Role, native_enum=False, length=16), default=Role.USER, index=True)
+    promotional_consent: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     addresses: Mapped[list["AccountAddress"]] = relationship(cascade="all, delete-orphan", lazy="selectin")
     sessions: Mapped[list["UserSession"]] = relationship("UserSession", back_populates="account", cascade="all, delete-orphan", lazy="selectin")
@@ -190,7 +191,6 @@ class MenuItem(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(120), index=True)
     description: Mapped[str] = mapped_column(Text, default="")
-    category_id: Mapped[int | None] = mapped_column(ForeignKey("menu_categories.id", ondelete="SET NULL"), nullable=True, index=True)
     price_paise: Mapped[int] = mapped_column(Integer)
     paused_by_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True, index=True)
     paused_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -201,7 +201,14 @@ class MenuItem(Base):
     is_customizable: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     variations: Mapped[list[dict]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    category: Mapped["MenuCategory | None"] = relationship(foreign_keys=[category_id], lazy="joined")
+
+    @property
+    def category_id(self) -> int | None:
+        return self.categories[0].id if self.categories else None
+
+    @property
+    def category(self) -> "MenuCategory | None":
+        return self.categories[0] if self.categories else None
 
     @property
     def base_price_paise(self) -> int:
@@ -297,9 +304,22 @@ class RestaurantSettings(Base):
     free_delivery_radius_km: Mapped[float] = mapped_column(Float, default=3.0, server_default="3")
     delivery_fee_per_km_paise: Mapped[int] = mapped_column(Integer, default=1000, server_default="1000")
     accepting_orders: Mapped[bool] = mapped_column(Boolean, default=True)
-    admin_override_open: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    is_delivery_open: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    order_cutoff_minutes_before_closing: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
     admin_override_state: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
     admin_override_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+
+    @property
+    def admin_override_open(self) -> bool:
+        return self.admin_override_state is True
+
+    @property
+    def is_restaurant_open(self) -> bool:
+        return self.accepting_orders
+
+    @is_restaurant_open.setter
+    def is_restaurant_open(self, val: bool) -> None:
+        self.accepting_orders = val
     distance_calculation_mode: Mapped[str] = mapped_column(String(20), default="AUTO", server_default="AUTO")
     enforce_driver_geofence: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     driver_geofence_meters: Mapped[int] = mapped_column(Integer, default=500, server_default="500")
@@ -474,7 +494,21 @@ class OfferLog(Base):
     subject: Mapped[str] = mapped_column(String(160), default="A little something from KebabZilla")
     message: Mapped[str] = mapped_column(Text)
     delivery_counts: Mapped[dict] = mapped_column(JSON, default=dict)
-    recipient_count: Mapped[int] = mapped_column(Integer, default=0)
-    sent_count: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(30), default="PENDING")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+    @property
+    def recipient_count(self) -> int:
+        if not self.delivery_counts or not isinstance(self.delivery_counts, dict):
+            return 0
+        return sum(
+            c.get("recipient_count", 0) for c in self.delivery_counts.values() if isinstance(c, dict)
+        )
+
+    @property
+    def sent_count(self) -> int:
+        if not self.delivery_counts or not isinstance(self.delivery_counts, dict):
+            return 0
+        return sum(
+            c.get("sent_count", 0) for c in self.delivery_counts.values() if isinstance(c, dict)
+        )

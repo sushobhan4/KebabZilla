@@ -1,5 +1,6 @@
 from datetime import timedelta
 import secrets
+import threading
 import time
 from collections import defaultdict
 from typing import Annotated
@@ -22,6 +23,7 @@ from app.schemas import (
     PasswordResetConfirm,
     PasswordResetRequest,
     PasswordUpdate,
+    PromotionalConsentUpdate,
     TokenOut,
     TwoFactorVerifyRequest,
 )
@@ -99,6 +101,7 @@ def register(data: AccountCreate, request: Request, response: Response, db: DbSe
         phone=data.phone,
         password_hash=hash_password(data.password),
         role=Role.USER,
+        promotional_consent=data.promotional_consent,
     )
     account.addresses = [
         AccountAddress(address_id="home", label="Home", is_default=True),
@@ -134,7 +137,11 @@ def clear_failed_logins(key: str) -> None:
     _failed_logins.pop(key, None)
 
 
-def initiate_2fa_challenge(account: Account, db: Session) -> TokenOut:
+def initiate_2fa_challenge(
+    account: Account,
+    db: Session,
+    background_tasks: BackgroundTasks | None = None,
+) -> TokenOut:
     code = generate_2fa_code()
     code_hash = hash_2fa_code(code)
     temp_token = generate_2fa_temp_token()
@@ -152,7 +159,20 @@ def initiate_2fa_challenge(account: Account, db: Session) -> TokenOut:
     db.add(challenge)
     db.commit()
 
-    staff_account_notifier.send_2fa_code(name=account.name, email=account.email, code=code)
+    # Dispatch 2FA email in background so staff login screen transitions immediately without freezing
+    if background_tasks is not None:
+        background_tasks.add_task(
+            staff_account_notifier.send_2fa_code,
+            name=account.name,
+            email=account.email,
+            code=code,
+        )
+    else:
+        threading.Thread(
+            target=staff_account_notifier.send_2fa_code,
+            kwargs={"name": account.name, "email": account.email, "code": code},
+            daemon=True,
+        ).start()
 
     return TokenOut(
         requires_2fa=True,
@@ -163,7 +183,13 @@ def initiate_2fa_challenge(account: Account, db: Session) -> TokenOut:
 
 
 @router.post("/login", response_model=TokenOut)
-def login(data: LoginRequest, request: Request, response: Response, db: DbSession):
+def login(
+    data: LoginRequest,
+    request: Request,
+    response: Response,
+    db: DbSession,
+    background_tasks: BackgroundTasks,
+):
     email = data.email.lower().strip()
     ip_address = request.client.host if request.client else "unknown"
     rate_limit_key = f"{ip_address}:{email}"
@@ -175,7 +201,7 @@ def login(data: LoginRequest, request: Request, response: Response, db: DbSessio
     clear_failed_logins(rate_limit_key)
 
     if account.role in (Role.ADMIN, Role.EMPLOYEE, Role.DELIVERY):
-        return initiate_2fa_challenge(account, db)
+        return initiate_2fa_challenge(account, db, background_tasks)
 
     return issue_session(account, request, response, db)
 
@@ -256,6 +282,7 @@ def google_login(
     request: Request,
     response: Response,
     db: DbSession,
+    background_tasks: BackgroundTasks,
 ):
     if not settings.google_client_id:
         raise HTTPException(
@@ -295,7 +322,7 @@ def google_login(
         db.commit()
 
     if account.role in (Role.ADMIN, Role.EMPLOYEE, Role.DELIVERY):
-        return initiate_2fa_challenge(account, db)
+        return initiate_2fa_challenge(account, db, background_tasks)
 
     return issue_session(account, request, response, db)
 
@@ -417,6 +444,8 @@ def update_profile(data: AccountProfileUpdate, account: CurrentAccount, db: DbSe
     account.name = data.name.strip()
     account.email = email
     account.phone = data.phone.strip() if data.phone else None
+    if data.promotional_consent is not None:
+        account.promotional_consent = data.promotional_consent
     if account.role == Role.USER and data.addresses is not None:
         addresses = [item.model_dump() for item in data.addresses]
         ids = [item["id"] for item in addresses]
@@ -449,6 +478,14 @@ def update_profile(data: AccountProfileUpdate, account: CurrentAccount, db: DbSe
         for addr in list(account.addresses):
             if addr.address_id not in incoming_ids:
                 account.addresses.remove(addr)
+    db.commit()
+    db.refresh(account)
+    return account
+
+
+@router.patch("/promotional-consent", response_model=AccountOut)
+def update_promotional_consent(data: PromotionalConsentUpdate, account: CurrentAccount, db: DbSession):
+    account.promotional_consent = data.promotional_consent
     db.commit()
     db.refresh(account)
     return account

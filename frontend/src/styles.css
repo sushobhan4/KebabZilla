@@ -1173,14 +1173,14 @@ select:focus-visible {
   border-radius: 14px;
   background: #fff;
   transition:
-    transform 0.18s,
-    box-shadow 0.18s;
+    transform 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.22s ease;
   display: flex;
   flex-direction: column;
 }
 .food-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 10px 30px #28241412;
+  transform: translateY(-3px) scale(1.02);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.1);
 }
 .food-image {
   height: 183px;
@@ -6859,6 +6859,13 @@ select:focus-visible {
   flex: none;
   padding: 0;
 }
+.billing-item-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: inherit;
+}
 .ops-order-item {
   justify-content: initial !important;
 }
@@ -7884,8 +7891,8 @@ select:focus-visible {
 .workspace-drawer {
   position: absolute;
   inset: 0 auto 0 0;
-  width: min(370px, 88vw);
-  padding: 25px 20px 22px;
+  width: min(320px, 78vw);
+  padding: 24px 18px 22px;
   background: #fffdfa;
   box-shadow: 15px 0 55px #10181430;
   overflow: auto;
@@ -8233,13 +8240,18 @@ select {
     right: 16px;
     bottom: 16px;
   }
+  .workspace-drawer {
+    width: min(260px, 68vw);
+    padding: 20px 14px;
+  }
 }
 @media (max-width: 460px) {
   .weekday-row {
     grid-template-columns: 1fr 82px 82px;
   }
   .workspace-drawer {
-    padding: 20px 14px;
+    width: min(230px, 64vw);
+    padding: 16px 12px;
   }
   .top-nav {
     max-width: 40vw;
@@ -10094,6 +10106,475 @@ input[type="radio"]:focus-visible {
 .offer-preview-body { padding: 22px 18px; line-height: 1.6; white-space: pre-wrap; }
 .offer-preview-body p { margin: 0 0 18px; }
 .offer-preview-body p:last-child { margin-bottom: 0; }
+
+/* --- Offer Studio & Live Email Preview --- */
+.offer-studio-layout {
+  display: grid;
+  grid-template-columns: minmax(340px, 1.05fr) minmax(360px, 1.25fr);
+  gap: 24px;
+  align-items: start;
+  margin-top: 14px;
+}
+@media (max-width: 980px) {
+  .offer-studio-layout {
+    grid-template-columns: 1fr;
+  }
+}
+.offer-studio-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.offer-section-card {
+  background: var(--card, #ffffff);
+  border: 1px solid var(--line, #e2dcd5);
+  border-radius: 14px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.offer-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.88rem;
+  font-weight: 800;
+  color: var(--foreground, #1e2025);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 0;
+}
+.offer-audience-select {
+  width: 100% !important;
+  display: block !important;
+}
+.offer-audience-select .rounded-select-trigger {
+  width: 100% !important;
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  box-sizing: border-box !important;
+  padding: 0 16px !important;
+  height: 44px !important;
+  min-height: 44px !important;
+}
+.offer-audience-select .rounded-select-label {
+  flex: 1 !important;
+  text-align: left !important;
+}
+
+/* Offer Studio Sub-Tabs (Email & SMS) */
+.offer-subtabs-nav {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  border-bottom: 1px solid var(--line, #e2dcd5);
+  padding-bottom: 12px;
+  margin: 16px 0 20px 0;
+}
+.offer-subtab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 18px;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  border: 1px solid transparent;
+  background: var(--bg-hover, #f8f6f2);
+  color: var(--muted, #626b64);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.offer-subtab-btn:hover {
+  color: #c34226;
+  background: rgba(195, 66, 38, 0.08);
+}
+.offer-subtab-btn.active {
+  background: #c34226;
+  color: #ffffff;
+  border-color: #c34226;
+  box-shadow: 0 4px 12px rgba(195, 66, 38, 0.25);
+}
+.offer-subtab-badge {
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.12);
+  color: inherit;
+}
+.offer-subtab-btn.active .offer-subtab-badge {
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+
+/* SMS Placeholder Panel */
+.offer-sms-placeholder-panel {
+  padding: 60px 24px;
+  text-align: center;
+  background: var(--card, #ffffff);
+  border: 1px solid var(--line, #ded8d0);
+  border-radius: 16px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.04);
+  margin-top: 14px;
+}
+.offer-sms-placeholder-content {
+  max-width: 680px;
+  margin: 0 auto;
+}
+.offer-sms-placeholder-icon {
+  width: 80px;
+  height: 80px;
+  border-radius: 20px;
+  background: rgba(195, 66, 38, 0.08);
+  color: #c34226;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 18px;
+}
+.offer-sms-features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin-top: 28px;
+  text-align: left;
+}
+.offer-sms-feature-card {
+  padding: 16px;
+  background: var(--bg-hover, #f8f6f2);
+  border: 1px solid var(--line, #e8e5dd);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.offer-sms-feature-card strong {
+  font-size: 0.86rem;
+  color: var(--text, #1e2926);
+}
+.offer-sms-feature-card span {
+  font-size: 0.76rem;
+  color: var(--muted, #626b64);
+  line-height: 1.4;
+}
+
+/* Modern iOS Switch Toggle for Brand Logo & Features */
+.brand-logo-toggle-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+}
+.brand-logo-toggle-input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+.brand-logo-toggle-track {
+  position: relative;
+  display: inline-block;
+  width: 48px;
+  height: 28px;
+  border-radius: 14px;
+  background-color: #d1d5db;
+  transition: background-color 0.25s ease, box-shadow 0.25s ease;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+.brand-logo-toggle-track.active {
+  background-color: #c34226;
+  box-shadow: 0 2px 8px rgba(195, 66, 38, 0.4);
+}
+.brand-logo-toggle-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background-color: #ffffff;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.25);
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.brand-logo-toggle-track.active .brand-logo-toggle-thumb {
+  transform: translateX(20px);
+}
+
+.offer-bg-presets-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+@media (max-width: 480px) {
+  .offer-bg-presets-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+.offer-bg-preset-btn {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+  height: 64px;
+  cursor: pointer;
+  padding: 0;
+  background: #111;
+  transition: all 0.2s;
+}
+.offer-bg-preset-btn img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.offer-bg-preset-btn.active {
+  border-color: #f97316;
+  box-shadow: 0 0 0 2px #f97316;
+}
+.offer-bg-preset-label {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 3px 4px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.offer-bg-preset-delete {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: rgba(0, 0, 0, 0.75);
+  color: #ff6b6b;
+  border: none;
+  border-radius: 4px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0.8;
+  transition: opacity 0.15s, background 0.15s, transform 0.15s;
+  z-index: 2;
+}
+.offer-bg-preset-delete:hover {
+  opacity: 1;
+  background: #e02424;
+  color: #fff;
+  transform: scale(1.1);
+}
+.offer-bg-add-btn {
+  background: var(--bg-hover, #f8f6f2);
+  border: 2px dashed var(--line, #ded8d0);
+  color: var(--muted, #626b64);
+  transition: all 0.2s;
+}
+.offer-bg-add-btn:hover {
+  border-color: #e05334;
+  color: #e05334;
+  background: rgba(224, 83, 52, 0.06);
+}
+.offer-bg-add-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.offer-url-input-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  margin-top: 4px;
+}
+.offer-url-input-group input {
+  flex: 1;
+  border: 1px solid #e8e5dd;
+  background: white;
+  border-radius: 8px;
+  padding: 10px 11px;
+  outline: none;
+  color: #3c4640;
+  font-size: 10px;
+  min-width: 0;
+  transition: border 0.15s, box-shadow 0.15s;
+}
+.offer-url-input-group input:focus {
+  border-color: #c99073;
+  box-shadow: 0 0 0 3px #c3422613;
+}
+.offer-image-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.offer-cloud-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #059669;
+  background: #ecfdf5;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid #a7f3d0;
+}
+.offer-preview-sticky-wrap {
+  position: sticky;
+  top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.offer-preview-controls-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 14px;
+  background: var(--card, #ffffff);
+  border: 1px solid var(--line, #e2dcd5);
+  border-radius: 10px;
+}
+.offer-device-toggles {
+  display: flex;
+  gap: 4px;
+}
+.offer-device-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--muted, #756d65);
+}
+.offer-device-btn.active {
+  background: #fdf5f0;
+  color: #c34226;
+  border-color: #e8d0c5;
+}
+.offer-preview-ambient-stage {
+  position: relative;
+  overflow: hidden;
+  border-radius: 22px;
+  padding: 42px 32px;
+  background: #080a0d;
+  display: flex;
+  justify-content: center;
+  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+@media (max-width: 620px) {
+  .offer-preview-ambient-stage {
+    padding: 24px 12px;
+    border-radius: 16px;
+  }
+}
+.offer-live-email-card {
+  margin: 0 auto;
+  transition: max-width 0.3s ease;
+  width: 100%;
+  background-color: #111318;
+  background-size: cover;
+  background-position: center;
+  border: 1px solid #282c37;
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.65);
+  color: #f3f4f6;
+  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+.offer-email-inbox-header {
+  background: rgba(10, 12, 16, 0.75);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 12px 16px;
+  display: grid;
+  grid-template-columns: 60px 1fr;
+  gap: 6px 10px;
+  font-size: 0.8rem;
+  color: #9ca3af;
+}
+.offer-email-inbox-header strong {
+  color: #f3f4f6;
+}
+.offer-promo-voucher-box {
+  background: rgba(20, 24, 32, 0.75);
+  border: 2px dashed #e05334;
+  border-radius: 12px;
+  padding: 18px 22px;
+  margin: 22px auto;
+  text-align: center;
+  max-width: 380px;
+}
+.offer-promo-voucher-code {
+  font-family: 'Courier New', Consolas, monospace;
+  font-size: 26px;
+  font-weight: 900;
+  letter-spacing: 4px;
+  color: #fbbf24;
+  margin: 6px 0 12px 0;
+  user-select: all;
+}
+.offer-promo-copy-btn {
+  background: #c34226;
+  color: #ffffff;
+  border: none;
+  padding: 8px 20px;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.offer-promo-copy-btn.copied {
+  background: #10b981;
+}
+.offer-cta-button {
+  display: inline-block;
+  padding: 15px 38px;
+  font-size: 14px;
+  font-weight: 800;
+  border-radius: 10px;
+  color: #ffffff;
+  text-decoration: none;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  transition: transform 0.2s;
+}
+.offer-email-brand-footer {
+  padding: 20px 16px;
+  background: rgba(10, 12, 16, 0.5);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: center;
+  font-size: 13px;
+  color: #9ca3af;
+  line-height: 1.5;
+}
 .campaign-log-panel {
   margin-top: 18px;
   overflow: hidden;
@@ -10112,6 +10593,11 @@ input[type="radio"]:focus-visible {
 .campaign-log-copy span { overflow: hidden; color: #756d65; font-size: .85rem; text-overflow: ellipsis; white-space: nowrap; }
 .campaign-log-delivery { display: flex; flex-wrap: wrap; gap: 6px; }
 .campaign-log-delivery span { padding: 5px 8px; border-radius: 999px; background: #f8e9e2; color: #a83c24; font-size: .72rem; font-weight: 700; }
+.campaign-log-delivery .badge-success { background: #edf3e9; color: #5f7747; }
+.campaign-log-delivery .badge-amber { background: #fbf0de; color: #a76b20; }
+.campaign-log-delivery .badge-soft { background: #f7f1e8; color: #927250; }
+.campaign-log-delivery .badge-danger { background: #f9e8e5; color: #ae4438; }
+.campaign-log-delivery .badge-neutral { background: #efefeb; color: #686e69; }
 .campaign-log-row time, .campaign-detail-footer { color: #756d65; font-size: .82rem; white-space: nowrap; }
 .campaign-detail-modal { max-width: 580px; }
 .campaign-detail-message { padding: 14px 24px 20px; line-height: 1.6; white-space: pre-wrap; }
@@ -11597,11 +12083,11 @@ input[type="radio"]:focus-visible {
 /* ── Dish Detail Modal & Cart Edit Controls ───────────────────────────── */
 .food-card {
   cursor: pointer;
-  transition: transform 0.18s ease, box-shadow 0.18s ease;
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s ease;
 }
 .food-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.08);
+  transform: translateY(-3px) scale(1.02);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.1);
 }
 .food-image-main-wrap {
   width: 100%;
@@ -11617,7 +12103,7 @@ input[type="radio"]:focus-visible {
   transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .food-card:hover .food-image-main-wrap img {
-  transform: scale(1.05);
+  transform: scale(1.06);
 }
 
 .cart-edit-link {
@@ -13086,6 +13572,19 @@ input[type="radio"]:focus-visible {
   border-top: none !important;
   overflow: visible !important;
   box-shadow: none !important;
+  pointer-events: none;
+}
+
+.app-header.has-liquid-glass .header-inner,
+.app-header.has-liquid-glass a,
+.app-header.has-liquid-glass button,
+.storefront-sticky-controls.has-liquid-glass .menu-discovery-controls,
+.storefront-sticky-controls.has-liquid-glass .menu-search,
+.storefront-sticky-controls.has-liquid-glass .rounded-select-trigger,
+.storefront-sticky-controls.has-liquid-glass button,
+.storefront-sticky-controls.has-liquid-glass input,
+.storefront-sticky-controls.has-liquid-glass select {
+  pointer-events: auto;
 }
 
 /* When the navbar and sticky search controls meet and stick together, fuse them into one seamless container */

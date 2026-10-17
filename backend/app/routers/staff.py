@@ -37,7 +37,7 @@ router = APIRouter(prefix="/staff", tags=["staff operations"], dependencies=[Dep
 
 @router.get("/menu", response_model=list[MenuItemOut])
 def staff_menu(db: DbSession):
-    return db.scalars(select(MenuItem).order_by(MenuItem.category_id, MenuItem.name)).all()
+    return db.scalars(select(MenuItem).order_by(MenuItem.name)).all()
 
 
 @router.get("/menu-pauses")

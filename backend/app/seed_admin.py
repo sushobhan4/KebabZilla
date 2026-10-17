@@ -57,7 +57,7 @@ def main() -> None:
                         id=get_next_menu_id(db),
                         name=name,
                         description=description,
-                        category_id=cat_map[cat_name].id,
+                        categories=[cat_map[cat_name]],
                         price_paise=price,
                         is_vegetarian=veg,
                         is_featured=featured,

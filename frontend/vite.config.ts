@@ -14,6 +14,9 @@ export default defineConfig(() => {
       allowedHosts: true as const,
       proxy: {
         '/api': 'http://127.0.0.1:8000',
+        '/email-images': 'http://127.0.0.1:8000',
+        '/emailImages': 'http://127.0.0.1:8000',
+        '/fonts': 'http://127.0.0.1:8000',
       },
     },
     preview: {
@@ -21,6 +24,9 @@ export default defineConfig(() => {
       port: 4173,
       proxy: {
         '/api': 'http://127.0.0.1:8000',
+        '/email-images': 'http://127.0.0.1:8000',
+        '/emailImages': 'http://127.0.0.1:8000',
+        '/fonts': 'http://127.0.0.1:8000',
       },
     },
     build: {

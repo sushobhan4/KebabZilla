@@ -25,7 +25,7 @@ def list_custom_menu(db: DbSession, response: Response):
     items = db.scalars(
         select(CustomMenuItem)
         .where(CustomMenuItem.is_available.is_(True), CustomMenuItem.is_customizable.is_(True))
-        .order_by(CustomMenuItem.category_id, CustomMenuItem.name)
+        .order_by(CustomMenuItem.name)
     ).all()
     discounts = db.scalars(select(MenuDiscount)).all() if items else []
     active: dict[int, MenuDiscount] = {}
@@ -56,7 +56,7 @@ def list_all_custom_menu(db: DbSession):
     return db.scalars(
         select(CustomMenuItem)
         .where(CustomMenuItem.is_customizable.is_(True))
-        .order_by(CustomMenuItem.category_id, CustomMenuItem.name)
+        .order_by(CustomMenuItem.name)
     ).all()
 
 
@@ -74,7 +74,6 @@ def create_custom_menu_item(data: CustomMenuItemInput, actor: CurrentAccount, db
         id=get_next_menu_id(db),
         name=data.name,
         description=data.description,
-        category_id=resolved_cats[0].id if resolved_cats else None,
         price_paise=data.base_price_paise,
         image_urls=data.image_urls,
         is_vegetarian=data.is_vegetarian,
@@ -124,7 +123,6 @@ def update_custom_menu_item(item_id: int, data: CustomMenuItemInput, actor: Curr
 
     item.name = data.name
     item.description = data.description
-    item.category_id = resolved_cats[0].id if resolved_cats else None
     item.categories = resolved_cats
     item.price_paise = data.base_price_paise
     item.image_urls = data.image_urls

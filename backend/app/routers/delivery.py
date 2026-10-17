@@ -430,6 +430,8 @@ async def claim_recommended_batch(data: BatchClaimInput, account: CurrentAccount
             phone=order.customer_phone or (order.customer.phone if order.customer else None),
             order_number=order.order_id,
             otp=otp,
+            email=order.customer_email or (order.customer.email if order.customer else None),
+            customer_name=order.customer_name or (order.customer.name if order.customer else None),
         )
     batch = DeliveryBatch(delivery_id=account.id, route_label=f"Nearby delivery route · {len(orders)} stop{'s' if len(orders) != 1 else ''}")
     batch.orders = [DeliveryBatchOrder(order_id=order.order_id) for order in orders]
@@ -462,6 +464,8 @@ async def claim_order(order_id: str, account: CurrentAccount, db: DbSession):
         phone=order.customer_phone or (order.customer.phone if order.customer else None),
         order_number=order.order_id,
         otp=otp,
+        email=order.customer_email or (order.customer.email if order.customer else None),
+        customer_name=order.customer_name or (order.customer.name if order.customer else None),
     )
     db.commit()
     invalidate_delivery_cache()
