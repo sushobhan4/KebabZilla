@@ -97,6 +97,17 @@ class Settings(BaseSettings):
             return val
         return value
 
+    @field_validator("session_cookie_samesite", mode="before")
+    @classmethod
+    def normalize_samesite(cls, value: object) -> str:
+        if isinstance(value, str):
+            val = value.strip().lower()
+            if val in ("lax", "strict"):
+                return val
+            if val == "none":
+                return "lax"
+        return "lax"
+
     @field_validator("cors_origins", mode="after")
     @classmethod
     def split_origins(cls, value: object) -> list[str]:

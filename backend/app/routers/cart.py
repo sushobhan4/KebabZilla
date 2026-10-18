@@ -9,8 +9,7 @@ router = APIRouter(prefix="/cart", tags=["customer cart"])
 
 
 def customer_only(account: CurrentAccount) -> None:
-    if account.role not in (Role.USER, Role.ADMIN):
-        raise HTTPException(status_code=403, detail="Saved carts are available to customer and administrator accounts")
+    pass
 
 
 def _customizations_key(customizations: list | None) -> str:

@@ -11,18 +11,20 @@ import { usePreference } from "../cookies";
 import { importLibrary, setOptions } from "@googlemaps/js-api-loader";
 import {
   Activity,
-  AlertTriangle,
   ArrowRight,
   ArrowUpDown,
   ArrowUpRight,
   BarChart3,
   Check,
   CircleDollarSign,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   CookingPot,
   CreditCard,
   Edit3,
   Flame,
+  Save,
   LayoutDashboard,
   Plus,
   Percent,
@@ -79,11 +81,13 @@ import { useAuth, useRestaurant } from "../state";
 import {
   Badge,
   Button,
+  CenterDialog,
   EmptyState,
   Loading,
   MenuImageCarousel,
   Notice,
   PageTitle,
+  Pagination,
   PhoneInput,
   RoundedDatePicker,
   RoundedSelect,
@@ -114,14 +118,8 @@ type PageData<T> = {
 };
 const roles: Role[] = ["ADMIN", "EMPLOYEE", "DELIVERY", "USER"];
 const provisionableRoles: Role[] = ["ADMIN", "EMPLOYEE", "DELIVERY"];
-const orderNext: Record<string, string[]> = {
-  PLACED: ["ACCEPTED", "REJECTED"],
-  ACCEPTED: ["PREPARING"],
-  PREPARING: ["READY"],
-  READY: [],
-  OUT_FOR_DELIVERY: [],
-};
 const adminPageSize = 25;
+const adminOrdersPageSize = 10;
 const amtalaMapCenter: google.maps.LatLngLiteral = { lat: 22.365278, lng: 88.269444 };
 let restaurantMapsPromise: Promise<google.maps.MapsLibrary> | null = null;
 
@@ -134,40 +132,23 @@ function PageControls({
   limit,
   offset,
   total,
+  label = "orders",
   onChange,
 }: {
   limit: number;
   offset: number;
   total: number;
+  label?: string;
   onChange: (offset: number) => void;
 }) {
-  if (total <= limit) return null;
-  const from = offset + 1;
-  const to = Math.min(offset + limit, total);
   return (
-    <div className="pagination">
-      <span>
-        Showing {from}–{to} of {total}
-      </span>
-      <div>
-        <Button
-          variant="secondary"
-          size="button-sm"
-          disabled={offset === 0}
-          onClick={() => onChange(Math.max(0, offset - limit))}
-        >
-          Previous
-        </Button>
-        <Button
-          variant="secondary"
-          size="button-sm"
-          disabled={to >= total}
-          onClick={() => onChange(offset + limit)}
-        >
-          Next
-        </Button>
-      </div>
-    </div>
+    <Pagination
+      limit={limit}
+      offset={offset}
+      total={total}
+      label={label}
+      onChange={onChange}
+    />
   );
 }
 
@@ -191,7 +172,7 @@ function Overview() {
         api<PageData<Order>>("/admin/orders?limit=5"),
         api<PageData<Account>>("/admin/accounts?limit=5"),
         api<Report>("/admin/reports/sales?period=week"),
-        api<typeof events>("/admin/events?limit=12"),
+        api<any>("/admin/events?limit=12"),
         api<Restaurant>("/admin/settings").catch(() => null as unknown as Restaurant),
       ])
         .then(([ordersData, people, sales, log, settingsData]) => {
@@ -199,7 +180,7 @@ function Overview() {
           setOrderSummary(ordersData);
           setAccountSummary(people);
           setReport(sales);
-          setEvents(log);
+          setEvents(Array.isArray(log) ? log : (log?.items || []));
           setRestaurantSettings(settingsData);
         })
         .catch((err) =>
@@ -552,7 +533,7 @@ function AdminOrders() {
   const refresh = useCallback(() => {
     const statusQuery = filter === "ALL" ? "" : `&status_filter=${filter}`;
     return api<PageData<Order>>(
-      `/admin/orders?limit=${adminPageSize}&offset=${page * adminPageSize}${statusQuery}&period=${period}&q=${encodeURIComponent(q)}`,
+      `/admin/orders?limit=${adminOrdersPageSize}&offset=${page * adminOrdersPageSize}${statusQuery}&period=${period}&q=${encodeURIComponent(q)}`,
     )
       .then((result) => {
         setPageData(result);
@@ -564,31 +545,88 @@ function AdminOrders() {
       .finally(() => setLoading(false));
   }, [filter, page, period, q]);
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    const timer = window.setTimeout(() => void refresh(), q ? 250 : 0);
+    return () => window.clearTimeout(timer);
+  }, [refresh, q]);
   const filtered = orders;
   function selectFilter(value: string) {
     setFilter(value);
     setPage(0);
     setLoading(true);
   }
-  async function update(order: Order, status: string) {
-    setBusyId(order.order_id);
+
+
+  const [refundOrder, setRefundOrder] = useState<Order | null>(null);
+  const [saveStatusConfirmOpen, setSaveStatusConfirmOpen] = useState(false);
+  const [pendingStatusChanges, setPendingStatusChanges] = useState<
+    Record<
+      string,
+      {
+        order: Order;
+        originalStatus: string;
+        targetStatus: string;
+        refundPaidOnline?: boolean;
+      }
+    >
+  >({});
+  const [unassignConfirmOrder, setUnassignConfirmOrder] = useState<Order | null>(null);
+
+  function getPrevStatus(status: string): string | null {
+    if (status === 'DELIVERED') return null;
+    if (status === 'OUT_FOR_DELIVERY') return 'READY';
+    if (status === 'READY') return 'ACCEPTED';
+    if (status === 'ACCEPTED' || status === 'PREPARING') return 'REJECTED';
+    if (status === 'PLACED') return 'REJECTED';
+    return null;
+  }
+
+  function getNextStatus(status: string): string | null {
+    if (status === 'DELIVERED') return null;
+    if (status === 'OUT_FOR_DELIVERY') return 'DELIVERED';
+    if (status === 'READY') return 'OUT_FOR_DELIVERY';
+    if (status === 'ACCEPTED' || status === 'PREPARING') return 'READY';
+    if (status === 'PLACED') return 'ACCEPTED';
+    if (status === 'REJECTED' || status === 'CANCELLED') return 'ACCEPTED';
+    return null;
+  }
+
+  async function saveAllPendingStatusChanges() {
+    const entries = Object.entries(pendingStatusChanges);
+    if (!entries.length) return;
+    setBusyId("all");
     setError("");
     try {
-      await api(`/admin/orders/${order.order_id}/status`, {
-        method: "PATCH",
-        body: JSON.stringify({ status }),
-      });
+      for (const [orderId, change] of entries) {
+        await api(`/admin/orders/${orderId}/status`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: change.targetStatus }),
+        });
+        if (change.refundPaidOnline) {
+          await api(`/admin/orders/${orderId}/refund`, { method: "POST" });
+        }
+      }
+      setPendingStatusChanges({});
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not update order.");
+      setError(err instanceof Error ? err.message : "Could not save all status changes.");
     } finally {
       setBusyId(null);
     }
   }
 
-  const [refundOrder, setRefundOrder] = useState<Order | null>(null);
+  async function executeUnassign(order: Order) {
+    setBusyId(order.order_id);
+    setError("");
+    try {
+      await api(`/admin/orders/${order.order_id}/unassign-delivery`, { method: "POST" });
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not unassign delivery partner.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   async function executeRefund(order: Order) {
     setBusyId(order.order_id);
     setError("");
@@ -603,7 +641,7 @@ function AdminOrders() {
       setBusyId(null);
     }
   }
-  if (loading) return <Loading label="Getting the order book…" />;
+  if (loading && !pageData) return <Loading label="Getting the order book…" />;
   return (
     <>
       <PageTitle
@@ -656,7 +694,7 @@ function AdminOrders() {
       <section className="admin-panel">
         <div className="order-filter-bar">
           <div className="admin-search-sort-controls">
-            <label className="admin-search-field"><Search size={16} /><input value={q} onChange={(event) => { setQ(event.target.value); setPage(0); setLoading(true); }} placeholder="Search order number, name or phone" aria-label="Search orders" /></label>
+            <label className="admin-search-field"><Search size={16} /><input value={q} onChange={(event) => { setQ(event.target.value); setPage(0); }} placeholder="Search order number, name or phone" aria-label="Search orders" /></label>
             <RoundedSelect icon={<ArrowUpDown size={15} />} ariaLabel="Filter orders by time" value={period} onChange={(next) => { setPeriod(next); setPage(0); setLoading(true); }} options={[{ value: "all", label: "All time" }, { value: "day", label: "Today" }, { value: "week", label: "This week" }, { value: "month", label: "This month" }, { value: "year", label: "This year" }]} className="orders-period-select activity-sort-select" />
           </div>
           <div className="filter-tabs">
@@ -766,34 +804,115 @@ function AdminOrders() {
                       </div>
                     ))}
                   </div>
-                  <div className="admin-order-tools">
-                    {orderNext[order.status]?.map((status) => (
+                  {order.assigned_delivery_id && order.status !== "DELIVERED" && (
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem", padding: "0.5rem 0.75rem", background: "rgba(16, 185, 129, 0.08)", border: "1px solid rgba(16, 185, 129, 0.2)", borderRadius: "8px", margin: "0.5rem 0", fontSize: "0.85rem" }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        <Truck size={15} style={{ color: "#10b981" }} />
+                        <span><strong>Assigned rider:</strong> {order.delivery_name || `Partner #${order.assigned_delivery_id}`}{order.delivery_phone ? ` (${order.delivery_phone})` : ""}</span>
+                      </span>
                       <Button
-                        key={status}
-                        variant={status === "REJECTED" ? "danger" : "ghost"}
+                        variant="danger"
                         size="button-sm"
                         disabled={busyId === order.order_id}
-                        onClick={() => void update(order, status)}
+                        onClick={() => setUnassignConfirmOrder(order)}
+                        style={{ padding: "3px 8px", fontSize: "0.78rem" }}
                       >
-                        {formatStatus(status)}{" "}
-                        {status === "ACCEPTED" && <Check size={14} />}
+                        Unassign driver
                       </Button>
-                    ))}
-                    {order.payment_status === "PAID" &&
-                      order.payment_method === "RAZORPAY" && (
-                        <Button
-                          variant="danger"
-                          size="button-sm"
-                          disabled={busyId === order.order_id}
-                          onClick={() => setRefundOrder(order)}
-                        >
-                          Refund payment <ArrowRight size={13} />
-                        </Button>
-                      )}
-                    {order.payment_status === "REFUND_PENDING" && (
-                      <Badge tone="amber">Refund processing</Badge>
-                    )}
-                  </div>
+                    </div>
+                  )}
+                  {(() => {
+                    const effectiveStatus = pendingStatusChanges[order.order_id]?.targetStatus || order.status;
+                    const prevStatus = getPrevStatus(effectiveStatus);
+                    const nextStatus = getNextStatus(effectiveStatus);
+                    const isDelivered = effectiveStatus === "DELIVERED";
+
+                    return (
+                      <div className="admin-order-tools" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.5rem" }}>
+                        {order.payment_status === "PAID" && order.payment_method === "RAZORPAY" && (
+                          <Button
+                            variant="danger"
+                            size="button-sm"
+                            disabled={busyId === order.order_id}
+                            onClick={() => setRefundOrder(order)}
+                          >
+                            Refund payment <ArrowRight size={13} />
+                          </Button>
+                        )}
+                        {order.payment_status === "REFUND_PENDING" && (
+                          <Badge tone="amber">Refund processing</Badge>
+                        )}
+
+                        {isDelivered ? (
+                          <span style={{ marginLeft: "auto", fontSize: "0.82rem", fontWeight: 600, color: "var(--muted)" }}>
+                            Delivered · Status completed
+                          </span>
+                        ) : (
+                          <div className="admin-status-stepper-wrap" style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "6px" }}>
+                            <small style={{ color: "var(--muted)", fontSize: "0.78rem", fontWeight: 600 }}>STATUS:</small>
+                            <button
+                              type="button"
+                              className="icon-button admin-stepper-btn"
+                              title={prevStatus ? `Move back to ${formatStatus(prevStatus)}` : "No previous status"}
+                              disabled={!prevStatus || busyId === order.order_id}
+                              onClick={() => {
+                                if (prevStatus) {
+                                  setPendingStatusChanges((prev) => {
+                                    const next = { ...prev };
+                                    if (prevStatus === order.status) {
+                                      delete next[order.order_id];
+                                    } else {
+                                      next[order.order_id] = {
+                                        order,
+                                        originalStatus: order.status,
+                                        targetStatus: prevStatus,
+                                        refundPaidOnline: prev[order.order_id]?.refundPaidOnline ?? false,
+                                      };
+                                    }
+                                    return next;
+                                  });
+                                }
+                              }}
+                            >
+                              <ChevronLeft size={16} />
+                            </button>
+                            <span className="admin-stepper-current-label">
+                              <strong>{effectiveStatus === "ACCEPTED" || effectiveStatus === "PREPARING" ? "Accept / Preparing" : formatStatus(effectiveStatus)}</strong>
+                              {pendingStatusChanges[order.order_id] && (
+                                <small style={{ color: "var(--brand-accent, #c34226)", marginLeft: "4px" }}>(Unsaved)</small>
+                              )}
+                            </span>
+                            <button
+                              type="button"
+                              className="icon-button admin-stepper-btn"
+                              title={nextStatus ? `Move forward to ${formatStatus(nextStatus)}` : "No next status"}
+                              disabled={!nextStatus || busyId === order.order_id}
+                              onClick={() => {
+                                if (nextStatus) {
+                                  setPendingStatusChanges((prev) => {
+                                    const next = { ...prev };
+                                    if (nextStatus === order.status) {
+                                      delete next[order.order_id];
+                                    } else {
+                                      next[order.order_id] = {
+                                        order,
+                                        originalStatus: order.status,
+                                        targetStatus: nextStatus,
+                                        refundPaidOnline: prev[order.order_id]?.refundPaidOnline ?? false,
+                                      };
+                                    }
+                                    return next;
+                                  });
+                                }
+                              }}
+                            >
+                              <ChevronRight size={16} />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               </article>
             ))}
@@ -806,82 +925,191 @@ function AdminOrders() {
           />
         )}
         <PageControls
-          limit={pageData?.limit || adminPageSize}
+          limit={pageData?.limit || adminOrdersPageSize}
           offset={pageData?.offset || 0}
           total={pageData?.total || 0}
           onChange={(next) => {
-            setPage(Math.floor(next / adminPageSize));
+            setPage(Math.floor(next / adminOrdersPageSize));
             setLoading(true);
           }}
         />
       </section>
 
       {refundOrder && (
-        <div
-          className="address-map-backdrop"
-          style={{
-            zIndex: 10005,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
+        <CenterDialog
+          open={Boolean(refundOrder)}
+          onClose={() => setRefundOrder(null)}
+          tone="danger"
+          eyebrow="RAZORPAY REFUND WARNING"
+          title="Issue Razorpay refund?"
+          description={
+            <span>
+              Issue a full refund of <strong>{formatINR(refundOrder.total_paise)}</strong> for order{" "}
+              <strong>#{refundOrder.order_id}</strong>? This will initiate a live payment refund via Razorpay.
+            </span>
+          }
+          primaryAction={{
+            label: "Confirm refund",
+            variant: "danger",
+            disabled: busyId === refundOrder.order_id,
+            onClick: async () => {
+              const target = refundOrder;
+              setRefundOrder(null);
+              if (target) await executeRefund(target);
+            },
           }}
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setRefundOrder(null);
+          secondaryAction={{
+            label: "Cancel",
+            variant: "secondary",
+            onClick: () => setRefundOrder(null),
           }}
-        >
-          <div
-            className="address-map-card"
-            style={{
-              maxWidth: 440,
-              padding: "1.75rem",
-              textAlign: "center",
-              borderRadius: "16px",
-              boxShadow: "0 20px 45px rgba(0,0,0,0.22)",
-            }}
-          >
-            <div
+        />
+      )}
+
+      {saveStatusConfirmOpen && (
+        <CenterDialog
+          open={saveStatusConfirmOpen}
+          onClose={() => setSaveStatusConfirmOpen(false)}
+          tone="warning"
+          eyebrow="CONFIRM STATUS CHANGES"
+          title={`Save ${Object.keys(pendingStatusChanges).length} order status change(s)?`}
+          description={
+            <div>
+              <p style={{ margin: "0 0 10px", color: "var(--muted)", fontSize: "0.88rem" }}>
+                Review the changes made below. You can accept and save these updates or reject and discard them:
+              </p>
+              <div style={{ maxHeight: "300px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "10px", paddingRight: "4px" }}>
+                {Object.entries(pendingStatusChanges).map(([orderId, item]) => {
+                  const fromLabel = item.originalStatus === "ACCEPTED" || item.originalStatus === "PREPARING" ? "Accept / Preparing" : formatStatus(item.originalStatus);
+                  const toLabel = item.targetStatus === "ACCEPTED" || item.targetStatus === "PREPARING" ? "Accept / Preparing" : formatStatus(item.targetStatus);
+                  const isRejectOrCancel = ["REJECTED", "CANCELLED"].includes(item.targetStatus);
+                  const isOnlinePaid = item.order.payment_status === "PAID" && item.order.payment_method === "RAZORPAY";
+
+                  return (
+                    <div key={orderId} style={{ padding: "10px 12px", background: "rgba(0, 0, 0, 0.03)", borderRadius: "8px", border: "1px solid var(--border)" }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
+                        <strong>Order #{orderId}</strong>
+                        <span style={{ fontSize: "0.82rem", color: "var(--muted)" }}>{item.order.customer_name || "Customer"}</span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "0.88rem" }}>
+                        <span style={{ color: "var(--muted)" }}>{fromLabel}</span>
+                        <span>&rarr;</span>
+                        <strong style={{ color: isRejectOrCancel ? "#dc2626" : "var(--brand-accent, #c54d2f)" }}>{toLabel}</strong>
+                      </div>
+                      {item.order.assigned_delivery_id && ["PLACED", "ACCEPTED", "PREPARING", "READY"].includes(item.targetStatus) && (
+                        <p style={{ margin: "6px 0 0", fontSize: "0.8rem", color: "#d97706" }}>
+                          ⚠️ Will unassign rider {item.order.delivery_name || `#${item.order.assigned_delivery_id}`} and return to READY delivery pool.
+                        </p>
+                      )}
+                      {isRejectOrCancel && isOnlinePaid && (
+                        <div style={{ marginTop: "8px", padding: "8px 10px", background: "rgba(239, 68, 68, 0.08)", borderRadius: "6px", border: "1px solid rgba(239, 68, 68, 0.2)" }}>
+                          <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", fontSize: "0.84rem" }}>
+                            <input
+                              type="checkbox"
+                              checked={Boolean(item.refundPaidOnline)}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setPendingStatusChanges((prev) => ({
+                                  ...prev,
+                                  [orderId]: {
+                                    ...prev[orderId],
+                                    refundPaidOnline: checked,
+                                  },
+                                }));
+                              }}
+                            />
+                            <span>Issue online refund ({formatINR(item.order.total_paise)}) via Razorpay</span>
+                          </label>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          }
+          primaryAction={{
+            label: "Accept & save changes",
+            variant: "primary",
+            disabled: busyId !== null,
+            onClick: async () => {
+              setSaveStatusConfirmOpen(false);
+              await saveAllPendingStatusChanges();
+            },
+          }}
+          secondaryAction={{
+            label: "Reject / Discard changes",
+            variant: "danger",
+            onClick: () => {
+              setPendingStatusChanges({});
+              setSaveStatusConfirmOpen(false);
+            },
+          }}
+        />
+      )}
+
+      {unassignConfirmOrder && (
+        <CenterDialog
+          open={Boolean(unassignConfirmOrder)}
+          onClose={() => setUnassignConfirmOrder(null)}
+          tone="warning"
+          eyebrow="UNASSIGN DELIVERY DRIVER"
+          title={`Unassign driver from #${unassignConfirmOrder.order_id}?`}
+          description={
+            <span>
+              Are you sure you want to unassign rider{" "}
+              <strong>{unassignConfirmOrder.delivery_name || `Driver #${unassignConfirmOrder.assigned_delivery_id}`}</strong>{" "}
+              from order <strong>#{unassignConfirmOrder.order_id}</strong>? The order will be removed from their batch and returned to the READY delivery pool so another rider can claim it.
+            </span>
+          }
+          primaryAction={{
+            label: "Confirm unassign",
+            variant: "danger",
+            disabled: busyId === unassignConfirmOrder.order_id,
+            onClick: async () => {
+              const target = unassignConfirmOrder;
+              setUnassignConfirmOrder(null);
+              if (target) await executeUnassign(target);
+            },
+          }}
+          secondaryAction={{
+            label: "Cancel",
+            variant: "secondary",
+            onClick: () => setUnassignConfirmOrder(null),
+          }}
+        />
+      )}
+
+      {Object.keys(pendingStatusChanges).length > 0 && (
+        <div className="settings-pinned-bar" style={{ display: "flex", justifyContent: "center", alignItems: "center", width: "100%", left: 0, right: 0 }}>
+          <div className="settings-pinned-bar-content" style={{ display: "flex", justifyContent: "center", alignItems: "center", width: "100%", gap: "12px" }}>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={busyId !== null}
+              onClick={() => setPendingStatusChanges({})}
               style={{
-                width: 52,
-                height: 52,
-                borderRadius: "50%",
-                background: "#fef2f2",
-                color: "#dc2626",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                margin: "0 auto 1.1rem",
+                pointerEvents: "auto",
+                borderRadius: "9999px",
+                padding: "13px 26px",
+                fontWeight: 700,
+                fontSize: "0.95rem",
+                boxShadow: "0 6px 20px rgba(0, 0, 0, 0.2)",
+                background: "rgba(255, 255, 255, 0.95)",
+                backdropFilter: "blur(8px)",
               }}
             >
-              <AlertTriangle size={26} />
-            </div>
-            <h3 style={{ margin: "0 0 0.5rem 0", fontSize: "1.2rem", color: "#1f2937", fontWeight: 700 }}>
-              Issue Razorpay refund?
-            </h3>
-            <p style={{ margin: "0 0 1.5rem 0", color: "var(--muted)", fontSize: "0.92rem", lineHeight: 1.45 }}>
-              Issue a full refund of <strong>{formatINR(refundOrder.total_paise)}</strong> for order{" "}
-              <strong>#{refundOrder.order_id}</strong>?
-            </p>
-            <div style={{ display: "flex", justifyContent: "center", gap: "0.85rem" }}>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => setRefundOrder(null)}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                variant="danger"
-                disabled={busyId === refundOrder.order_id}
-                onClick={async () => {
-                  const target = refundOrder;
-                  setRefundOrder(null);
-                  if (target) await executeRefund(target);
-                }}
-              >
-                Confirm refund
-              </Button>
-            </div>
+              Discard
+            </Button>
+            <Button
+              type="button"
+              disabled={busyId !== null}
+              className="settings-save-button is-dirty"
+              onClick={() => setSaveStatusConfirmOpen(true)}
+            >
+              <Save size={16} style={{ marginRight: 6 }} />
+              {busyId ? "Saving…" : `Save status changes (${Object.keys(pendingStatusChanges).length})`}
+            </Button>
           </div>
         </div>
       )}
@@ -933,16 +1161,29 @@ function Team() {
     const timer = window.setTimeout(() => void refresh(), q ? 220 : 0);
     return () => window.clearTimeout(timer);
   }, [refresh, q]);
-  async function changeRole(person: Account, next: Role) {
+
+  const [pendingRoleChange, setPendingRoleChange] = useState<{ person: Account; nextRole: Role } | null>(null);
+  const [warningModalOpen, setWarningModalOpen] = useState(false);
+  const [passwordModalOpen, setPasswordModalOpen] = useState(false);
+  const [adminPasswordInput, setAdminPasswordInput] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+
+  async function executeRoleChange() {
+    if (!pendingRoleChange || !adminPasswordInput.trim()) return;
+    const { person, nextRole } = pendingRoleChange;
     setBusyId(person.id);
-    setError("");
+    setPasswordError("");
     try {
-      await api<Account>(`/admin/accounts/${person.id}/role?role=${next}`, {
+      await api<Account>(`/admin/accounts/${person.id}/role`, {
         method: "PATCH",
+        body: JSON.stringify({ role: nextRole, password: adminPasswordInput }),
       });
+      setPasswordModalOpen(false);
+      setPendingRoleChange(null);
+      setAdminPasswordInput("");
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not change role.");
+      setPasswordError(err instanceof Error ? err.message : "Incorrect admin password or could not change role.");
     } finally {
       setBusyId(null);
     }
@@ -1010,14 +1251,40 @@ function Team() {
           </Button>
         }
       />
-      {error && <Notice onDismiss={() => setError("")}>{error}</Notice>}
-      {provisioned && <Notice tone="info" onDismiss={() => setProvisioned(null)}>
-        {provisioned.notification_status === "EMAIL_SENT" ? (
-          <><strong>{provisioned.name}&apos;s account has been created.</strong> A notification email was sent to <strong>{provisioned.email}</strong>. When logging in, they can simply click &apos;Forgot password?&apos; on the sign-in page to set their password, or sign in directly with Google.</>
-        ) : (
-          <><strong>{provisioned.name}&apos;s account was created.</strong> (Notification email could not be sent: SMTP not configured or delivery error). They can set their password at any time by clicking &apos;Forgot password?&apos; on the sign-in page.</>
-        )}
-      </Notice>}
+      {error && (
+        <CenterDialog
+          open={Boolean(error)}
+          onClose={() => setError("")}
+          tone="danger"
+          eyebrow="ACCOUNT ERROR"
+          title="Action failed"
+          description={error}
+          primaryAction={{
+            label: "Dismiss",
+            variant: "primary",
+            onClick: () => setError(""),
+          }}
+        />
+      )}
+      {provisioned && (
+        <CenterDialog
+          open={Boolean(provisioned)}
+          onClose={() => setProvisioned(null)}
+          tone="success"
+          eyebrow="ACCOUNT CREATED"
+          title={`${provisioned.name}'s account has been created`}
+          description={
+            provisioned.notification_status === "EMAIL_SENT"
+              ? `A notification email was sent to ${provisioned.email}. When logging in, they can simply click 'Forgot password?' on the sign-in page to set their password, or sign in directly with Google.`
+              : `Notification email could not be sent (SMTP not configured or delivery error). They can set their password at any time by clicking 'Forgot password?' on the sign-in page.`
+          }
+          primaryAction={{
+            label: "Done",
+            variant: "primary",
+            onClick: () => setProvisioned(null),
+          }}
+        />
+      )}
       <div className="team-metrics">
         <div>
           <strong>{roleCounts.ADMIN || 0}</strong>
@@ -1091,7 +1358,21 @@ function Team() {
                         </div>
                       </td>
                       <td>
-                        <RoundedSelect className="role-select" ariaLabel={`Change ${person.name}'s role`} value={person.role} disabled={busyId === person.id || person.id === account?.id} onChange={(next) => void changeRole(person, next as Role)} options={roles.map((r) => ({ value: r, label: formatStatus(r) }))} />
+                        <RoundedSelect
+                          className="role-select"
+                          ariaLabel={`Change ${person.name}'s role`}
+                          value={person.role}
+                          disabled={busyId === person.id || person.id === account?.id}
+                          onChange={(next) => {
+                            if (next === person.role) return;
+                            setPendingRoleChange({ person, nextRole: next as Role });
+                            setWarningModalOpen(true);
+                            setPasswordModalOpen(false);
+                            setAdminPasswordInput("");
+                            setPasswordError("");
+                          }}
+                          options={roles.map((r) => ({ value: r, label: formatStatus(r) }))}
+                        />
                       </td>
                       <td>
                         {new Intl.DateTimeFormat("en-IN", {
@@ -1245,6 +1526,117 @@ function Team() {
             </form>
           </section>
         </div>
+      )}
+
+      {warningModalOpen && pendingRoleChange && (
+        <CenterDialog
+          open={warningModalOpen}
+          onClose={() => {
+            setWarningModalOpen(false);
+            setPendingRoleChange(null);
+          }}
+          tone="warning"
+          eyebrow="CONFIRM ROLE CHANGE"
+          title={`Change role for ${pendingRoleChange.person.name}?`}
+          description={
+            <span>
+              Are you sure you want to change <strong>{pendingRoleChange.person.name}</strong>’s role from{" "}
+              <strong>{formatStatus(pendingRoleChange.person.role)}</strong> to{" "}
+              <strong>{formatStatus(pendingRoleChange.nextRole)}</strong>? Do you want to proceed?
+            </span>
+          }
+          primaryAction={{
+            label: "Yes, proceed",
+            variant: "primary",
+            onClick: () => {
+              setWarningModalOpen(false);
+              setPasswordModalOpen(true);
+            },
+          }}
+          secondaryAction={{
+            label: "Cancel",
+            variant: "secondary",
+            onClick: () => {
+              setWarningModalOpen(false);
+              setPendingRoleChange(null);
+            },
+          }}
+        />
+      )}
+
+      {passwordModalOpen && pendingRoleChange && (
+        <CenterDialog
+          open={passwordModalOpen}
+          onClose={() => {
+            if (busyId !== pendingRoleChange.person.id) {
+              setPasswordModalOpen(false);
+              setPendingRoleChange(null);
+              setAdminPasswordInput("");
+              setPasswordError("");
+            }
+          }}
+          tone="info"
+          eyebrow="ADMIN AUTHENTICATION REQUIRED"
+          title="Enter admin password"
+          description={
+            <span>
+              Please enter your administrator password to confirm changing{" "}
+              <strong>{pendingRoleChange.person.name}</strong> to{" "}
+              <strong>{formatStatus(pendingRoleChange.nextRole)}</strong>.
+            </span>
+          }
+          primaryAction={{
+            label: busyId === pendingRoleChange.person.id ? "Verifying…" : "Confirm & change role",
+            variant: "primary",
+            disabled: !adminPasswordInput.trim() || busyId === pendingRoleChange.person.id,
+            onClick: () => {
+              void executeRoleChange();
+            },
+          }}
+          secondaryAction={{
+            label: "Cancel",
+            variant: "secondary",
+            disabled: busyId === pendingRoleChange.person.id,
+            onClick: () => {
+              setPasswordModalOpen(false);
+              setPendingRoleChange(null);
+              setAdminPasswordInput("");
+              setPasswordError("");
+            },
+          }}
+        >
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (adminPasswordInput.trim() && busyId !== pendingRoleChange.person.id) {
+                void executeRoleChange();
+              }
+            }}
+            style={{ width: "100%", marginTop: "0.25rem" }}
+          >
+            <label className="field-label" style={{ textAlign: "left", display: "block" }}>
+              <span>Administrator password <sup className="field-required">*</sup></span>
+              <input
+                type="password"
+                required
+                autoFocus
+                placeholder="Enter your password"
+                value={adminPasswordInput}
+                onChange={(e) => {
+                  setAdminPasswordInput(e.target.value);
+                  setPasswordError("");
+                }}
+                disabled={busyId === pendingRoleChange.person.id}
+                style={{ width: "100%", marginTop: "0.35rem" }}
+              />
+            </label>
+            {passwordError && (
+              <div style={{ color: "#ef4444", fontSize: "0.85rem", marginTop: "0.5rem", fontWeight: 600 }}>
+                {passwordError}
+              </div>
+            )}
+          </form>
+        </CenterDialog>
       )}
     </>
   );
@@ -1917,52 +2309,24 @@ function ImageUploadModal({
       </section>
 
       {showDiscardWarning && (
-        <div
-          className="address-map-backdrop"
-          style={{
-            zIndex: 10005,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
+        <CenterDialog
+          open={showDiscardWarning}
+          onClose={() => setShowDiscardWarning(false)}
+          tone="warning"
+          eyebrow="DISCARD PHOTO WARNING"
+          title="Discard this photo?"
+          description="Are you sure you want to discard this photo? Any cropping adjustments will not be saved."
+          primaryAction={{
+            label: "Discard photo",
+            variant: "danger",
+            onClick: forceCloseModal,
           }}
-        >
-          <div
-            className="admin-panel"
-            role="dialog"
-            aria-modal="true"
-            style={{
-              maxWidth: "420px",
-              width: "90%",
-              padding: "1.6rem",
-              borderRadius: "14px",
-              textAlign: "center",
-              boxShadow: "0 16px 40px rgba(0, 0, 0, 0.45)",
-            }}
-          >
-            <h3 style={{ margin: "0 0 0.75rem 0", fontSize: "1.15rem", fontWeight: 700 }}>
-              Discard this photo?
-            </h3>
-            <p style={{ margin: "0 0 1.5rem 0", color: "var(--muted)", fontSize: "0.92rem", lineHeight: 1.45 }}>
-              Are you sure you want to discard this photo? Any cropping adjustments will not be saved.
-            </p>
-            <div style={{ display: "flex", justifyContent: "center", gap: "0.85rem" }}>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => setShowDiscardWarning(false)}
-              >
-                Keep editing
-              </Button>
-              <Button
-                type="button"
-                variant="danger"
-                onClick={forceCloseModal}
-              >
-                Discard photo
-              </Button>
-            </div>
-          </div>
-        </div>
+          secondaryAction={{
+            label: "Keep editing",
+            variant: "secondary",
+            onClick: () => setShowDiscardWarning(false),
+          }}
+        />
       )}
     </div>
   );
@@ -1996,10 +2360,10 @@ function MenuManagement() {
   const [discardCustomModalOpen, setDiscardCustomModalOpen] = useState(false);
   const [archiveCustomTarget, setArchiveCustomTarget] = useState<CustomMenuItem | null>(null);
 
-  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState("All");
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = usePreference<string>("admin_menu_category_filter", "All");
   const [categoryDeleteTarget, setCategoryDeleteTarget] = useState<{ id: number; name: string } | null>(null);
   const [menuSearch, setMenuSearch] = useState("");
-  const [menuSort, setMenuSort] = useState("default");
+  const [menuSort, setMenuSort] = usePreference<string>("admin_menu_sort", "default");
 
   function itemHasCategory(
     item: { category?: string; categories?: string[]; category_id?: number | null; category_ids?: number[] },
@@ -3855,288 +4219,140 @@ function MenuManagement() {
       )}
 
       {discardModalOpen && (
-        <div
-          className="address-map-backdrop"
-          style={{
-            zIndex: 10005,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
+        <CenterDialog
+          open={discardModalOpen}
+          onClose={() => setDiscardModalOpen(false)}
+          tone="warning"
+          eyebrow="DISCARD CHANGES WARNING"
+          title="Discard changes?"
+          description="Are you sure you want to discard your changes? Any unsaved edits and staged dish photos will be lost."
+          primaryAction={{
+            label: "Discard changes",
+            variant: "danger",
+            onClick: forceCloseNormal,
           }}
-        >
-          <div
-            className="admin-panel"
-            role="dialog"
-            aria-modal="true"
-            style={{
-              maxWidth: "430px",
-              width: "90%",
-              padding: "1.75rem",
-              borderRadius: "14px",
-              textAlign: "center",
-              boxShadow: "0 16px 40px rgba(0, 0, 0, 0.45)",
-            }}
-          >
-            <h3 style={{ margin: "0 0 0.75rem 0", fontSize: "1.2rem", fontWeight: 700 }}>
-              Discard changes?
-            </h3>
-            <p style={{ margin: "0 0 1.5rem 0", color: "var(--muted)", fontSize: "0.92rem", lineHeight: 1.45 }}>
-              Are you sure you want to discard your changes? Any unsaved edits and staged dish photos will be lost.
-            </p>
-            <div style={{ display: "flex", justifyContent: "center", gap: "0.85rem" }}>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => setDiscardModalOpen(false)}
-              >
-                Keep editing
-              </Button>
-              <Button
-                type="button"
-                variant="danger"
-                onClick={forceCloseNormal}
-              >
-                Discard changes
-              </Button>
-            </div>
-          </div>
-        </div>
+          secondaryAction={{
+            label: "Keep editing",
+            variant: "secondary",
+            onClick: () => setDiscardModalOpen(false),
+          }}
+        />
       )}
 
       {discardCustomModalOpen && (
-        <div
-          className="address-map-backdrop"
-          style={{
-            zIndex: 10005,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
+        <CenterDialog
+          open={discardCustomModalOpen}
+          onClose={() => setDiscardCustomModalOpen(false)}
+          tone="warning"
+          eyebrow="DISCARD CUSTOM ITEM WARNING"
+          title="Discard custom item?"
+          description="Are you sure you want to discard your changes? Any unsaved custom sections and staged photos will be lost."
+          primaryAction={{
+            label: "Discard changes",
+            variant: "danger",
+            onClick: forceCloseCustom,
           }}
-        >
-          <div
-            className="admin-panel"
-            role="dialog"
-            aria-modal="true"
-            style={{
-              maxWidth: "430px",
-              width: "90%",
-              padding: "1.75rem",
-              borderRadius: "14px",
-              textAlign: "center",
-              boxShadow: "0 16px 40px rgba(0, 0, 0, 0.45)",
-            }}
-          >
-            <h3 style={{ margin: "0 0 0.75rem 0", fontSize: "1.2rem", fontWeight: 700 }}>
-              Discard custom item?
-            </h3>
-            <p style={{ margin: "0 0 1.5rem 0", color: "var(--muted)", fontSize: "0.92rem", lineHeight: 1.45 }}>
-              Are you sure you want to discard your changes? Any unsaved custom sections and staged photos will be lost.
-            </p>
-            <div style={{ display: "flex", justifyContent: "center", gap: "0.85rem" }}>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => setDiscardCustomModalOpen(false)}
-              >
-                Keep editing
-              </Button>
-              <Button
-                type="button"
-                variant="danger"
-                onClick={forceCloseCustom}
-              >
-                Discard changes
-              </Button>
-            </div>
-          </div>
-        </div>
+          secondaryAction={{
+            label: "Keep editing",
+            variant: "secondary",
+            onClick: () => setDiscardCustomModalOpen(false),
+          }}
+        />
       )}
 
       {archiveTarget && (
-        <div
-          className="address-map-backdrop"
-          style={{
-            zIndex: 10005,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <div
-            className="admin-panel"
-            role="dialog"
-            aria-modal="true"
-            style={{
-              maxWidth: "430px",
-              width: "90%",
-              padding: "1.75rem",
-              borderRadius: "14px",
-              textAlign: "center",
-              boxShadow: "0 16px 40px rgba(0, 0, 0, 0.45)",
-            }}
-          >
-            <h3 style={{ margin: "0 0 0.75rem 0", fontSize: "1.2rem", fontWeight: 700 }}>
-              Remove from live menu?
-            </h3>
-            <p style={{ margin: "0 0 1.5rem 0", color: "var(--muted)", fontSize: "0.92rem", lineHeight: 1.45 }}>
+        <CenterDialog
+          open={Boolean(archiveTarget)}
+          onClose={() => setArchiveTarget(null)}
+          tone="danger"
+          eyebrow="REMOVE FROM LIVE MENU"
+          title={`Remove ${archiveTarget.name}?`}
+          description={
+            <span>
               Are you sure you want to remove <strong>{archiveTarget.name}</strong> from the live menu? This will mark it as unavailable.
-            </p>
-            <div style={{ display: "flex", justifyContent: "center", gap: "0.85rem" }}>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => setArchiveTarget(null)}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                variant="danger"
-                onClick={() => {
-                  const target = archiveTarget;
-                  setArchiveTarget(null);
-                  if (target) void archive(target);
-                }}
-              >
-                Remove item
-              </Button>
-            </div>
-          </div>
-        </div>
+            </span>
+          }
+          primaryAction={{
+            label: "Remove item",
+            variant: "danger",
+            onClick: () => {
+              const target = archiveTarget;
+              setArchiveTarget(null);
+              if (target) void archive(target);
+            },
+          }}
+          secondaryAction={{
+            label: "Cancel",
+            variant: "secondary",
+            onClick: () => setArchiveTarget(null),
+          }}
+        />
       )}
 
       {archiveCustomTarget && (
-        <div
-          className="address-map-backdrop"
-          style={{
-            zIndex: 10005,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <div
-            className="admin-panel"
-            role="dialog"
-            aria-modal="true"
-            style={{
-              maxWidth: "430px",
-              width: "90%",
-              padding: "1.75rem",
-              borderRadius: "14px",
-              textAlign: "center",
-              boxShadow: "0 16px 40px rgba(0, 0, 0, 0.45)",
-            }}
-          >
-            <h3 style={{ margin: "0 0 0.75rem 0", fontSize: "1.2rem", fontWeight: 700 }}>
-              Remove custom item?
-            </h3>
-            <p style={{ margin: "0 0 1.5rem 0", color: "var(--muted)", fontSize: "0.92rem", lineHeight: 1.45 }}>
+        <CenterDialog
+          open={Boolean(archiveCustomTarget)}
+          onClose={() => setArchiveCustomTarget(null)}
+          tone="danger"
+          eyebrow="REMOVE CUSTOM ITEM"
+          title={`Remove ${archiveCustomTarget.name}?`}
+          description={
+            <span>
               Are you sure you want to remove <strong>{archiveCustomTarget.name}</strong> from the custom menu?
-            </p>
-            <div style={{ display: "flex", justifyContent: "center", gap: "0.85rem" }}>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => setArchiveCustomTarget(null)}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                variant="danger"
-                onClick={() => {
-                  const target = archiveCustomTarget;
-                  setArchiveCustomTarget(null);
-                  if (target) void archiveCustom(target);
-                }}
-              >
-                Remove item
-              </Button>
-            </div>
-          </div>
-        </div>
+            </span>
+          }
+          primaryAction={{
+            label: "Remove item",
+            variant: "danger",
+            onClick: () => {
+              const target = archiveCustomTarget;
+              setArchiveCustomTarget(null);
+              if (target) void archiveCustom(target);
+            },
+          }}
+          secondaryAction={{
+            label: "Cancel",
+            variant: "secondary",
+            onClick: () => setArchiveCustomTarget(null),
+          }}
+        />
       )}
 
       {categoryDeleteTarget && (
-        <div
-          className="address-map-backdrop"
-          style={{
-            zIndex: 10005,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
+        <CenterDialog
+          open={Boolean(categoryDeleteTarget)}
+          onClose={() => setCategoryDeleteTarget(null)}
+          tone="danger"
+          eyebrow="DELETE CATEGORY WARNING"
+          title={`Delete category "${categoryDeleteTarget.name}"?`}
+          description={
+            (() => {
+              const affected = getCategoryMenuCount(categoryDeleteTarget);
+              return affected > 0 ? (
+                <span>
+                  Are you sure you want to delete <strong>“{categoryDeleteTarget.name}”</strong>?{" "}
+                  <strong>{affected}</strong> {affected === 1 ? "menu item belongs" : "menu items belong"} to this category.
+                </span>
+              ) : (
+                <span>Are you sure you want to delete category <strong>“{categoryDeleteTarget.name}”</strong>?</span>
+              );
+            })()
+          }
+          primaryAction={{
+            label: "Delete category",
+            variant: "danger",
+            onClick: () => {
+              const target = categoryDeleteTarget;
+              setCategoryDeleteTarget(null);
+              if (target) void executeDeleteCategory(target);
+            },
           }}
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setCategoryDeleteTarget(null);
+          secondaryAction={{
+            label: "Cancel",
+            variant: "secondary",
+            onClick: () => setCategoryDeleteTarget(null),
           }}
-        >
-          <div
-            className="admin-panel"
-            role="dialog"
-            aria-modal="true"
-            style={{
-              maxWidth: "430px",
-              width: "90%",
-              padding: "1.75rem",
-              borderRadius: "14px",
-              textAlign: "center",
-              boxShadow: "0 16px 40px rgba(0, 0, 0, 0.45)",
-            }}
-          >
-            <div
-              style={{
-                width: 48,
-                height: 48,
-                borderRadius: "50%",
-                background: "#fef2f2",
-                color: "#dc2626",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                margin: "0 auto 1rem",
-              }}
-            >
-              <Trash2 size={24} />
-            </div>
-            <h3 style={{ margin: "0 0 0.75rem 0", fontSize: "1.2rem", fontWeight: 700 }}>
-              Delete category?
-            </h3>
-            <p style={{ margin: "0 0 1.5rem 0", color: "var(--muted)", fontSize: "0.92rem", lineHeight: 1.45 }}>
-              {(() => {
-                const affected = getCategoryMenuCount(categoryDeleteTarget);
-                return affected > 0 ? (
-                  <>
-                    Are you sure you want to delete <strong>“{categoryDeleteTarget.name}”</strong>?{" "}
-                    <strong>{affected}</strong> {affected === 1 ? "menu item belongs" : "menu items belong"} to this category.
-                  </>
-                ) : (
-                  <>Are you sure you want to delete category <strong>“{categoryDeleteTarget.name}”</strong>?</>
-                );
-              })()}
-            </p>
-            <div style={{ display: "flex", justifyContent: "center", gap: "0.85rem" }}>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => setCategoryDeleteTarget(null)}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                variant="danger"
-                onClick={() => {
-                  const target = categoryDeleteTarget;
-                  setCategoryDeleteTarget(null);
-                  if (target) void executeDeleteCategory(target);
-                }}
-              >
-                Delete category
-              </Button>
-            </div>
-          </div>
-        </div>
+        />
       )}
     </>
   );
@@ -4430,11 +4646,14 @@ function parseSchedulesFromWeekly(scheduleObj: any): CustomSchedule[] {
   });
 }
 
-function buildWeeklySchedule(schedules: CustomSchedule[]): Record<string, any> {
+function buildWeeklySchedule(schedules: CustomSchedule[], deliveryPausedReason?: string | null): Record<string, any> {
   const allDays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
   const res: Record<string, any> = {
     custom_schedules: schedules,
   };
+  if (deliveryPausedReason !== undefined) {
+    res.delivery_paused_reason = deliveryPausedReason;
+  }
   for (const day of allDays) {
     const matching = schedules.filter((s) => s.days.includes(day));
     if (matching.length > 0) {
@@ -4538,7 +4757,7 @@ function SettingsPage() {
   const [form, setForm] = useState<Restaurant | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState("");
+  const [_notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [locationPickerOpen, setLocationPickerOpen] = useState(false);
   const [isLocationHovered, setIsLocationHovered] = useState(false);
@@ -4561,6 +4780,8 @@ function SettingsPage() {
 
   const [phoneNumbers, setPhoneNumbers] = useState<string[]>([""]);
   const [savedToastOpen, setSavedToastOpen] = useState(false);
+  const [savedToastMsg, setSavedToastMsg] = useState("Restaurant settings saved.");
+  const [scheduleToDelete, setScheduleToDelete] = useState<string | null>(null);
   const initialSnapshot = useRef<string>("");
   const [storedBaseSpeed, setStoredBaseSpeed] = useState<number>(30.0);
 
@@ -4569,6 +4790,9 @@ function SettingsPage() {
 
   const [overrideWarningOpen, setOverrideWarningOpen] = useState(false);
   const [pendingToggleValue, setPendingToggleValue] = useState<boolean | null>(null);
+
+  const [deliveryWarningOpen, setDeliveryWarningOpen] = useState(false);
+  const [pendingDeliveryValue, setPendingDeliveryValue] = useState<boolean | null>(null);
 
   useEffect(() => {
     api<Restaurant>("/admin/settings")
@@ -4595,8 +4819,8 @@ function SettingsPage() {
           accepting_orders: isRestOpen,
           is_restaurant_open: isRestOpen,
           is_delivery_open: isDelivOpen,
+          delivery_paused_reason: settings.delivery_paused_reason || (settings.weekly_schedule?.delivery_paused_reason) || "Currently not delivering",
           order_cutoff_minutes_before_closing: settings.order_cutoff_minutes_before_closing ?? 30,
-          distance_calculation_mode: settings.distance_calculation_mode || "AUTO",
           charge_from_zero_beyond_free_radius: Boolean(settings.charge_from_zero_beyond_free_radius),
           haversine_routing_factor: settings.haversine_routing_factor ?? 1.3627,
           average_delivery_speed_kmh: settings.average_delivery_speed_kmh ?? 30.0,
@@ -4660,6 +4884,7 @@ function SettingsPage() {
                 is_restaurant_open: isRestOpen,
                 is_delivery_open: isDelivOpen,
                 order_cutoff_minutes_before_closing: settings.order_cutoff_minutes_before_closing ?? 30,
+                delivery_paused_reason: settings.delivery_paused_reason || (settings.weekly_schedule?.delivery_paused_reason) || prev.delivery_paused_reason || "Currently not delivering",
                 delivery_status: settings.delivery_status,
                 delivery_status_heading: settings.delivery_status_heading,
                 delivery_status_message: settings.delivery_status_message,
@@ -4678,189 +4903,6 @@ function SettingsPage() {
     return () => window.clearInterval(timer);
   }, [isDirty, busy]);
 
-  async function persistAcceptingOrders(nextVal: boolean) {
-    if (!form) return;
-    const cleanPhones = phoneNumbers.map((p) => p.trim()).filter(Boolean);
-    const phoneStr = cleanPhones.join(", ");
-    const weekly = buildWeeklySchedule(schedules);
-    const scheduledOpen = form.is_currently_scheduled_open ?? isCurrentlyOpenBySchedule(schedules);
-    const isOverride = nextVal !== scheduledOpen;
-    const nextDeliveryOpen = nextVal ? Boolean(form.is_delivery_open) : false;
-
-    setBusy(true);
-    try {
-      const updated = await api<Restaurant>("/admin/settings", {
-        method: "PUT",
-        body: JSON.stringify({
-          ...form,
-          accepting_orders: nextVal,
-          is_delivery_open: nextDeliveryOpen,
-          phone: phoneStr,
-          phones: cleanPhones,
-          weekly_schedule: weekly,
-          delivery_fee_per_km_paise: Math.round(form.delivery_fee_per_km_paise * 100),
-          minimum_order_paise: Math.round(form.minimum_order_paise * 100),
-          order_cutoff_minutes_before_closing: Number(form.order_cutoff_minutes_before_closing) || 30,
-          distance_calculation_mode: form.distance_calculation_mode || "AUTO",
-          charge_from_zero_beyond_free_radius: Boolean(form.charge_from_zero_beyond_free_radius),
-          haversine_routing_factor: Number(form.haversine_routing_factor) || 1.3627,
-          average_delivery_speed_kmh: Number(form.average_delivery_speed_kmh) || 30.0,
-          customer_sla_minutes: Number(form.customer_sla_minutes) || 36.0,
-          alns_max_iterations_mode: form.alns_max_iterations_mode || "AUTO",
-          alns_max_iterations: Number(form.alns_max_iterations) || 220,
-          max_orders_per_driver: Number(form.max_orders_per_driver) || 5,
-          enforce_driver_geofence: Boolean(form.enforce_driver_geofence),
-          driver_geofence_meters: Number(form.driver_geofence_meters) || 500,
-        }),
-      });
-
-      const parsedScheds = parseSchedulesFromWeekly(updated.weekly_schedule);
-      setSchedules(parsedScheds);
-      setStoredBaseSpeed(updated.average_delivery_speed_kmh ?? 30.0);
-      const phonesList = (updated.phones && updated.phones.length > 0)
-        ? updated.phones
-        : updated.phone
-          ? updated.phone.split(",").map((p: string) => p.trim()).filter(Boolean)
-          : ["+91"];
-      const finalPhones = phonesList.length > 0 ? phonesList.map(formatPhoneWithPrefix) : ["+91"];
-      setPhoneNumbers(finalPhones);
-
-      const formData: Restaurant = {
-        ...updated,
-        weekly_schedule: updated.weekly_schedule || {},
-        delivery_fee_per_km_paise: updated.delivery_fee_per_km_paise / 100,
-        minimum_order_paise: updated.minimum_order_paise / 100,
-        accepting_orders: updated.is_restaurant_open ?? updated.accepting_orders,
-        is_restaurant_open: updated.is_restaurant_open ?? updated.accepting_orders,
-        is_delivery_open: updated.is_delivery_open !== undefined ? Boolean(updated.is_delivery_open) : nextDeliveryOpen,
-        order_cutoff_minutes_before_closing: updated.order_cutoff_minutes_before_closing ?? 30,
-        distance_calculation_mode: updated.distance_calculation_mode || "AUTO",
-        charge_from_zero_beyond_free_radius: Boolean(updated.charge_from_zero_beyond_free_radius),
-        haversine_routing_factor: updated.haversine_routing_factor ?? 1.3627,
-        average_delivery_speed_kmh: updated.average_delivery_speed_kmh ?? 30.0,
-        customer_sla_minutes: updated.customer_sla_minutes ?? 36.0,
-        alns_max_iterations_mode: updated.alns_max_iterations_mode || "AUTO",
-        alns_max_iterations: updated.alns_max_iterations || 220,
-        max_orders_per_driver: updated.max_orders_per_driver || 5,
-        available_drivers_ready: updated.available_drivers_ready ?? form.available_drivers_ready ?? 0,
-        enforce_driver_geofence: Boolean(updated.enforce_driver_geofence),
-        driver_geofence_meters: updated.driver_geofence_meters || 500,
-      };
-      setForm(formData);
-      initialSnapshot.current = JSON.stringify({
-        form: formData,
-        schedules: parsedScheds,
-        phoneNumbers: finalPhones,
-      });
-
-      let noticeMsg = "Restaurant status updated.";
-      if (isOverride) {
-        const untilStr = updated.admin_override_until ? ` until ${formatOverrideTime(updated.admin_override_until)}` : "";
-        noticeMsg = nextVal
-          ? `Override active: Restaurant opened${untilStr}.`
-          : `Override active: Restaurant closed${untilStr}.`;
-      } else {
-        noticeMsg = nextVal
-          ? "Restaurant opened as scheduled."
-          : "Restaurant closed as scheduled.";
-      }
-      setNotice(noticeMsg);
-      setSavedToastOpen(true);
-      setTimeout(() => setSavedToastOpen(false), 3000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not update restaurant status.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function persistDeliveryToggle(nextVal: boolean) {
-    if (!form || busy) return;
-    const isRestOpen = form.is_restaurant_open ?? form.accepting_orders;
-    if (!isRestOpen && nextVal) {
-      setError("Cannot enable online ordering while the restaurant is closed.");
-      return;
-    }
-    const cleanPhones = phoneNumbers.map((p) => p.trim()).filter(Boolean);
-    const phoneStr = cleanPhones.join(", ");
-    const weekly = buildWeeklySchedule(schedules);
-
-    setBusy(true);
-    try {
-      const updated = await api<Restaurant>("/admin/settings", {
-        method: "PUT",
-        body: JSON.stringify({
-          ...form,
-          accepting_orders: isRestOpen,
-          is_delivery_open: nextVal,
-          phone: phoneStr,
-          phones: cleanPhones,
-          weekly_schedule: weekly,
-          delivery_fee_per_km_paise: Math.round(form.delivery_fee_per_km_paise * 100),
-          minimum_order_paise: Math.round(form.minimum_order_paise * 100),
-          order_cutoff_minutes_before_closing: Number(form.order_cutoff_minutes_before_closing) || 30,
-          distance_calculation_mode: form.distance_calculation_mode || "AUTO",
-          charge_from_zero_beyond_free_radius: Boolean(form.charge_from_zero_beyond_free_radius),
-          haversine_routing_factor: Number(form.haversine_routing_factor) || 1.3627,
-          average_delivery_speed_kmh: Number(form.average_delivery_speed_kmh) || 30.0,
-          customer_sla_minutes: Number(form.customer_sla_minutes) || 36.0,
-          alns_max_iterations_mode: form.alns_max_iterations_mode || "AUTO",
-          alns_max_iterations: Number(form.alns_max_iterations) || 220,
-          max_orders_per_driver: Number(form.max_orders_per_driver) || 5,
-          enforce_driver_geofence: Boolean(form.enforce_driver_geofence),
-          driver_geofence_meters: Number(form.driver_geofence_meters) || 500,
-        }),
-      });
-
-      const parsedScheds = parseSchedulesFromWeekly(updated.weekly_schedule);
-      setSchedules(parsedScheds);
-      setStoredBaseSpeed(updated.average_delivery_speed_kmh ?? 30.0);
-      const phonesList = (updated.phones && updated.phones.length > 0)
-        ? updated.phones
-        : updated.phone
-          ? updated.phone.split(",").map((p: string) => p.trim()).filter(Boolean)
-          : ["+91"];
-      const finalPhones = phonesList.length > 0 ? phonesList.map(formatPhoneWithPrefix) : ["+91"];
-      setPhoneNumbers(finalPhones);
-
-      const formData: Restaurant = {
-        ...updated,
-        weekly_schedule: updated.weekly_schedule || {},
-        delivery_fee_per_km_paise: updated.delivery_fee_per_km_paise / 100,
-        minimum_order_paise: updated.minimum_order_paise / 100,
-        accepting_orders: updated.is_restaurant_open ?? updated.accepting_orders,
-        is_restaurant_open: updated.is_restaurant_open ?? updated.accepting_orders,
-        is_delivery_open: updated.is_delivery_open !== undefined ? Boolean(updated.is_delivery_open) : nextVal,
-        order_cutoff_minutes_before_closing: updated.order_cutoff_minutes_before_closing ?? 30,
-        distance_calculation_mode: updated.distance_calculation_mode || "AUTO",
-        charge_from_zero_beyond_free_radius: Boolean(updated.charge_from_zero_beyond_free_radius),
-        haversine_routing_factor: updated.haversine_routing_factor ?? 1.3627,
-        average_delivery_speed_kmh: updated.average_delivery_speed_kmh ?? 30.0,
-        customer_sla_minutes: updated.customer_sla_minutes ?? 36.0,
-        alns_max_iterations_mode: updated.alns_max_iterations_mode || "AUTO",
-        alns_max_iterations: updated.alns_max_iterations || 220,
-        max_orders_per_driver: updated.max_orders_per_driver || 5,
-        available_drivers_ready: updated.available_drivers_ready ?? form.available_drivers_ready ?? 0,
-        enforce_driver_geofence: Boolean(updated.enforce_driver_geofence),
-        driver_geofence_meters: updated.driver_geofence_meters || 500,
-      };
-      setForm(formData);
-      initialSnapshot.current = JSON.stringify({
-        form: formData,
-        schedules: parsedScheds,
-        phoneNumbers: finalPhones,
-      });
-
-      setNotice(nextVal ? "Online ordering enabled." : "Online ordering paused (Walk-in orders active).");
-      setSavedToastOpen(true);
-      setTimeout(() => setSavedToastOpen(false), 3000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not update online order status.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   function handleToggleAcceptingOrders() {
     if (!form || busy) return;
     const nextVal = !form.accepting_orders;
@@ -4869,8 +4911,27 @@ function SettingsPage() {
       setPendingToggleValue(nextVal);
       setOverrideWarningOpen(true);
     } else {
-      void persistAcceptingOrders(nextVal);
+      setForm((prev) => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          accepting_orders: nextVal,
+          is_restaurant_open: nextVal,
+          is_delivery_open: nextVal ? true : false,
+        };
+      });
     }
+  }
+
+  function handleToggleDelivery(nextVal: boolean) {
+    if (!form || busy) return;
+    const isRestOpen = form.is_restaurant_open ?? form.accepting_orders;
+    if (!isRestOpen && nextVal) {
+      setError("Cannot enable online ordering while the restaurant is closed.");
+      return;
+    }
+    setPendingDeliveryValue(nextVal);
+    setDeliveryWarningOpen(true);
   }
 
   function handleOpenAddSchedule() {
@@ -4951,7 +5012,7 @@ function SettingsPage() {
     setError("");
     setNotice("");
     try {
-      const weekly = buildWeeklySchedule(schedules);
+      const weekly = buildWeeklySchedule(schedules, form.delivery_paused_reason);
       const cleanPhones = phoneNumbers.map((p) => p.trim()).filter(Boolean);
       const phoneStr = cleanPhones.join(", ");
       const updated = await api<Restaurant>("/admin/settings", {
@@ -4959,14 +5020,17 @@ function SettingsPage() {
         body: JSON.stringify({
           ...form,
           accepting_orders: form.is_restaurant_open ?? form.accepting_orders,
+          is_restaurant_open: form.is_restaurant_open ?? form.accepting_orders,
           phone: phoneStr,
           phones: cleanPhones,
           weekly_schedule: weekly,
           delivery_fee_per_km_paise: Math.round(form.delivery_fee_per_km_paise * 100),
           minimum_order_paise: Math.round(form.minimum_order_paise * 100),
           is_delivery_open: Boolean(form.is_delivery_open),
+          delivery_paused_reason: form.delivery_paused_reason !== undefined
+            ? ((form.delivery_paused_reason || "").trim() || "Currently not delivering")
+            : "Currently not delivering",
           order_cutoff_minutes_before_closing: Number(form.order_cutoff_minutes_before_closing) || 30,
-          distance_calculation_mode: form.distance_calculation_mode || "AUTO",
           charge_from_zero_beyond_free_radius: Boolean(form.charge_from_zero_beyond_free_radius),
           haversine_routing_factor: Number(form.haversine_routing_factor) || 1.3627,
           average_delivery_speed_kmh: Number(form.average_delivery_speed_kmh) || 30.0,
@@ -4997,8 +5061,8 @@ function SettingsPage() {
         accepting_orders: updated.is_restaurant_open ?? updated.accepting_orders,
         is_restaurant_open: updated.is_restaurant_open ?? updated.accepting_orders,
         is_delivery_open: updated.is_delivery_open !== undefined ? Boolean(updated.is_delivery_open) : Boolean(form.is_delivery_open),
+        delivery_paused_reason: updated.delivery_paused_reason || (updated.weekly_schedule?.delivery_paused_reason) || "Currently not delivering",
         order_cutoff_minutes_before_closing: updated.order_cutoff_minutes_before_closing ?? 30,
-        distance_calculation_mode: updated.distance_calculation_mode || "AUTO",
         charge_from_zero_beyond_free_radius: Boolean(updated.charge_from_zero_beyond_free_radius),
         haversine_routing_factor: updated.haversine_routing_factor ?? 1.3627,
         average_delivery_speed_kmh: updated.average_delivery_speed_kmh ?? 30.0,
@@ -5018,9 +5082,10 @@ function SettingsPage() {
       });
       setConfirmSaveOpen(false);
       setSettingsDiffs([]);
-      setNotice("Restaurant details saved.");
+      const msg = "Restaurant settings and dispatch configuration saved successfully.";
+      setNotice(msg);
+      setSavedToastMsg(msg);
       setSavedToastOpen(true);
-      setTimeout(() => setSavedToastOpen(false), 2600);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Could not save these settings.",
@@ -5055,6 +5120,26 @@ function SettingsPage() {
     const oldP: string[] = initial.phoneNumbers || [];
 
     const diffs: { label: string; from: string; to: string }[] = [];
+
+    const oldRestOpen = Boolean(oldF.is_restaurant_open ?? oldF.accepting_orders);
+    const newRestOpen = Boolean(form.is_restaurant_open ?? form.accepting_orders);
+    if (oldRestOpen !== newRestOpen) {
+      diffs.push({
+        label: "Restaurant status",
+        from: oldRestOpen ? "Open (accepting orders)" : "Closed (orders paused)",
+        to: newRestOpen ? "Open (accepting orders)" : "Closed (orders paused)",
+      });
+    }
+
+    const oldDelivOpen = Boolean(oldF.is_delivery_open);
+    const newDelivOpen = Boolean(form.is_delivery_open);
+    if (oldDelivOpen !== newDelivOpen) {
+      diffs.push({
+        label: "Online delivery ordering",
+        from: oldDelivOpen ? "Active" : "Paused",
+        to: newDelivOpen ? "Active" : "Paused",
+      });
+    }
 
     if (form.restaurant_name !== oldF.restaurant_name) {
       diffs.push({
@@ -5106,19 +5191,6 @@ function SettingsPage() {
         label: "GPS coordinates",
         from: `${oldF.latitude ?? 0}, ${oldF.longitude ?? 0}`,
         to: `${form.latitude ?? 0}, ${form.longitude ?? 0}`,
-      });
-    }
-
-    if ((form.distance_calculation_mode || "AUTO") !== (oldF.distance_calculation_mode || "AUTO")) {
-      const modeNames: Record<string, string> = {
-        AUTO: "Auto",
-        GOOGLE_MAPS: "Google's API",
-        HAVERSINE: "Haversine",
-      };
-      diffs.push({
-        label: "Distance calculation mode",
-        from: modeNames[oldF.distance_calculation_mode || "AUTO"] || oldF.distance_calculation_mode || "AUTO",
-        to: modeNames[form.distance_calculation_mode || "AUTO"] || form.distance_calculation_mode || "AUTO",
       });
     }
 
@@ -5269,8 +5341,21 @@ function SettingsPage() {
         title="Restaurant settings"
         description="Keep your public details and checkout expectations up to date."
       />
-      {notice && <Notice tone="success">{notice}</Notice>}
-      {error && <Notice>{error}</Notice>}
+      {error && (
+        <CenterDialog
+          open={Boolean(error)}
+          onClose={() => setError("")}
+          tone="danger"
+          eyebrow="SETTINGS ERROR"
+          title="Could not save settings"
+          description={error}
+          primaryAction={{
+            label: "Dismiss",
+            variant: "primary",
+            onClick: () => setError(""),
+          }}
+        />
+      )}
       <form className="settings-form" onSubmit={handleFormSubmit}>
         <div className="settings-layout">
           <div className="settings-main">
@@ -5457,7 +5542,16 @@ function SettingsPage() {
                           disabled={busy}
                           onClick={() => {
                             const scheduledOpen = form.is_currently_scheduled_open ?? isCurrentlyOpenBySchedule(schedules);
-                            void persistAcceptingOrders(scheduledOpen);
+                            setForm((prev) => {
+                              if (!prev) return null;
+                              return {
+                                ...prev,
+                                accepting_orders: scheduledOpen,
+                                is_restaurant_open: scheduledOpen,
+                                is_delivery_open: scheduledOpen ? true : false,
+                                admin_override_state: false,
+                              };
+                            });
                           }}
                         >
                           Resume schedule
@@ -5581,12 +5675,64 @@ function SettingsPage() {
                           type="checkbox"
                           checked={Boolean(form.accepting_orders && form.is_delivery_open)}
                           disabled={busy || !form.accepting_orders}
-                          onChange={(e) => void persistDeliveryToggle(e.target.checked)}
+                          onChange={(e) => handleToggleDelivery(e.target.checked)}
                         />
                         <span />
                       </label>
                     </div>
                   </div>
+
+                  {Boolean(form.accepting_orders && !form.is_delivery_open) && (
+                    <div
+                      style={{
+                        marginTop: "1rem",
+                        padding: "0.85rem 1rem",
+                        background: "rgba(245, 158, 11, 0.05)",
+                        border: "1px solid rgba(245, 158, 11, 0.25)",
+                        borderRadius: "8px",
+                      }}
+                    >
+                      <label
+                        htmlFor="reason-closing-online-order"
+                        style={{
+                          display: "block",
+                          marginBottom: "0.4rem",
+                          fontWeight: 600,
+                          fontSize: "0.88rem",
+                          color: "var(--foreground)",
+                        }}
+                      >
+                        Reason for closing online order{" "}
+                        <span style={{ fontSize: "0.78rem", fontWeight: 400, color: "var(--muted)" }}>
+                          (optional)
+                        </span>
+                      </label>
+                      <input
+                        id="reason-closing-online-order"
+                        name="reason-closing-online-order"
+                        type="text"
+                        placeholder="Currently not delivering"
+                        value={form.delivery_paused_reason ?? "Currently not delivering"}
+                        onChange={(e) =>
+                          setForm((prev) =>
+                            prev ? { ...prev, delivery_paused_reason: e.target.value } : null
+                          )
+                        }
+                        style={{
+                          width: "100%",
+                          padding: "0.55rem 0.85rem",
+                          borderRadius: "6px",
+                          border: "1px solid var(--border)",
+                          background: "var(--surface)",
+                          fontSize: "0.9rem",
+                          color: "var(--foreground)",
+                        }}
+                      />
+                      <small style={{ color: "var(--muted)", display: "block", marginTop: "4px", fontSize: "0.78rem" }}>
+                        Displayed on storefront as the heading while online ordering is paused.
+                      </small>
+                    </div>
+                  )}
                 </div>
 
                 {schedules.length === 0 ? (
@@ -5647,7 +5793,7 @@ function SettingsPage() {
                             type="button"
                             className="icon-button"
                             title="Delete this schedule"
-                            onClick={() => handleRemoveSchedule(s.id)}
+                            onClick={() => setScheduleToDelete(s.id)}
                           >
                             <Trash2 size={16} />
                           </button>
@@ -6232,53 +6378,24 @@ function SettingsPage() {
       </form>
 
       {savedToastOpen && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 99999,
-            pointerEvents: "none",
+        <CenterDialog
+          open={savedToastOpen}
+          onClose={() => setSavedToastOpen(false)}
+          tone="success"
+          eyebrow="SETTINGS UPDATED"
+          title="Settings updated successfully"
+          description={savedToastMsg}
+          primaryAction={{
+            label: "Done",
+            variant: "primary",
+            onClick: () => setSavedToastOpen(false),
           }}
-        >
-          <div
-            style={{
-              background: "#1e2420",
-              color: "#ffffff",
-              padding: "16px 28px",
-              borderRadius: "14px",
-              boxShadow: "0 16px 40px rgba(0,0,0,0.45)",
-              display: "flex",
-              alignItems: "center",
-              gap: "12px",
-              fontSize: "1.05rem",
-              fontWeight: 600,
-              pointerEvents: "auto",
-            }}
-          >
-            <span
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                background: "#22c55e",
-                borderRadius: "50%",
-                width: 28,
-                height: 28,
-              }}
-            >
-              <Check size={18} color="#fff" strokeWidth={3} />
-            </span>
-            Restaurant settings saved
-          </div>
-        </div>
+        />
       )}
 
       {addScheduleOpen && (
         <div
-          className="address-map-backdrop"
+          className="modal-backdrop"
           onMouseDown={(e) => {
             if (e.target === e.currentTarget) {
               setAddScheduleOpen(false);
@@ -6471,93 +6588,120 @@ function SettingsPage() {
       )}
 
       {overrideWarningOpen && (
-        <div
-          className="address-map-backdrop"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 9999,
+        <CenterDialog
+          open={overrideWarningOpen}
+          onClose={() => {
+            setOverrideWarningOpen(false);
+            setPendingToggleValue(null);
           }}
-        >
-          <div
-            className="admin-panel"
-            role="dialog"
-            aria-modal="true"
-            style={{
-              maxWidth: "460px",
-              width: "90%",
-              padding: "1.75rem",
-              borderRadius: "12px",
-              boxShadow: "0 12px 32px rgba(0, 0, 0, 0.4)",
-              textAlign: "center",
-            }}
-          >
-            <h3
-              style={{
-                margin: "0 0 1rem 0",
-                fontSize: "1.2rem",
-                fontWeight: 600,
-              }}
-            >
-              Are you sure you want to override current schedule?
-            </h3>
-            <p
-              style={{
-                margin: "0 0 1.5rem 0",
-                color: "var(--muted)",
-                fontSize: "0.92rem",
-                lineHeight: 1.45,
-              }}
-            >
-              {pendingToggleValue
-                ? "The restaurant is currently outside scheduled operating hours. Turning this on will allow customers to place orders right now. It will automatically turn off at the end of operating hours."
-                : "The restaurant is currently within scheduled operating hours. Turning this off will pause incoming orders immediately. It will automatically turn back on when the next scheduled working hours start."}
-            </p>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "center",
-                gap: "1rem",
-              }}
-            >
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => {
-                  setOverrideWarningOpen(false);
-                  setPendingToggleValue(null);
-                }}
-              >
-                No
-              </Button>
-              <Button
-                type="button"
-                disabled={busy}
-                onClick={() => {
-                  const val = pendingToggleValue;
-                  setOverrideWarningOpen(false);
-                  setPendingToggleValue(null);
-                  if (val !== null) {
-                    void persistAcceptingOrders(val);
-                  }
-                }}
-              >
-                Yes
-              </Button>
-            </div>
-          </div>
-        </div>
+          tone="warning"
+          eyebrow="SCHEDULE OVERRIDE WARNING"
+          title="Override operating schedule?"
+          description={
+            pendingToggleValue
+              ? "The restaurant is currently outside scheduled operating hours. Turning this on will allow customers to place orders right now. It will automatically turn off at the end of operating hours."
+              : "The restaurant is currently within scheduled operating hours. Turning this off will pause incoming orders immediately. It will automatically turn back on when the next scheduled working hours start."
+          }
+          primaryAction={{
+            label: "Override now",
+            variant: "primary",
+            disabled: busy,
+            onClick: () => {
+              const val = pendingToggleValue;
+              setOverrideWarningOpen(false);
+              setPendingToggleValue(null);
+              if (val !== null) {
+                setForm((prev) => {
+                  if (!prev) return null;
+                  return {
+                    ...prev,
+                    accepting_orders: val,
+                    is_restaurant_open: val,
+                    is_delivery_open: val ? true : false,
+                  };
+                });
+              }
+            },
+          }}
+          secondaryAction={{
+            label: "Keep schedule",
+            variant: "secondary",
+            onClick: () => {
+              setOverrideWarningOpen(false);
+              setPendingToggleValue(null);
+            },
+          }}
+        />
+      )}
+
+      {deliveryWarningOpen && pendingDeliveryValue !== null && (
+        <CenterDialog
+          open={deliveryWarningOpen}
+          onClose={() => {
+            setDeliveryWarningOpen(false);
+            setPendingDeliveryValue(null);
+          }}
+          tone="warning"
+          eyebrow="ONLINE ORDERING WARNING"
+          title={pendingDeliveryValue ? "Enable online delivery orders?" : "Pause online delivery orders?"}
+          description={
+            pendingDeliveryValue
+              ? "Are you sure you want to resume online ordering? Customers will be able to place delivery orders from the website once you save restaurant settings."
+              : "Are you sure you want to pause online ordering? Delivery orders from the website will be blocked, and customers will see a 'Walk-in orders only' notice once you save restaurant settings."
+          }
+          primaryAction={{
+            label: pendingDeliveryValue ? "Enable online orders" : "Pause online orders",
+            variant: pendingDeliveryValue ? "primary" : "danger",
+            disabled: busy,
+            onClick: () => {
+              const val = pendingDeliveryValue;
+              setDeliveryWarningOpen(false);
+              setPendingDeliveryValue(null);
+              if (val !== null) {
+                setForm((prev) => (prev ? { ...prev, is_delivery_open: val } : null));
+              }
+            },
+          }}
+          secondaryAction={{
+            label: "Cancel",
+            variant: "secondary",
+            onClick: () => {
+              setDeliveryWarningOpen(false);
+              setPendingDeliveryValue(null);
+            },
+          }}
+        />
+      )}
+
+      {scheduleToDelete && (
+        <CenterDialog
+          open={Boolean(scheduleToDelete)}
+          onClose={() => setScheduleToDelete(null)}
+          tone="warning"
+          eyebrow="SCHEDULE REMOVAL WARNING"
+          title="Remove operating hours slot?"
+          description="Are you sure you want to remove this operating schedule slot? The change will apply once you save restaurant settings."
+          primaryAction={{
+            label: "Remove slot",
+            variant: "danger",
+            onClick: () => {
+              if (scheduleToDelete) handleRemoveSchedule(scheduleToDelete);
+              setScheduleToDelete(null);
+            },
+          }}
+          secondaryAction={{
+            label: "Keep slot",
+            variant: "secondary",
+            onClick: () => setScheduleToDelete(null),
+          }}
+        />
       )}
 
       {confirmSaveOpen && (
         <div
-          className="address-map-backdrop"
+          className="modal-backdrop"
           style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 9999,
+            zIndex: 10005,
           }}
           onMouseDown={(e) => {
             if (e.target === e.currentTarget && !busy) {
@@ -6704,27 +6848,34 @@ function ActivityCenter() {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [sort, setSort] = usePreference<string>("admin_activity_sort", "newest");
-  useEffect(() => {
-    api<typeof events>("/admin/events?limit=250")
-      .then(setEvents)
+  const [page, setPage] = useState(0);
+  const [totalEvents, setTotalEvents] = useState(0);
+  const activityPageSize = 30;
+
+  const loadEvents = useCallback((targetPage = page) => {
+    setLoading(true);
+    const periodParam = ["day", "week", "month"].includes(sort) ? sort : "all";
+    const sortParam = ["day", "week", "month"].includes(sort) ? "newest" : sort;
+    return api<any>(
+      `/admin/events?limit=${activityPageSize}&offset=${targetPage * activityPageSize}&q=${encodeURIComponent(query.trim())}&period=${periodParam}&sort=${sortParam}`
+    )
+      .then((res) => {
+        if (Array.isArray(res)) {
+          setEvents(res);
+          setTotalEvents(res.length);
+        } else {
+          setEvents(res.items || []);
+          setTotalEvents(res.total || 0);
+        }
+      })
       .finally(() => setLoading(false));
-  }, []);
-  const visibleEvents = events
-    .filter((event) => {
-      const textMatches = `${event.message} ${event.actor_name} ${event.event_type}`.toLowerCase().includes(query.trim().toLowerCase());
-      if (!textMatches) return false;
-      const eventTime = new Date(event.created_at).getTime();
-      const now = Date.now();
-      if (sort === "day") return (now - eventTime) <= 24 * 60 * 60 * 1000;
-      if (sort === "week") return (now - eventTime) <= 7 * 24 * 60 * 60 * 1000;
-      if (sort === "month") return (now - eventTime) <= 30 * 24 * 60 * 60 * 1000;
-      return true;
-    })
-    .sort((a, b) => {
-      if (sort === "oldest") return a.created_at.localeCompare(b.created_at);
-      if (sort === "actor") return a.actor_name.localeCompare(b.actor_name);
-      return b.created_at.localeCompare(a.created_at);
-    });
+  }, [page, query, sort]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadEvents(), query ? 250 : 0);
+    return () => window.clearTimeout(timer);
+  }, [loadEvents, query]);
+
   return (
     <>
       <PageTitle
@@ -6732,24 +6883,65 @@ function ActivityCenter() {
         title="Activity & notifications"
         description="Order changes, menu pauses, and delivery updates in date order."
       />
-      {loading ? (
-        <Loading label="Loading activity…" />
-      ) : (
-        <section className="admin-panel">
-          <div className="activity-filter-bar">
-            <label className="admin-search"><Search size={16} /><input aria-label="Search activity" placeholder="Search activity or person" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
-            <RoundedSelect className="activity-sort-select" icon={<ArrowUpDown size={15} />} ariaLabel="Sort activity" value={sort} onChange={setSort} options={[{ value: "newest", label: "Newest first" }, { value: "oldest", label: "Oldest first" }, { value: "day", label: "Today" }, { value: "week", label: "This week" }, { value: "month", label: "This month" }, { value: "actor", label: "Person A–Z" }]} />
-          </div>
-          {visibleEvents.length ? visibleEvents.map((event) => (
+      <section className="admin-panel">
+        <div className="activity-filter-bar">
+          <label className="admin-search">
+            <Search size={16} />
+            <input
+              aria-label="Search activity"
+              placeholder="Search activity or person"
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setPage(0);
+              }}
+            />
+          </label>
+          <RoundedSelect
+            className="activity-sort-select"
+            icon={<ArrowUpDown size={15} />}
+            ariaLabel="Sort activity"
+            value={sort}
+            onChange={(nextSort) => {
+              setSort(nextSort);
+              setPage(0);
+            }}
+            options={[
+              { value: "newest", label: "Newest first" },
+              { value: "oldest", label: "Oldest first" },
+              { value: "day", label: "Today" },
+              { value: "week", label: "This week" },
+              { value: "month", label: "This month" },
+              { value: "actor", label: "Person A–Z" },
+            ]}
+          />
+        </div>
+        {loading && !events.length ? (
+          <Loading label="Loading activity…" />
+        ) : events.length ? (
+          events.map((event) => (
             <div className="status-break-row" key={event.id}>
               <strong>{event.message}</strong>
               <span>
                 {event.actor_name} · {friendlyDate(event.created_at)}
               </span>
             </div>
-          )) : <EmptyState title="No activity found" description="Try a different search." />}
-        </section>
-      )}
+          ))
+        ) : (
+          <EmptyState title="No activity found" description="Try a different search." />
+        )}
+        <Pagination
+          limit={activityPageSize}
+          offset={page * activityPageSize}
+          total={totalEvents}
+          label="activities"
+          onChange={(nextOffset) => {
+            const nextP = Math.floor(nextOffset / activityPageSize);
+            setPage(nextP);
+            void loadEvents(nextP);
+          }}
+        />
+      </section>
     </>
   );
 }
@@ -6757,7 +6949,7 @@ function ActivityCenter() {
 const DEFAULT_FALLBACK_BANNER = "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=1200&q=80";
 
 function Offers() {
-  const [campaignTab, setCampaignTab] = useState<"email" | "sms">("email");
+  const [campaignTab, setCampaignTab] = usePreference<"email" | "sms">("admin_offers_campaign_tab", "email");
   const [audience, setAudience] = usePreference<string>("admin_offers_audience", "ALL");
   const [channels] = useState<string[]>(["EMAIL"]);
   const [subject, setSubject] = useState("");
@@ -6776,10 +6968,12 @@ function Offers() {
   const [invertLogo, setInvertLogo] = useState<boolean>(false);
   const [themeColor, setThemeColor] = useState("#c34226");
   const [customImageUrl, setCustomImageUrl] = useState("");
-  const [previewDevice, setPreviewDevice] = useState<"desktop" | "mobile">("desktop");
+  const [previewDevice, setPreviewDevice] = usePreference<"desktop" | "mobile">("admin_offers_preview_device", "desktop");
   const [uploadingImage, setUploadingImage] = useState(false);
   const [copiedPromo, setCopiedPromo] = useState(false);
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
+  const [presetToDelete, setPresetToDelete] = useState<string | null>(null);
+  const [offerToast, setOfferToast] = useState<{ title: string; message: string } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -6862,12 +7056,19 @@ function Offers() {
     setCustomImageUrl("");
   }
 
-  async function handleDeletePreset(filename: string) {
-    if (!window.confirm("Are you sure you want to delete this preset image from Cloud Storage (emailImages)?")) return;
+  function handleDeletePreset(filename: string) {
+    setPresetToDelete(filename);
+  }
+
+  async function executeDeletePreset(filename: string) {
     try {
       const ok = await deleteEmailImage(filename);
       if (ok) {
         setNotice(`Image deleted from Cloud Storage.`);
+        setOfferToast({
+          title: "Preset deleted",
+          message: `The preset image "${filename}" has been deleted from Cloud Storage.`,
+        });
         if (backgroundImageUrl.includes(filename) || customImageUrl.includes(filename)) {
           setBackgroundImageUrl("");
           setCustomImageUrl("");
@@ -6892,6 +7093,10 @@ function Offers() {
       setBackgroundImageUrl(urlToUse);
       setCustomImageUrl("");
       setNotice("Custom image uploaded directly to Cloud Storage (emailImages) and added to presets!");
+      setOfferToast({
+        title: "Preset image uploaded",
+        message: "Custom image uploaded directly to Cloud Storage (emailImages) and added to presets!",
+      });
       await refreshEmailImages();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not upload image to cloud storage.");
@@ -6940,15 +7145,14 @@ function Offers() {
           invert_logo: invertLogo,
         }),
       });
-      if (result.status === "QUEUED" || result.status === "SENDING") {
-        setNotice(
-          `Offer campaign queued for background delivery (${result.recipient_count} recipients). Emails are sent smoothly in the background; delivery status will update automatically below.`
-        );
-      } else {
-        setNotice(
-          `${result.status}: ${result.sent_count}/${result.recipient_count} recipients sent. ${result.provider_notes.join("; ")}`
-        );
-      }
+      const offerMsg = (result.status === "QUEUED" || result.status === "SENDING")
+        ? `Offer campaign queued for delivery (${result.recipient_count} recipients). Emails are sent in the background; delivery status will update automatically in the log.`
+        : `${result.status}: ${result.sent_count}/${result.recipient_count} recipients sent.`;
+      setNotice(offerMsg);
+      setOfferToast({
+        title: "Offer broadcast dispatched",
+        message: offerMsg,
+      });
       setConfirmModalOpen(false);
       setSubject("");
       setHeadline("");
@@ -7773,6 +7977,47 @@ function Offers() {
         </div>
       )}
 
+      {presetToDelete && (
+        <CenterDialog
+          open={Boolean(presetToDelete)}
+          onClose={() => setPresetToDelete(null)}
+          tone="danger"
+          eyebrow="DELETE PRESET WARNING"
+          title="Delete preset image?"
+          description={`Are you sure you want to delete "${presetToDelete}" from Cloud Storage (emailImages)? This action cannot be undone.`}
+          primaryAction={{
+            label: "Delete image",
+            variant: "danger",
+            onClick: async () => {
+              const file = presetToDelete;
+              setPresetToDelete(null);
+              if (file) await executeDeletePreset(file);
+            },
+          }}
+          secondaryAction={{
+            label: "Cancel",
+            variant: "secondary",
+            onClick: () => setPresetToDelete(null),
+          }}
+        />
+      )}
+
+      {offerToast && (
+        <CenterDialog
+          open={Boolean(offerToast)}
+          onClose={() => setOfferToast(null)}
+          tone="success"
+          eyebrow="OFFER CAMPAIGN"
+          title={offerToast.title}
+          description={offerToast.message}
+          primaryAction={{
+            label: "Done",
+            variant: "primary",
+            onClick: () => setOfferToast(null),
+          }}
+        />
+      )}
+
       {/* Campaign Activity History Log */}
       <section className="admin-panel campaign-log-panel">
         <h2>Campaign broadcast log</h2>
@@ -7969,6 +8214,7 @@ function Discounts() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [discountToDelete, setDiscountToDelete] = useState<MenuDiscountRow | null>(null);
 
   const refresh = useCallback(async () => {
     const [availableMenu, customMenu, scheduled] = await Promise.all([
@@ -8171,7 +8417,7 @@ function Discounts() {
                           className="icon-button danger-icon"
                           aria-label={`Delete discount for ${names}`}
                           title="Delete discount"
-                          onClick={() => void removeDiscount(discount.id)}
+                          onClick={() => setDiscountToDelete(discount)}
                         >
                           <Trash2 size={16} />
                         </button>
@@ -8368,6 +8614,30 @@ function Discounts() {
             </form>
           </section>
         </div>
+      )}
+      {discountToDelete && (
+        <CenterDialog
+          open={Boolean(discountToDelete)}
+          onClose={() => setDiscountToDelete(null)}
+          tone="danger"
+          eyebrow="DELETE DISCOUNT"
+          title={`Remove ${discountToDelete.discount_percent}% discount?`}
+          description={`Are you sure you want to remove the discount campaign for ${discountToDelete.campaign_name || discountToDelete.menu_item_names.join(", ") || "these items"}? This discount will immediately stop being applied.`}
+          primaryAction={{
+            label: "Remove discount",
+            variant: "danger",
+            onClick: async () => {
+              const id = discountToDelete.id;
+              setDiscountToDelete(null);
+              await removeDiscount(id);
+            },
+          }}
+          secondaryAction={{
+            label: "Keep discount",
+            variant: "secondary",
+            onClick: () => setDiscountToDelete(null),
+          }}
+        />
       )}
     </>
   );

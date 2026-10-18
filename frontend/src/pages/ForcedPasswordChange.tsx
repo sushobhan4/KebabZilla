@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { Notice } from '../components'
 import { useAuth } from '../state'
+import { validatePasswordComplexity } from './AuthPage'
 
 export default function ForcedPasswordChange() {
   const { account, updateAccount } = useAuth()
@@ -17,6 +18,11 @@ export default function ForcedPasswordChange() {
     event.preventDefault()
     if (newPassword !== confirmPassword) {
       setError('The new passwords do not match.')
+      return
+    }
+    const pwdError = validatePasswordComplexity(newPassword)
+    if (pwdError) {
+      setError(pwdError)
       return
     }
     setBusy(true)
@@ -52,9 +58,9 @@ export default function ForcedPasswordChange() {
                   type="password"
                   autoComplete="new-password"
                   required
-                  minLength={10}
+                  minLength={8}
                   maxLength={128}
-                  placeholder="At least 10 characters"
+                  placeholder="At least 8 characters (a-z, A-Z, 0-9, special)"
                   value={newPassword}
                   onChange={(event) => setNewPassword(event.target.value)}
                 />
@@ -68,7 +74,7 @@ export default function ForcedPasswordChange() {
                   type="password"
                   autoComplete="new-password"
                   required
-                  minLength={10}
+                  minLength={8}
                   maxLength={128}
                   placeholder="Re-enter your password"
                   value={confirmPassword}

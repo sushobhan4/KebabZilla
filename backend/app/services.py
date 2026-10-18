@@ -37,10 +37,10 @@ from app.cache import invalidate_delivery_cache, invalidate_orders_cache
 
 ALLOWED_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
     OrderStatus.PLACED: {OrderStatus.ACCEPTED, OrderStatus.REJECTED, OrderStatus.CANCELLED},
-    OrderStatus.ACCEPTED: {OrderStatus.PREPARING, OrderStatus.CANCELLED},
+    OrderStatus.ACCEPTED: {OrderStatus.READY, OrderStatus.PREPARING, OrderStatus.CANCELLED},
     OrderStatus.PREPARING: {OrderStatus.READY, OrderStatus.CANCELLED},
-    OrderStatus.READY: {OrderStatus.OUT_FOR_DELIVERY},
-    OrderStatus.OUT_FOR_DELIVERY: {OrderStatus.DELIVERED},
+    OrderStatus.READY: {OrderStatus.OUT_FOR_DELIVERY, OrderStatus.CANCELLED},
+    OrderStatus.OUT_FOR_DELIVERY: {OrderStatus.DELIVERED, OrderStatus.CANCELLED},
     OrderStatus.DELIVERED: set(),
     OrderStatus.REJECTED: set(),
     OrderStatus.CANCELLED: set(),
@@ -370,29 +370,16 @@ def calculate_delivery_distance(
     latitude: float,
     longitude: float,
 ) -> tuple[float, str]:
-    """Calculates delivery distance according to configured mode: AUTO, GOOGLE_MAPS, or HAVERSINE.
+    """Calculates delivery distance using Google Maps Routes API if available,
+    falling back to Haversine distance with the configured routing factor.
     Returns (distance_km, method_used).
     """
     if config.latitude is None or config.longitude is None:
         raise HTTPException(status_code=503, detail="The restaurant delivery location is not configured")
 
-    mode = (getattr(config, "distance_calculation_mode", None) or "AUTO").upper()
     factor = float(getattr(config, "haversine_routing_factor", None) or 1.3)
 
-    if mode == "HAVERSINE":
-        dist = _distance_km(config.latitude, config.longitude, latitude, longitude) * factor
-        return round(dist, 2), "HAVERSINE"
-
-    if mode == "GOOGLE_MAPS":
-        google_dist = _google_routes_distance_km(config.latitude, config.longitude, latitude, longitude)
-        if google_dist is not None:
-            return round(google_dist, 2), "GOOGLE_MAPS"
-        raise HTTPException(
-            status_code=502,
-            detail="Google Maps Routes API is unreachable or returned an error. Please try again or switch distance calculation mode."
-        )
-
-    # AUTO mode: Try Google Maps first, fall back to Haversine if broken or unconfigured
+    # Try Google Maps Routes API first, fall back to Haversine if broken, unconfigured, or error
     google_dist = _google_routes_distance_km(config.latitude, config.longitude, latitude, longitude)
     if google_dist is not None:
         return round(google_dist, 2), "GOOGLE_MAPS"
@@ -617,8 +604,6 @@ def evaluate_restaurant_and_delivery_status(config: RestaurantSettings, value: d
 
     is_shop_open, reason = is_restaurant_open(config, value)
     cutoff_minutes = max(0, getattr(config, "order_cutoff_minutes_before_closing", 30) or 0)
-    admin_delivery_open = bool(getattr(config, "is_delivery_open", True))
-
     if not is_shop_open:
         return {
             "is_restaurant_open": False,
@@ -637,14 +622,43 @@ def evaluate_restaurant_and_delivery_status(config: RestaurantSettings, value: d
     closing_time_str = closing_time.isoformat() if closing_time else None
     closing_in_minutes = max(0, int(round((closing_time - local).total_seconds() / 60))) if closing_time else None
 
+    # When the restaurant opens, online orders start with it until and unless admin turns it off
+    admin_delivery_open = True
+    delivery_paused_until = getattr(config, "delivery_paused_until", None)
+    if delivery_paused_until is not None:
+        if delivery_paused_until.tzinfo is None:
+            delivery_paused_until = delivery_paused_until.replace(tzinfo=timezone.utc)
+        val_utc = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        if val_utc < delivery_paused_until:
+            admin_delivery_open = False
+        else:
+            admin_delivery_open = True
+    elif not bool(getattr(config, "is_delivery_open", True)):
+        intervals = get_schedule_intervals_for_range(config, local)
+        inside = next((it for it in intervals if it[0] <= local <= it[1]), None) if intervals else None
+        updated_at = getattr(config, "updated_at", None)
+        if inside and updated_at is not None:
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=timezone.utc)
+            if updated_at < inside[0].astimezone(timezone.utc):
+                admin_delivery_open = True
+            else:
+                admin_delivery_open = False
+        else:
+            admin_delivery_open = False
+
     if not admin_delivery_open:
+        paused_heading = getattr(config, "delivery_paused_reason", "Currently not delivering") or "Currently not delivering"
+        cutoff_msg = "Our shop is open! We are currently only accepting walk-in orders at our counter."
+        if closing_in_minutes is not None and closing_in_minutes <= 59:
+            cutoff_msg = f"{cutoff_msg} The restaurant is closing in {closing_in_minutes} minutes."
         return {
             "is_restaurant_open": True,
             "is_delivery_open": False,
             "accepting_orders": False,
             "delivery_status": "DELIVERY_PAUSED",
-            "delivery_status_heading": "Currently not delivering",
-            "delivery_status_message": "Our shop is open! We are currently only accepting walk-in orders at our counter.",
+            "delivery_status_heading": paused_heading,
+            "delivery_status_message": cutoff_msg,
             "order_cutoff_minutes_before_closing": cutoff_minutes,
             "closing_in_minutes": closing_in_minutes,
             "closing_time": closing_time_str,
@@ -657,14 +671,15 @@ def evaluate_restaurant_and_delivery_status(config: RestaurantSettings, value: d
 
         if local >= cutoff_dt:
             cutoff_msg = "Our shop is open! We are currently only accepting walk-in orders at our counter."
-            if closing_in_minutes:
+            if closing_in_minutes is not None and closing_in_minutes <= 59:
                 cutoff_msg = f"{cutoff_msg} The restaurant is closing in {closing_in_minutes} minutes."
+            cutoff_heading = getattr(config, "delivery_paused_reason", "Currently not delivering") or "Currently not delivering"
             return {
                 "is_restaurant_open": True,
                 "is_delivery_open": False,
                 "accepting_orders": False,
                 "delivery_status": "DELIVERY_CUTOFF",
-                "delivery_status_heading": "Currently not delivering",
+                "delivery_status_heading": cutoff_heading,
                 "delivery_status_message": cutoff_msg,
                 "order_cutoff_minutes_before_closing": cutoff_minutes,
                 "closing_in_minutes": closing_in_minutes,

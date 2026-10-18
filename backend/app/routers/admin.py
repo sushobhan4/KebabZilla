@@ -1,4 +1,5 @@
 from datetime import datetime, time, timedelta, timezone
+import logging
 import os
 import secrets
 import string
@@ -6,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
 import httpx
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 
 from app.dependencies import CurrentAccount, DbSession, require_roles
 from app.config import settings
@@ -16,6 +17,8 @@ from app.models import (
     Account,
     AdminEvent,
     CustomMenuItem,
+    DeliveryBatch,
+    DeliveryBatchOrder,
     StaffInfo,
     MenuDiscount,
     MenuDiscountItem,
@@ -32,11 +35,12 @@ from app.models import (
     Role,
     utcnow,
 )
-from app.schemas import AccountsPageOut, AccountOut, AdminAccountCreate, AdminOrdersPageOut, MenuDiscountInput, OfferInput, OrderStatusUpdate, ProvisionedAccountOut, RestaurantSettingsInput
-from app.security import hash_password
+from app.schemas import AccountsPageOut, AccountOut, AdminAccountCreate, AdminOrdersPageOut, MenuDiscountInput, OfferInput, OrderStatusUpdate, ProvisionedAccountOut, RestaurantSettingsInput, RoleChangeInput
+from app.security import hash_password, verify_password
 from app.services import (
     calculate_override_until,
     evaluate_restaurant_and_delivery_status,
+    get_current_closing_time,
     get_next_schedule_refresh,
     is_restaurant_open,
     is_scheduled_open,
@@ -49,11 +53,14 @@ from app.services import (
 from app.cache import (
     KEY_ADMIN_SETTINGS,
     cache,
+    invalidate_delivery_cache,
     invalidate_menu_cache,
+    invalidate_orders_cache,
     invalidate_restaurant_cache,
 )
 
 router = APIRouter(prefix="/admin", tags=["administration"], dependencies=[Depends(require_roles(Role.ADMIN))])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/accounts", response_model=AccountsPageOut)
@@ -132,24 +139,26 @@ def create_account(data: AdminAccountCreate, db: DbSession):
 
 
 @router.patch("/accounts/{account_id}/role", response_model=AccountOut)
-def change_role(account_id: int, role: Role, actor: CurrentAccount, db: DbSession):
+def change_role(account_id: int, data: RoleChangeInput, actor: CurrentAccount, db: DbSession):
+    if not verify_password(data.password, actor.password_hash):
+        raise HTTPException(status_code=401, detail="Incorrect admin password. Please try again.")
     account = db.get(Account, account_id)
     if account is None:
         raise HTTPException(status_code=404, detail="Account not found")
     if actor.id == account.id:
         raise HTTPException(status_code=400, detail="You cannot change your own role")
-    if account.role == Role.ADMIN and role != Role.ADMIN:
+    if account.role == Role.ADMIN and data.role != Role.ADMIN:
         admin_count = db.scalar(select(func.count(Account.id)).where(Account.role == Role.ADMIN)) or 0
         if admin_count <= 1:
             raise HTTPException(status_code=400, detail="Cannot change the role of the last remaining administrator")
-    account.role = role
-    if role != Role.USER and account.staff_info is None:
+    account.role = data.role
+    if data.role != Role.USER and account.staff_info is None:
         account.staff_info = StaffInfo(
             account_id=account.id,
             is_accepting_deliveries=False,
             must_change_password=False,
         )
-    db.add(AdminEvent(event_type="account_role_changed", message=f"{account.name}'s role changed to {role.value}", actor_id=actor.id, details={"account_id": account.id, "role": role.value}))
+    db.add(AdminEvent(event_type="account_role_changed", message=f"{account.name}'s role changed to {data.role.value}", actor_id=actor.id, details={"account_id": account.id, "role": data.role.value}))
     db.commit()
     db.refresh(account)
     return account
@@ -171,9 +180,10 @@ def admin_orders(
     status_filter: OrderStatus | None = None,
     period: str = "all",
     q: str = "",
-    limit: int = Query(default=50, ge=1, le=250),
+    limit: int = Query(default=10, ge=1, le=250),
     offset: int = Query(default=0, ge=0),
 ):
+    effective_limit = min(limit, 10)
     filters = []
     if status_filter:
         filters.append(Order.status == status_filter)
@@ -186,7 +196,7 @@ def admin_orders(
         pattern = f"%{q.strip()}%"
         filters.append(or_(Order.order_id.ilike(pattern), Order.customer_name.ilike(pattern), Order.customer_phone.ilike(pattern)))
     total = db.scalar(select(func.count(Order.order_id)).where(*filters)) or 0
-    rows = db.scalars(select(Order).where(*filters).order_by(Order.created_at.desc()).offset(offset).limit(limit)).all()
+    rows = db.scalars(select(Order).where(*filters).order_by(Order.created_at.desc()).offset(offset).limit(effective_limit)).all()
     status_counts = {item.value: 0 for item in OrderStatus}
     for status_value, count in db.execute(select(Order.status, func.count(Order.order_id)).group_by(Order.status)):
         status_counts[status_value.value] = int(count)
@@ -194,7 +204,7 @@ def admin_orders(
     return {
         "items": [order_payload(order) for order in rows],
         "total": total,
-        "limit": limit,
+        "limit": effective_limit,
         "offset": offset,
         "status_counts": status_counts,
         "paid_revenue_paise": int(paid_revenue),
@@ -206,16 +216,76 @@ def admin_order_status(order_id: str, data: OrderStatusUpdate, actor: CurrentAcc
     order = db.get(Order, order_id)
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found")
-    if data.status == OrderStatus.OUT_FOR_DELIVERY:
-        raise HTTPException(status_code=400, detail="A delivery partner must take this order from the delivery queue")
-    if data.status == OrderStatus.DELIVERED:
-        raise HTTPException(status_code=400, detail="A delivery partner must verify the customer’s code to complete delivery")
     payment = db.get(Payment, order.order_id)
     if data.status in {OrderStatus.REJECTED, OrderStatus.CANCELLED} and payment and payment.status in {PaymentStatus.PAID, PaymentStatus.REFUND_PENDING}:
         raise HTTPException(status_code=409, detail="Issue a refund before rejecting or cancelling a paid order")
-    transition_order(order, data.status)
-    db.add(AdminEvent(event_type="order_status", message=f"Order {order.order_id} changed to {data.status.value} by {actor.name}", actor_id=actor.id, details={"order_id": order.order_id, "status": data.status.value}))
+
+    old_status = order.status
+    order.status = data.status
+
+    # If status is moving back from OUT_FOR_DELIVERY or if moving to statuses before delivery
+    if data.status in {OrderStatus.PLACED, OrderStatus.ACCEPTED, OrderStatus.PREPARING, OrderStatus.READY, OrderStatus.REJECTED, OrderStatus.CANCELLED}:
+        if order.assigned_delivery_id is not None:
+            order.assigned_delivery_id = None
+            order.delivery_started_at = None
+            order.delivery_otp_ciphertext = None
+            order.delivery_otp_expires_at = None
+            order.delivery_otp_attempts = 0
+            db.execute(delete(DeliveryBatchOrder).where(DeliveryBatchOrder.order_id == order.order_id))
+            empty_batches = db.scalars(select(DeliveryBatch).where(~DeliveryBatch.orders.any())).all()
+            for eb in empty_batches:
+                db.delete(eb)
+    elif data.status == OrderStatus.OUT_FOR_DELIVERY:
+        if order.delivery_started_at is None:
+            order.delivery_started_at = datetime.now(timezone.utc)
+    elif data.status == OrderStatus.DELIVERED:
+        if order.delivered_at is None:
+            order.delivered_at = datetime.now(timezone.utc)
+
+    if data.status != OrderStatus.DELIVERED:
+        order.delivered_at = None
+
+    db.add(AdminEvent(
+        event_type="order_status",
+        message=f"Order {order.order_id} status changed from {old_status.value} to {data.status.value} by {actor.name}",
+        actor_id=actor.id,
+        details={"order_id": order.order_id, "from_status": old_status.value, "status": data.status.value}
+    ))
     db.commit()
+    invalidate_orders_cache()
+    invalidate_delivery_cache()
+    return order_payload(order)
+
+
+@router.post("/orders/{order_id}/unassign-delivery")
+def admin_unassign_delivery(order_id: str, actor: CurrentAccount, db: DbSession):
+    order = db.get(Order, order_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    driver_name = order.delivery.name if order.delivery else f"Driver #{order.assigned_delivery_id}"
+    order.assigned_delivery_id = None
+    order.delivery_started_at = None
+    order.delivery_otp_ciphertext = None
+    order.delivery_otp_expires_at = None
+    order.delivery_otp_attempts = 0
+    if order.status == OrderStatus.OUT_FOR_DELIVERY:
+        order.status = OrderStatus.READY
+
+    db.execute(delete(DeliveryBatchOrder).where(DeliveryBatchOrder.order_id == order.order_id))
+    empty_batches = db.scalars(select(DeliveryBatch).where(~DeliveryBatch.orders.any())).all()
+    for eb in empty_batches:
+        db.delete(eb)
+
+    db.add(AdminEvent(
+        event_type="order_delivery_unassigned",
+        message=f"Delivery driver {driver_name} unassigned from order {order.order_id} by {actor.name}. Order returned to READY status.",
+        actor_id=actor.id,
+        details={"order_id": order.order_id}
+    ))
+    db.commit()
+    invalidate_orders_cache()
+    invalidate_delivery_cache()
     return order_payload(order)
 
 
@@ -237,8 +307,9 @@ async def refund_order(order_id: str, db: DbSession):
 
 
 def sync_override_if_expired(settings_obj: RestaurantSettings, db: DbSession | None = None) -> None:
+    now_utc = datetime.now(timezone.utc)
+    changed = False
     if settings_obj.admin_override_until is not None:
-        now_utc = datetime.now(timezone.utc)
         until_utc = settings_obj.admin_override_until
         if until_utc.tzinfo is None:
             until_utc = until_utc.replace(tzinfo=timezone.utc)
@@ -247,8 +318,22 @@ def sync_override_if_expired(settings_obj: RestaurantSettings, db: DbSession | N
             settings_obj.admin_override_until = None
             is_open, _ = is_scheduled_open(settings_obj)
             settings_obj.accepting_orders = is_open
-            if db is not None:
-                db.commit()
+            if is_open:
+                settings_obj.is_delivery_open = True
+                settings_obj.delivery_paused_until = None
+            changed = True
+
+    paused_until = getattr(settings_obj, "delivery_paused_until", None)
+    if paused_until is not None:
+        if paused_until.tzinfo is None:
+            paused_until = paused_until.replace(tzinfo=timezone.utc)
+        if now_utc >= paused_until:
+            settings_obj.delivery_paused_until = None
+            settings_obj.is_delivery_open = True
+            changed = True
+
+    if changed and db is not None:
+        db.commit()
 
 
 def serialize_restaurant_settings(settings_obj: RestaurantSettings, db: DbSession | None = None) -> dict:
@@ -288,7 +373,9 @@ def serialize_restaurant_settings(settings_obj: RestaurantSettings, db: DbSessio
         "charge_from_zero_beyond_free_radius": getattr(settings_obj, "charge_from_zero_beyond_free_radius", False) or False,
         "accepting_orders": is_open,
         "is_restaurant_open": is_open,
-        "is_delivery_open": bool(getattr(settings_obj, "is_delivery_open", True)),
+        "is_delivery_open": bool(getattr(settings_obj, "is_delivery_open", True)) if not is_open else (status_info["delivery_status"] != "DELIVERY_PAUSED"),
+        "delivery_paused_until": getattr(settings_obj, "delivery_paused_until", None),
+        "delivery_paused_reason": getattr(settings_obj, "delivery_paused_reason", "Currently not delivering") or "Currently not delivering",
         "order_cutoff_minutes_before_closing": getattr(settings_obj, "order_cutoff_minutes_before_closing", 30) or 30,
         "delivery_status": status_info["delivery_status"],
         "delivery_status_heading": status_info["delivery_status_heading"],
@@ -301,7 +388,6 @@ def serialize_restaurant_settings(settings_obj: RestaurantSettings, db: DbSessio
         "is_currently_scheduled_open": sched_open,
         "schedule_status": status_reason,
         "next_schedule_refresh": next_refresh,
-        "distance_calculation_mode": settings_obj.distance_calculation_mode,
         "enforce_driver_geofence": settings_obj.enforce_driver_geofence,
         "driver_geofence_meters": settings_obj.driver_geofence_meters,
         "haversine_routing_factor": getattr(settings_obj, "haversine_routing_factor", 1.3627) or 1.3627,
@@ -329,80 +415,163 @@ def get_settings(db: DbSession):
 
 @router.put("/settings")
 def update_settings(data: RestaurantSettingsInput, db: DbSession):
-    settings = restaurant_settings(db)
-    payload_data = data.model_dump()
-    if payload_data.get("phones"):
-        payload_data["phone"] = ", ".join(p.strip() for p in payload_data["phones"] if p.strip())
-    payload_data.pop("phones", None)
+    try:
+        settings = restaurant_settings(db)
+        payload_data = data.model_dump()
+        if payload_data.get("phones"):
+            payload_data["phone"] = ", ".join(p.strip() for p in payload_data["phones"] if p.strip())
+        payload_data.pop("phones", None)
 
-    if "weekly_schedule" in payload_data and payload_data["weekly_schedule"]:
-        settings.weekly_schedule = payload_data["weekly_schedule"]
+        if "weekly_schedule" in payload_data and payload_data["weekly_schedule"]:
+            settings.weekly_schedule = payload_data["weekly_schedule"]
 
-    now_dt = datetime.now(timezone.utc)
-    is_sched_open, _ = is_scheduled_open(settings, now_dt)
+        now_dt = datetime.now(timezone.utc)
+        is_sched_open, _ = is_scheduled_open(settings, now_dt)
 
-    target_accepting = data.accepting_orders
+        target_accepting = data.accepting_orders
 
-    if target_accepting == is_sched_open:
-        # Desired state matches natural schedule: clear any active override!
-        settings.admin_override_state = None
-        settings.admin_override_until = None
-        settings.accepting_orders = target_accepting
-    else:
-        # Desired state is an override against the natural schedule!
-        override_until = calculate_override_until(settings, now_dt, target_accepting)
-        settings.admin_override_state = target_accepting
-        settings.admin_override_until = override_until
-        settings.accepting_orders = target_accepting
+        was_open, _ = is_restaurant_open(settings, now_dt)
 
-    payload_data.pop("admin_override_open", None)
-    payload_data.pop("admin_override_state", None)
-    payload_data.pop("admin_override_until", None)
-    payload_data.pop("accepting_orders", None)
-    target_delivery_open = payload_data.pop("is_delivery_open", None)
+        if target_accepting == is_sched_open:
+            # Desired state matches natural schedule: clear any active override!
+            settings.admin_override_state = None
+            settings.admin_override_until = None
+            settings.accepting_orders = target_accepting
+        else:
+            # Desired state is an override against the natural schedule!
+            override_until = calculate_override_until(settings, now_dt, target_accepting)
+            settings.admin_override_state = target_accepting
+            settings.admin_override_until = override_until
+            settings.accepting_orders = target_accepting
 
-    for field, value in payload_data.items():
-        if hasattr(settings, field):
-            setattr(settings, field, value)
+        payload_data.pop("admin_override_open", None)
+        payload_data.pop("admin_override_state", None)
+        payload_data.pop("admin_override_until", None)
+        payload_data.pop("accepting_orders", None)
+        target_delivery_open = payload_data.pop("is_delivery_open", None)
+        payload_data.pop("delivery_paused_until", None)
+        target_delivery_reason = payload_data.pop("delivery_paused_reason", None)
+        if target_delivery_reason is not None:
+            settings.delivery_paused_reason = target_delivery_reason
 
-    is_now_open, _ = is_restaurant_open(settings, now_dt)
-    if not is_now_open:
-        # If the restaurant is closed, online delivery cannot be active
-        settings.is_delivery_open = False
-        db.execute(
-            update(StaffInfo)
-            .where(StaffInfo.is_accepting_deliveries == True)
-            .values(is_accepting_deliveries=False)
+        for field, value in payload_data.items():
+            if hasattr(settings, field):
+                setattr(settings, field, value)
+
+        is_now_open, _ = is_restaurant_open(settings, now_dt)
+
+        # When the restaurant opens, online orders start with it until and unless admin turns it off
+        if is_now_open and not was_open:
+            # Restaurant transitioning from closed to open: online order starts with it!
+            settings.is_delivery_open = True
+            settings.delivery_paused_until = None
+        elif target_delivery_open is not None:
+            if target_delivery_open is False:
+                settings.is_delivery_open = False
+                closing = get_current_closing_time(settings, now_dt)
+                settings.delivery_paused_until = closing
+            else:
+                settings.is_delivery_open = True
+                settings.delivery_paused_until = None
+
+        if not is_now_open:
+            db.execute(
+                update(StaffInfo)
+                .where(StaffInfo.is_accepting_deliveries == True)
+                .values(is_accepting_deliveries=False)
+            )
+
+        admin_override_until_str = None
+        if settings.admin_override_until:
+            admin_override_until_str = (
+                settings.admin_override_until.isoformat()
+                if hasattr(settings.admin_override_until, "isoformat")
+                else str(settings.admin_override_until)
+            )
+
+        db.add(AdminEvent(
+            event_type="settings_changed",
+            message="Restaurant settings updated",
+            details={
+                "weekly_schedule": data.weekly_schedule,
+                "accepting_orders": settings.accepting_orders,
+                "is_restaurant_open": is_now_open,
+                "is_delivery_open": settings.is_delivery_open,
+                "order_cutoff_minutes_before_closing": settings.order_cutoff_minutes_before_closing,
+                "admin_override_state": settings.admin_override_state,
+                "admin_override_until": admin_override_until_str,
+            }
+        ))
+        db.commit()
+        db.refresh(settings)
+        invalidate_restaurant_cache()
+        return serialize_restaurant_settings(settings, db=db)
+    except Exception as exc:
+        logger.exception("Failed to update restaurant settings: %s", exc)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Could not update restaurant settings: {exc}",
         )
-    else:
-        # Restaurant is open, honor delivery toggle from input
-        if target_delivery_open is not None:
-            settings.is_delivery_open = bool(target_delivery_open)
-
-    db.add(AdminEvent(
-        event_type="settings_changed",
-        message="Restaurant settings updated",
-        details={
-            "weekly_schedule": data.weekly_schedule,
-            "accepting_orders": settings.accepting_orders,
-            "is_restaurant_open": is_now_open,
-            "is_delivery_open": settings.is_delivery_open,
-            "order_cutoff_minutes_before_closing": settings.order_cutoff_minutes_before_closing,
-            "admin_override_state": settings.admin_override_state,
-            "admin_override_until": settings.admin_override_until.isoformat() if settings.admin_override_until else None,
-        }
-    ))
-    db.commit()
-    db.refresh(settings)
-    invalidate_restaurant_cache()
-    return serialize_restaurant_settings(settings, db=db)
 
 
 
 @router.get("/events")
-def admin_events(db: DbSession, limit: int = Query(default=100, ge=1, le=250)):
-    rows = db.scalars(select(AdminEvent).order_by(AdminEvent.created_at.desc()).limit(limit)).all()
-    return [{"id": row.id, "event_type": row.event_type, "message": row.message, "details": row.details, "actor_name": row.actor.name if row.actor else "System", "created_at": row.created_at} for row in rows]
+def admin_events(
+    db: DbSession,
+    limit: int = Query(default=30, ge=1, le=250),
+    offset: int = Query(default=0, ge=0),
+    q: str = "",
+    period: str = "all",
+    sort: str = "newest",
+):
+    effective_limit = min(limit, 30)
+    filters = []
+    if period in {"day", "week", "month", "year"}:
+        start, end, _ = date_range(period, None)
+        filters.extend([AdminEvent.created_at >= start, AdminEvent.created_at < end])
+    if q.strip():
+        pattern = f"%{q.strip()}%"
+        filters.append(
+            or_(
+                AdminEvent.message.ilike(pattern),
+                AdminEvent.event_type.ilike(pattern),
+                AdminEvent.actor.has(Account.name.ilike(pattern)),
+            )
+        )
+    total = db.scalar(select(func.count(AdminEvent.id)).where(*filters)) or 0
+
+    stmt = select(AdminEvent).where(*filters)
+    if sort == "oldest":
+        stmt = stmt.order_by(AdminEvent.created_at.asc())
+    elif sort == "actor":
+        stmt = stmt.outerjoin(Account, AdminEvent.actor_id == Account.id).order_by(
+            func.coalesce(Account.name, "System").asc(),
+            AdminEvent.created_at.desc(),
+        )
+    else:
+        stmt = stmt.order_by(AdminEvent.created_at.desc())
+
+    rows = db.scalars(
+        stmt.offset(offset).limit(effective_limit)
+    ).all()
+    items = [
+        {
+            "id": row.id,
+            "event_type": row.event_type,
+            "message": row.message,
+            "details": row.details,
+            "actor_name": row.actor.name if row.actor else "System",
+            "created_at": row.created_at,
+        }
+        for row in rows
+    ]
+    return {
+        "items": items,
+        "total": total,
+        "limit": effective_limit,
+        "offset": offset,
+    }
 
 
 

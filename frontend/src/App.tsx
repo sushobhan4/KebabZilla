@@ -1,12 +1,12 @@
 import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { Activity, ArrowLeft, BarChart3, ClipboardList, CookingPot, LayoutDashboard, LogIn, LogOut, Menu as MenuIcon, PackageCheck, Plus, Settings, Users, X, Send, Percent, ChevronDown, ChevronLeft, ChevronRight, Phone, MapPin, ReceiptText, Mail } from 'lucide-react'
+import { Activity, ArrowLeft, BarChart3, ClipboardList, CookingPot, LayoutDashboard, LogIn, LogOut, Menu as MenuIcon, PackageCheck, Plus, Settings, Users, X, Send, Percent, ChevronDown, ChevronLeft, ChevronRight, Phone, MapPin, ReceiptText, Mail, Shield } from 'lucide-react'
 import { useAuth, useRestaurant } from './state'
 import type { Role } from './api'
 import { Brand, Button, Notice } from './components'
 import Storefront from './pages/Storefront'
-import { getPreference, setPreference } from './cookies'
+import { getPreference, setPreference, usePreference } from './cookies'
 import { CookieConsentBanner, CookiePolicyModal, CookiePreferencesModal, PrivacyPolicyModal, DataPolicyModal } from './components/CookieConsent'
 import { liquidGlassManager } from './vendor/liquidGlassManager'
 
@@ -16,13 +16,14 @@ const Delivery = lazy(() => import('./pages/Delivery'))
 const Admin = lazy(() => import('./pages/Admin'))
 const AuthPage = lazy(() => import('./pages/AuthPage'))
 const Profile = lazy(() => import('./pages/Profile'))
+const Security = lazy(() => import('./pages/Security'))
 const ForcedPasswordChange = lazy(() => import('./pages/ForcedPasswordChange'))
 const CopyOtpPage = lazy(() => import('./pages/CopyOtpPage'))
 
 type NavItem = { to: string; label: string; icon: ReactNode; end?: boolean; tone?: 'employee' | 'delivery' }
 
 function defaultQuickPaths(role: Role): string[] {
-  if (role === 'ADMIN') return ['/admin', '/admin/orders', '/admin/menu', '/ops/billing']
+  if (role === 'ADMIN') return ['/admin', '/admin/orders', '/admin/menu']
   if (role === 'EMPLOYEE') return ['/ops', '/ops/billing', '/ops/menu']
   if (role === 'DELIVERY') return ['/delivery']
   return []
@@ -31,12 +32,6 @@ function defaultQuickPaths(role: Role): string[] {
 function savedQuickPaths(role: Role): string[] {
   const saved = getPreference<string[]>(`kz_quick_${role}`, defaultQuickPaths(role))
   const filtered = (saved || []).filter((path) => path !== '/admin/preview' && path !== '/admin/takeover')
-  if (role === 'ADMIN' && !filtered.includes('/ops/billing')) {
-    filtered.push('/ops/billing')
-  }
-  if (role === 'EMPLOYEE' && !filtered.includes('/ops/billing')) {
-    filtered.push('/ops/billing')
-  }
   return filtered
 }
 
@@ -69,7 +64,7 @@ function navFor(role: Role): NavItem[] {
     { to: '/ops/menu', label: 'Menu availability', icon: <CookingPot size={17} /> },
   ]
   if (role === 'DELIVERY') return [
-    { to: '/delivery', label: 'Deliveries', icon: <PackageCheck size={17} />, end: true },
+    { to: '/delivery', label: 'Deliveries', icon: <PackageCheck size={17} />, end: true, tone: 'delivery' },
   ]
   return []
 }
@@ -81,7 +76,7 @@ function AppHeader() {
   const profileWrapRef = useRef<HTMLDivElement>(null)
   const location = useLocation()
   const [quickItems, setQuickItems] = useState<string[]>(() => account ? savedQuickPaths(account.role) : [])
-  const [quickExpanded, setQuickExpanded] = useState(false)
+  const [quickExpanded, setQuickExpanded] = usePreference<boolean>('kz_quick_expanded', false)
   const [tabsOverflow, setTabsOverflow] = useState(false)
   const [canScrollLeft, setCanScrollLeft] = useState(false)
   const [canScrollRight, setCanScrollRight] = useState(false)
@@ -203,9 +198,9 @@ function AppHeader() {
     }
   }
 
-  const showTopTabs = account?.role === 'ADMIN' ? items.length > 0 : account?.role === 'EMPLOYEE' ? (!isMobile && items.length > 0) : false
-  const showSidebarDrawer = account?.role === 'ADMIN' ? items.length > 0 : account?.role === 'EMPLOYEE' ? (isMobile && items.length > 0) : false
-  const showQuickSettings = account?.role === 'ADMIN'
+  const showTopTabs = account?.role === 'ADMIN' ? items.length > 0 : (account?.role === 'EMPLOYEE' || account?.role === 'DELIVERY') ? (!isMobile && items.length > 0) : false
+  const showSidebarDrawer = account?.role === 'ADMIN' ? items.length > 0 : (account?.role === 'EMPLOYEE' || account?.role === 'DELIVERY') ? (isMobile && items.length > 0) : false
+  const showQuickSettings = Boolean(account && ['ADMIN', 'EMPLOYEE', 'DELIVERY'].includes(account.role))
 
   return <>
   <header className="app-header">
@@ -269,7 +264,7 @@ function AppHeader() {
                 tabDrag.current = null
               }}
             >
-              {(account?.role === 'EMPLOYEE' ? items : selected).map((item) => (
+              {(account?.role === 'EMPLOYEE' || account?.role === 'DELIVERY' ? items : selected).map((item) => (
                 <NavLink
                   key={item.to}
                   end={item.end}
@@ -306,14 +301,32 @@ function AppHeader() {
               </button>
               {profileOpen && (
                 <div className="profile-dropdown">
-                  {account.role === 'USER' && (
-                    <Link to="/orders" onClick={() => setProfileOpen(false)}>
-                      <ClipboardList size={16} /> Track orders
+                  <Link to="/orders" onClick={() => setProfileOpen(false)}>
+                    <ClipboardList size={16} /> Track orders
+                  </Link>
+                  {account.role === 'DELIVERY' && (
+                    <Link to="/delivery" onClick={() => setProfileOpen(false)}>
+                      <PackageCheck size={16} /> Deliveries
+                    </Link>
+                  )}
+                  {account.role === 'EMPLOYEE' && (
+                    <Link to="/ops" onClick={() => setProfileOpen(false)}>
+                      <ClipboardList size={16} /> Order queue
+                    </Link>
+                  )}
+                  {account.role === 'ADMIN' && (
+                    <Link to="/admin" onClick={() => setProfileOpen(false)}>
+                      <LayoutDashboard size={16} /> Admin overview
                     </Link>
                   )}
                   <Link to="/profile" onClick={() => setProfileOpen(false)}>
                     <Users size={16} /> Edit profile
                   </Link>
+                  {['ADMIN', 'EMPLOYEE', 'DELIVERY'].includes(account.role) && (
+                    <Link to="/security" onClick={() => setProfileOpen(false)}>
+                      <Shield size={16} /> Security
+                    </Link>
+                  )}
                 </div>
               )}
             </div>
@@ -469,8 +482,9 @@ export default function App() {
           <Route path="/activate" element={account ? <Navigate to={homeFor(account.role)} replace /> : <AuthPage mode="recovery" />} />
           <Route path="/copy-otp" element={<CopyOtpPage />} />
           <Route path="/workspace" element={account ? <Navigate to={homeFor(account.role)} replace /> : <Navigate to="/login" replace />} />
-          <Route path="/orders" element={<RoleGuard roles={['USER']}><OrdersPage /></RoleGuard>} />
+          <Route path="/orders" element={<RoleGuard roles={['USER', 'ADMIN', 'EMPLOYEE', 'DELIVERY']}><OrdersPage /></RoleGuard>} />
           <Route path="/profile" element={<RoleGuard roles={['USER', 'ADMIN', 'EMPLOYEE', 'DELIVERY']}><Profile /></RoleGuard>} />
+          <Route path="/security" element={<RoleGuard roles={['ADMIN', 'EMPLOYEE', 'DELIVERY']}><Security /></RoleGuard>} />
           <Route path="/ops/*" element={<RoleGuard roles={['EMPLOYEE', 'ADMIN']}><WorkspaceLayout><Operations /></WorkspaceLayout></RoleGuard>} />
           <Route path="/delivery/*" element={<RoleGuard roles={['DELIVERY', 'ADMIN']}><WorkspaceLayout><Delivery /></WorkspaceLayout></RoleGuard>} />
           <Route path="/admin/*" element={<RoleGuard roles={['ADMIN']}><WorkspaceLayout><Admin /></WorkspaceLayout></RoleGuard>} />

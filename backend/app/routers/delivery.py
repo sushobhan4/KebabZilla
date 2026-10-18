@@ -1,5 +1,8 @@
 from collections import defaultdict
 from datetime import datetime, timezone
+import logging
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select, update
@@ -306,108 +309,133 @@ def recommended_batches(account: CurrentAccount, db: DbSession):
         cache.set(cache_key, empty_res, ttl_seconds=5.0)
         return empty_res
 
-    routing_factor = float(getattr(restaurant, "haversine_routing_factor", None) or 1.3627)
-    speed_kmh = float(getattr(restaurant, "average_delivery_speed_kmh", None) or 30.0)
-    customer_sla = float(getattr(restaurant, "customer_sla_minutes", None) or 36.0)
-    max_orders = int(getattr(restaurant, "max_orders_per_driver", None) or 5)
-    max_iters = (
-        int(getattr(restaurant, "alns_max_iterations", None) or 220)
-        if getattr(restaurant, "alns_max_iterations_mode", "AUTO") == "MANUAL"
-        else 220
-    )
-    # The max drivers constraint reads all available drivers ready to deliver
-    max_drivers = max(1, active_riders)
+    try:
+        routing_factor = float(getattr(restaurant, "haversine_routing_factor", None) or 1.3627)
+        speed_kmh = float(getattr(restaurant, "average_delivery_speed_kmh", None) or 30.0)
+        customer_sla = float(getattr(restaurant, "customer_sla_minutes", None) or 36.0)
+        max_orders = int(getattr(restaurant, "max_orders_per_driver", None) or 5)
+        max_iters = (
+            int(getattr(restaurant, "alns_max_iterations", None) or 220)
+            if getattr(restaurant, "alns_max_iterations_mode", "AUTO") == "MANUAL"
+            else 220
+        )
+        max_drivers = max(1, active_riders)
 
-    rest_node = {
-        "lat": restaurant.latitude or 0.0,
-        "lng": restaurant.longitude or 0.0,
-        "name": restaurant.restaurant_name or "Restaurant",
-    }
+        rest_node = {
+            "lat": float(restaurant.latitude or 0.0),
+            "lng": float(restaurant.longitude or 0.0),
+            "name": restaurant.restaurant_name or "Restaurant",
+        }
 
-    # If there is a single order at the moment, show only that order directly
-    if len(orders) == 1:
-        order_obj = orders[0]
-        node = OrderNode(order_obj, *_order_coords(order_obj, rest_node["lat"], rest_node["lng"]))
-        trip = solve_optimal_trip(
+        # If there is a single order at the moment, show only that order directly
+        if len(orders) == 1:
+            order_obj = orders[0]
+            node = OrderNode(order_obj, *_order_coords(order_obj, rest_node["lat"], rest_node["lng"]))
+            trip = solve_optimal_trip(
+                rest_node,
+                [node],
+                speed_kmh=speed_kmh,
+                factor=routing_factor,
+                customer_sla_mins=customer_sla,
+            )
+            payload = order_payload(order_obj, include_customer_email=False)
+            rt_km = trip.get("roundTripDistanceKm", 0.0)
+            rt_mins = trip.get("roundTripTimeMinutes", 0.0)
+            payload["round_trip_km"] = rt_km
+            payload["round_trip_time_minutes"] = rt_mins
+            single_res = {
+                "is_accepting_deliveries": True,
+                "active_riders": active_riders,
+                "is_restaurant_open": is_open,
+                "schedule_status": schedule_status,
+                "single_order": True,
+                "order": payload,
+                "round_trip_km": rt_km,
+                "round_trip_time_minutes": rt_mins,
+                "clusters": [
+                    {
+                        "id": str(order_obj.order_id),
+                        "route_label": f"Single delivery · Order #{order_obj.order_id}",
+                        "orders": [payload],
+                        "round_trip_km": rt_km,
+                        "round_trip_time_minutes": rt_mins,
+                        "legs": trip.get("legs", []),
+                    }
+                ],
+                "restaurant_latitude": restaurant.latitude,
+                "restaurant_longitude": restaurant.longitude,
+            }
+            cache.set(cache_key, single_res, ttl_seconds=5.0)
+            return single_res
+
+        # Multiple orders: optimize fleet dispatch using the ALNS metaheuristic engine
+        nodes = [
+            OrderNode(o, *_order_coords(o, rest_node["lat"], rest_node["lng"]))
+            for o in orders
+        ]
+        alns_result = optimize_fleet_trips(
             rest_node,
-            [node],
+            nodes,
+            rider_count="AUTO",
             speed_kmh=speed_kmh,
             factor=routing_factor,
+            max_drivers=max_drivers,
+            max_iterations=max_iters,
+            max_cluster_length=max_orders,
             customer_sla_mins=customer_sla,
         )
-        payload = order_payload(order_obj, include_customer_email=False)
-        rt_km = trip["roundTripDistanceKm"]
-        rt_mins = trip["roundTripTimeMinutes"]
-        payload["round_trip_km"] = rt_km
-        payload["round_trip_time_minutes"] = rt_mins
-        single_res = {
+
+        clusters_payload = [
+            {
+                "id": "-".join(str(getattr(node, "id", None) or getattr(getattr(node, "order", None), "order_id", idx)) for node in trip.get("orders", [])),
+                "route_label": f"Delivery {idx + 1} · {len(trip['orders'])} stop{'s' if len(trip['orders']) != 1 else ''}",
+                "orders": [order_payload(node.order, include_customer_email=False) for node in trip.get("orders", []) if hasattr(node, "order")],
+                "round_trip_km": trip.get("roundTripDistanceKm", 0.0),
+                "round_trip_time_minutes": trip.get("roundTripTimeMinutes", 0.0),
+                "legs": trip.get("legs", []),
+            }
+            for idx, trip in enumerate(alns_result.get("trips") or [])
+            if trip.get("orders")
+        ]
+
+        fleet_res = {
             "is_accepting_deliveries": True,
             "active_riders": active_riders,
             "is_restaurant_open": is_open,
             "schedule_status": schedule_status,
-            "single_order": True,
-            "order": payload,
-            "round_trip_km": rt_km,
-            "round_trip_time_minutes": rt_mins,
-            "clusters": [
-                {
-                    "id": order_obj.order_id,
-                    "route_label": f"Single delivery · Order #{order_obj.order_id}",
-                    "orders": [payload],
-                    "round_trip_km": rt_km,
-                    "round_trip_time_minutes": rt_mins,
-                    "legs": trip["legs"],
-                }
-            ],
+            "single_order": False,
+            "order": None,
+            "clusters": clusters_payload,
             "restaurant_latitude": restaurant.latitude,
             "restaurant_longitude": restaurant.longitude,
         }
-        cache.set(cache_key, single_res, ttl_seconds=5.0)
-        return single_res
-
-    # Multiple orders: optimize fleet dispatch using the ALNS metaheuristic engine
-    nodes = [
-        OrderNode(o, *_order_coords(o, rest_node["lat"], rest_node["lng"]))
-        for o in orders
-    ]
-    alns_result = optimize_fleet_trips(
-        rest_node,
-        nodes,
-        rider_count="AUTO",
-        speed_kmh=speed_kmh,
-        factor=routing_factor,
-        max_drivers=max_drivers,
-        max_iterations=max_iters,
-        max_cluster_length=max_orders,
-        customer_sla_mins=customer_sla,
-    )
-
-    clusters_payload = [
-        {
-            "id": "-".join(node.order.order_id for node in trip["orders"]),
-            "route_label": f"Delivery {idx + 1} · {len(trip['orders'])} stop{'s' if len(trip['orders']) != 1 else ''}",
-            "orders": [order_payload(node.order, include_customer_email=False) for node in trip["orders"]],
-            "round_trip_km": trip["roundTripDistanceKm"],
-            "round_trip_time_minutes": trip["roundTripTimeMinutes"],
-            "legs": trip["legs"],
+        cache.set(cache_key, fleet_res, ttl_seconds=5.0)
+        return fleet_res
+    except Exception as exc:
+        logger.exception("Failed to calculate recommended delivery batches: %s", exc)
+        # Resilient fallback: present each ready order as an individual available delivery
+        fallback_clusters = [
+            {
+                "id": str(o.order_id),
+                "route_label": f"Delivery · Order #{o.order_id}",
+                "orders": [order_payload(o, include_customer_email=False)],
+                "round_trip_km": 0.0,
+                "round_trip_time_minutes": 0.0,
+                "legs": [],
+            }
+            for o in orders
+        ]
+        return {
+            "is_accepting_deliveries": True,
+            "active_riders": active_riders,
+            "is_restaurant_open": is_open,
+            "schedule_status": schedule_status,
+            "single_order": len(orders) == 1,
+            "order": order_payload(orders[0], include_customer_email=False) if len(orders) == 1 else None,
+            "clusters": fallback_clusters,
+            "restaurant_latitude": restaurant.latitude,
+            "restaurant_longitude": restaurant.longitude,
         }
-        for idx, trip in enumerate(alns_result["trips"])
-        if trip.get("orders")
-    ]
-
-    fleet_res = {
-        "is_accepting_deliveries": True,
-        "active_riders": active_riders,
-        "is_restaurant_open": is_open,
-        "schedule_status": schedule_status,
-        "single_order": False,
-        "order": None,
-        "clusters": clusters_payload,
-        "restaurant_latitude": restaurant.latitude,
-        "restaurant_longitude": restaurant.longitude,
-    }
-    cache.set(cache_key, fleet_res, ttl_seconds=5.0)
-    return fleet_res
 
 
 @router.post("/recommended-batches/claim", status_code=status.HTTP_201_CREATED)
@@ -445,7 +473,10 @@ async def claim_recommended_batch(data: BatchClaimInput, account: CurrentAccount
 
     # Dispatch notifications only after transaction is successfully committed
     for notif in notifications_to_send:
-        await customer_notifier.send_delivery_otp(**notif)
+        try:
+            await customer_notifier.send_delivery_otp(**notif)
+        except Exception as exc:
+            logger.warning("[CustomerNotifier] Could not send batch delivery OTP: %s", exc)
 
     invalidate_delivery_cache()
     invalidate_orders_cache()
@@ -454,34 +485,51 @@ async def claim_recommended_batch(data: BatchClaimInput, account: CurrentAccount
 
 @router.post("/orders/{order_id}/claim")
 async def claim_order(order_id: str, account: CurrentAccount, db: DbSession):
-    claimed = db.execute(
-        update(Order)
-        .where(Order.order_id == order_id, Order.status == OrderStatus.READY, Order.assigned_delivery_id.is_(None))
-        .values(assigned_delivery_id=account.id)
-    )
-    if claimed.rowcount != 1:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="This delivery was already taken or is no longer available")
-    order = db.get(Order, order_id)
-    if order is None:
-        db.rollback()
-        raise HTTPException(status_code=404, detail="Delivery not found")
-    transition_order(order, OrderStatus.OUT_FOR_DELIVERY)
-    db.add(AdminEvent(event_type="delivery_claimed", message=f"{account.name} picked order {order.order_id}", actor_id=account.id, details={"order_id": order.order_id, "delivery_id": account.id, "delivery_name": account.name}))
-    otp = create_delivery_otp(order)
-    db.commit()
+    try:
+        claimed = db.execute(
+            update(Order)
+            .where(Order.order_id == order_id, Order.status == OrderStatus.READY, Order.assigned_delivery_id.is_(None))
+            .values(assigned_delivery_id=account.id)
+        )
+        if claimed.rowcount != 1:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="This delivery was already taken or is no longer available")
+        order = db.get(Order, order_id)
+        if order is None:
+            db.rollback()
+            raise HTTPException(status_code=404, detail="Delivery not found")
+        transition_order(order, OrderStatus.OUT_FOR_DELIVERY)
+        db.add(AdminEvent(event_type="delivery_claimed", message=f"{account.name} picked order {order.order_id}", actor_id=account.id, details={"order_id": order.order_id, "delivery_id": account.id, "delivery_name": account.name}))
+        otp = create_delivery_otp(order)
 
-    # Dispatch notification after successful transaction commit
-    await customer_notifier.send_delivery_otp(
-        phone=order.customer_phone or (order.customer.phone if order.customer else None),
-        order_number=order.order_id,
-        otp=otp,
-        email=order.customer_email or (order.customer.email if order.customer else None),
-        customer_name=order.customer_name or (order.customer.name if order.customer else None),
-    )
-    invalidate_delivery_cache()
-    invalidate_orders_cache()
-    return order_payload(order, include_customer_email=False)
+        # Create a single-order batch entry so the driver map and batches stay in sync
+        batch = DeliveryBatch(delivery_id=account.id, route_label=f"Single delivery route · 1 stop")
+        batch.orders = [DeliveryBatchOrder(order_id=order.order_id)]
+        db.add(batch)
+
+        db.commit()
+
+        # Dispatch notification after successful transaction commit
+        try:
+            await customer_notifier.send_delivery_otp(
+                phone=order.customer_phone or (order.customer.phone if order.customer else None),
+                order_number=order.order_id,
+                otp=otp,
+                email=order.customer_email or (order.customer.email if order.customer else None),
+                customer_name=order.customer_name or (order.customer.name if order.customer else None),
+            )
+        except Exception as exc:
+            logger.warning("[CustomerNotifier] Could not send delivery OTP notification: %s", exc)
+
+        invalidate_delivery_cache()
+        invalidate_orders_cache()
+        return order_payload(order, include_customer_email=False)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to claim order %s: %s", order_id, exc)
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to claim delivery: {exc}")
 
 
 @router.post("/batches", status_code=status.HTTP_201_CREATED)

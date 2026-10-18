@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, ArrowRight, Check, ChevronLeft, ChevronRight, Clock3, Edit3, Flame, Leaf, ListFilter, MapPin, Phone, Plus, RotateCcw, ShieldCheck, ShoppingBag, Sparkles, Truck, Utensils, WifiOff, X, Search, Mail } from 'lucide-react'
-import { Link } from 'react-router-dom'
-import { api, formatINR, formatSavedAddress, getCustomItemLowestPrice, getMenuItemLowestPrice, resolveImageUrl, type CustomMenuItem, type CustomMenuSectionOption, type MenuItem, type MenuItemVariation, type Order, type Restaurant, type SavedCartItem } from '../api'
+import { Link, useNavigate } from 'react-router-dom'
+import { api, formatINR, formatSavedAddress, getCustomItemLowestPrice, getMenuItemLowestPrice, getItemDiscountedLowestPrice, resolveImageUrl, type CustomMenuItem, type CustomMenuSectionOption, type MenuItem, type MenuItemVariation, type Order, type Restaurant, type SavedCartItem } from '../api'
 import { useAuth } from '../state'
-import { Button, EmptyState, Loading, Notice, QuantityPicker, RoundedSelect, RoundedTimePicker } from '../components'
+import { Button, CenterDialog, EmptyState, Loading, Notice, QuantityPicker, RoundedSelect, RoundedTimePicker } from '../components'
 import { launchCheckout, verifyRazorpayPayment } from '../payments'
 import { liquidGlassManager } from '../vendor/liquidGlassManager'
+import { usePreference } from '../cookies'
 
 type CartLine = {
   item: MenuItem
@@ -22,11 +23,20 @@ const art = ['🥙', '🍗', '🫓', '🍢', '🥘', '🍟']
 
 export default function Storefront() {
   const { account } = useAuth()
+  const navigate = useNavigate()
+  const [checkoutWarning, setCheckoutWarning] = useState<{
+    tone?: 'warning' | 'danger' | 'info' | 'success'
+    eyebrow?: string
+    title: string
+    description: string
+    primaryAction: { label: string; variant?: 'primary' | 'secondary' | 'danger'; onClick: () => void }
+    secondaryAction?: { label: string; variant?: 'primary' | 'secondary' | 'danger'; onClick: () => void }
+  } | null>(null)
   const [menu, setMenu] = useState<MenuItem[]>([])
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null)
-  const [category, setCategory] = useState('All')
+  const [category, setCategory] = usePreference<string>('storefront_category', 'All')
   const [menuSearch, setMenuSearch] = useState('')
-  const [menuSort, setMenuSort] = useState<'popular_desc' | 'popular_asc' | 'price_asc' | 'price_desc'>('popular_desc')
+  const [menuSort, setMenuSort] = usePreference<'popular_desc' | 'popular_asc' | 'price_asc' | 'price_desc'>('storefront_menu_sort', 'popular_desc')
   const [cart, setCart] = useState<CartLine[]>(() => {
     try {
       const saved = localStorage.getItem('kz_active_cart')
@@ -86,6 +96,29 @@ export default function Storefront() {
   const totalItems = useMemo(() => cart.reduce((total, line) => total + line.quantity, 0), [cart])
 
   const [nowTimestamp, setNowTimestamp] = useState<number>(() => Date.now())
+  const [cancelCountdownActive, setCancelCountdownActive] = useState(false)
+  const cancelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const cancelOrderCountdown = useCallback(() => {
+    if (cancelTimerRef.current) {
+      clearTimeout(cancelTimerRef.current)
+      cancelTimerRef.current = null
+    }
+    setCancelCountdownActive(false)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (cancelTimerRef.current) clearTimeout(cancelTimerRef.current)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (cancelCountdownActive) {
+      cancelOrderCountdown()
+    }
+  }, [paymentMethod, cart.length, cancelOrderCountdown])
+
   useEffect(() => {
     const timer = setInterval(() => setNowTimestamp(Date.now()), 30000)
     return () => clearInterval(timer)
@@ -95,12 +128,38 @@ export default function Storefront() {
   const isDeliveryOpen = restaurant === null ? true : (restaurant.is_delivery_open ?? restaurant.accepting_orders ?? true)
 
   const dynamicMinutesUntilClose = useMemo(() => {
-    if (!restaurant?.closing_time) return restaurant?.closing_in_minutes ?? null
-    const closeTime = new Date(restaurant.closing_time).getTime()
-    const diffMs = closeTime - nowTimestamp
-    if (diffMs <= 0) return 0
-    return Math.max(1, Math.round(diffMs / 60000))
-  }, [restaurant?.closing_time, restaurant?.closing_in_minutes, nowTimestamp])
+    if (restaurant?.closing_time) {
+      const closeTime = new Date(restaurant.closing_time).getTime()
+      const diffMs = closeTime - nowTimestamp
+      if (diffMs <= 0) return 0
+      return Math.max(1, Math.round(diffMs / 60000))
+    }
+    if (restaurant?.closing_in_minutes !== undefined && restaurant?.closing_in_minutes !== null) {
+      return restaurant.closing_in_minutes
+    }
+    if (restaurant?.weekly_schedule) {
+      const now = new Date(nowTimestamp)
+      const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
+      const todayName = days[now.getDay()]
+      const sched = restaurant.weekly_schedule
+      let closeStr: string | null = null
+      if (Array.isArray(sched.custom_schedules) && sched.custom_schedules.length > 0) {
+        const match = sched.custom_schedules.find((s: any) => s.days?.includes(todayName))
+        if (match?.end_time) closeStr = match.end_time
+      } else if (sched[todayName]?.open && sched[todayName]?.closes) {
+        closeStr = sched[todayName].closes
+      }
+      if (closeStr) {
+        const [ch, cm] = closeStr.split(':').map(Number)
+        const closeDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), ch, cm, 0)
+        const diffMs = closeDate.getTime() - nowTimestamp
+        if (diffMs > 0) {
+          return Math.max(1, Math.round(diffMs / 60000))
+        }
+      }
+    }
+    return null
+  }, [restaurant?.closing_time, restaurant?.closing_in_minutes, restaurant?.weekly_schedule, nowTimestamp])
 
   const cutoffMinutes = restaurant?.order_cutoff_minutes_before_closing ?? 30
 
@@ -111,6 +170,7 @@ export default function Storefront() {
 
   const isPastCutoff = useMemo(() => {
     if (restaurant?.delivery_status === 'DELIVERY_CUTOFF') return true
+    if (restaurant?.delivery_status === 'CLOSING_SOON') return false
     if (isRestaurantOpen && dynamicMinutesUntilClose !== null) {
       return dynamicMinutesUntilClose <= cutoffMinutes
     }
@@ -132,7 +192,10 @@ export default function Storefront() {
     if (serverDown) return 'Menu temporarily unavailable'
     if (restaurant === null) return 'Menu'
     if (!isRestaurantOpen) return 'Sorry, we are closed'
-    if (!effectiveDeliveryOpen) return 'Currently not delivering'
+    if (!effectiveDeliveryOpen) {
+      const customReason = (restaurant.delivery_paused_reason || (restaurant.weekly_schedule?.delivery_paused_reason) || restaurant.delivery_status_heading || '').trim()
+      return customReason || 'Currently not delivering'
+    }
     if (isApproachingClosing) return 'Hurry up closing soon'
     return restaurant.delivery_status_heading || 'Menu'
   }, [serverDown, restaurant, isRestaurantOpen, effectiveDeliveryOpen, isApproachingClosing])
@@ -142,7 +205,7 @@ export default function Storefront() {
     if (restaurant === null) return "Choose what you’d like to order."
     if (!isRestaurantOpen) return 'Our shop is currently closed. Please check back during operating hours.'
     if (!effectiveDeliveryOpen) {
-      if (dynamicMinutesUntilClose !== null && dynamicMinutesUntilClose > 0) {
+      if (dynamicMinutesUntilClose !== null && dynamicMinutesUntilClose > 0 && dynamicMinutesUntilClose <= 59) {
         return `Our shop is open! We are currently only accepting walk-in orders at our counter. The restaurant is closing in ${dynamicMinutesUntilClose} minutes.`
       }
       return 'Our shop is open! We are currently only accepting walk-in orders at our counter.'
@@ -150,11 +213,11 @@ export default function Storefront() {
     if (isApproachingClosing) {
       const mins = (dynamicMinutesUntilCutoff !== null && dynamicMinutesUntilCutoff > 0)
         ? dynamicMinutesUntilCutoff
-        : (restaurant.cutoff_in_minutes ?? 30)
+        : (restaurant.cutoff_in_minutes ?? (dynamicMinutesUntilClose !== null ? Math.max(1, dynamicMinutesUntilClose - cutoffMinutes) : 15))
       return `The restaurant is closing in ${mins} minutes.`
     }
     return restaurant.delivery_status_message || "Choose what you’d like to order."
-  }, [serverDown, restaurant, isRestaurantOpen, effectiveDeliveryOpen, isApproachingClosing, dynamicMinutesUntilCutoff, dynamicMinutesUntilClose])
+  }, [serverDown, restaurant, isRestaurantOpen, effectiveDeliveryOpen, isApproachingClosing, dynamicMinutesUntilCutoff, dynamicMinutesUntilClose, cutoffMinutes])
 
   // Permissible opening hour slots for today only (15-min intervals)
   const permissibleTimeSlots = useMemo(() => {
@@ -229,7 +292,7 @@ export default function Storefront() {
     cartRetractTimer.current = setTimeout(() => setCartExpanded(false), 5000)
   }
 
-  const priceFor = (item: MenuItem) => item.discounted_price_paise ?? (item.discount_percent ? Math.round(item.price_paise * (100 - item.discount_percent) / 100) : item.price_paise)
+  const priceFor = (item: MenuItem) => getItemDiscountedLowestPrice(item)
 
   const persistCart = useCallback((nextCart: CartLine[]) => {
     try {
@@ -240,7 +303,7 @@ export default function Storefront() {
       }
     } catch {}
 
-    if (account?.role !== 'USER') return
+    if (!account) return
 
     cartSync.current = cartSync.current.catch(() => undefined).then(async () => {
       const payload = nextCart.map((line) => ({
@@ -255,7 +318,7 @@ export default function Storefront() {
         body: JSON.stringify(payload),
       })
     }).catch((err) => setError(err instanceof Error ? err.message : 'Could not save your cart.'))
-  }, [account?.role])
+  }, [account?.id])
 
   const cartLinesFromSaved = useCallback((saved: SavedCartItem[], availableMenu: MenuItem[]): CartLine[] => {
     if (!availableMenu.length) return []
@@ -312,7 +375,7 @@ export default function Storefront() {
           price_paise: lowestPaise,
           base_price_paise: ci.base_price_paise,
           discount_percent: discPercent,
-          discounted_price_paise: discPricePaise,
+          discounted_price_paise: discPercent ? Math.max(1, Math.round((lowestPaise * (100 - discPercent)) / 100)) : discPricePaise,
           image_url: ci.image_urls?.[0] || ci.image_url || null,
           image_urls: ci.image_urls || [],
           is_vegetarian: ci.is_vegetarian,
@@ -331,7 +394,7 @@ export default function Storefront() {
       setMenu(fullMenu)
       setRestaurant(config)
 
-      if (account?.role === 'USER') {
+      if (account) {
         api<SavedCartItem[]>('/cart').then((saved) => {
           if (saved.length > 0) {
             const restored = cartLinesFromSaved(saved, fullMenu)
@@ -365,12 +428,7 @@ export default function Storefront() {
   }, [loadStore])
 
   useEffect(() => {
-    if (account && account.role !== 'USER') {
-      setCart([])
-      localStorage.removeItem('kz_active_cart')
-      return
-    }
-    if (account?.role === 'USER' && menu.length > 0) {
+    if (account && menu.length > 0) {
       api<SavedCartItem[]>('/cart').then((saved) => {
         if (saved.length > 0) {
           const restored = cartLinesFromSaved(saved, menu)
@@ -392,7 +450,7 @@ export default function Storefront() {
         }
       }).catch((err) => setError(err instanceof Error ? err.message : 'Could not restore your saved cart.'))
     }
-  }, [account?.id, account?.role, menu, cartLinesFromSaved, persistCart])
+  }, [account?.id, menu, cartLinesFromSaved, persistCart])
 
   useEffect(() => {
     if (!account || addressInitializedFor === account.id) return
@@ -998,28 +1056,7 @@ export default function Storefront() {
 
   const quantityFor = (itemId: number, isCustom = false) => cart.filter((line) => line.item.id === itemId && Boolean(line.item.is_custom) === isCustom).reduce((sum, line) => sum + line.quantity, 0)
 
-  async function placeOrder() {
-    if (!account) {
-      setError('Sign in or create a customer account to place an order.')
-      return
-    }
-    const deliveryLocation = account.addresses?.find((item) => item.id === selectedAddress)
-    if (!cart.length || !address.trim()) {
-      setError('Add something delicious and enter your delivery address to continue.')
-      return
-    }
-    if (deliveryLocation?.latitude == null || deliveryLocation.longitude == null) {
-      setError('Pin the exact delivery location on the map before placing your order.')
-      return
-    }
-    if (subtotal < (restaurant?.minimum_order_paise || 0)) {
-      setError(`A little more flavor: minimum order is ${formatINR(restaurant?.minimum_order_paise || 0)}.`)
-      return
-    }
-    if (deliveryEstimate && !deliveryEstimate.within_radius) {
-      setError(`Delivery location is ${deliveryEstimate.distance_km} km away, which exceeds our maximum delivery radius of ${deliveryEstimate.max_radius_km} km.`)
-      return
-    }
+  async function executeOrderPlacement(deliveryLocation: any) {
     setBusy(true)
     setError('')
     try {
@@ -1046,7 +1083,7 @@ export default function Storefront() {
             customizations: line.customizations || [],
           })),
           payment_method: paymentMethod,
-          address: address.trim(), latitude: deliveryLocation.latitude, longitude: deliveryLocation.longitude, notes: notes.trim(),
+          address: address.trim(), latitude: deliveryLocation?.latitude ?? null, longitude: deliveryLocation?.longitude ?? null, notes: notes.trim(),
           scheduled_for: formattedScheduledFor,
         }),
       })
@@ -1064,11 +1101,45 @@ export default function Storefront() {
           },
           onDismiss: () => {
             void api(`/orders/${order.order_id}/abandon`, { method: 'POST' }).catch(() => undefined)
-            setError('Online payment was cancelled. Your cart is preserved — you can retry online payment or choose Cash on Delivery.')
+            setCheckoutWarning({
+              tone: 'info',
+              eyebrow: 'PAYMENT CANCELLED',
+              title: 'Online payment cancelled',
+              description: 'Your cart has been safely preserved. You can switch to Cash on Delivery or review your order.',
+              primaryAction: {
+                label: 'Switch to Cash on Delivery',
+                onClick: () => {
+                  setPaymentMethod('CASH')
+                  setCheckoutWarning(null)
+                },
+              },
+              secondaryAction: {
+                label: 'Keep online payment',
+                variant: 'secondary',
+                onClick: () => setCheckoutWarning(null),
+              },
+            })
           },
           onError: (err) => {
             void api(`/orders/${order.order_id}/abandon`, { method: 'POST' }).catch(() => undefined)
-            setError(`Online payment failed: ${err.message}. You can retry or choose Cash on Delivery.`)
+            setCheckoutWarning({
+              tone: 'danger',
+              eyebrow: 'PAYMENT FAILED',
+              title: 'Online payment failed',
+              description: `${err.message}. Your cart is still preserved — you can retry online payment or choose Cash on Delivery.`,
+              primaryAction: {
+                label: 'Switch to Cash on Delivery',
+                onClick: () => {
+                  setPaymentMethod('CASH')
+                  setCheckoutWarning(null)
+                },
+              },
+              secondaryAction: {
+                label: 'Close',
+                variant: 'secondary',
+                onClick: () => setCheckoutWarning(null),
+              },
+            })
           },
         })
         return
@@ -1080,6 +1151,154 @@ export default function Storefront() {
       setError(err instanceof Error ? err.message : 'We could not place your order. Please try again.')
     } finally {
       setBusy(false)
+    }
+  }
+
+  function placeOrder() {
+    if (cancelCountdownActive) {
+      cancelOrderCountdown()
+      return
+    }
+    if (!account) {
+      setCheckoutWarning({
+        tone: 'info',
+        eyebrow: 'SIGN IN REQUIRED',
+        title: 'Sign in to place your order',
+        description: 'Please sign in or create a customer account so we can track and deliver your meal.',
+        primaryAction: {
+          label: 'Sign in now',
+          onClick: () => {
+            setCheckoutWarning(null)
+            navigate('/login')
+          },
+        },
+        secondaryAction: {
+          label: 'Continue browsing',
+          variant: 'secondary',
+          onClick: () => setCheckoutWarning(null),
+        },
+      })
+      return
+    }
+    const deliveryLocation = account.addresses?.find((item) => item.id === selectedAddress)
+    if (!cart.length) {
+      setCheckoutWarning({
+        tone: 'warning',
+        eyebrow: 'EMPTY BASKET',
+        title: 'Your cart is empty',
+        description: 'Add something delicious from the menu before placing an order.',
+        primaryAction: {
+          label: 'Browse the menu',
+          onClick: () => {
+            setCheckoutWarning(null)
+            setCartOpen(false)
+            goToMenu()
+          },
+        },
+        secondaryAction: {
+          label: 'Close',
+          variant: 'secondary',
+          onClick: () => setCheckoutWarning(null),
+        },
+      })
+      return
+    }
+    if (!address.trim()) {
+      setCheckoutWarning({
+        tone: 'warning',
+        eyebrow: 'ADDRESS REQUIRED',
+        title: 'Delivery address needed',
+        description: 'Please select or add a delivery address so our riders know where to bring your order.',
+        primaryAction: {
+          label: 'Add delivery address',
+          onClick: () => {
+            setCheckoutWarning(null)
+            navigate('/profile')
+          },
+        },
+        secondaryAction: {
+          label: 'Close',
+          variant: 'secondary',
+          onClick: () => setCheckoutWarning(null),
+        },
+      })
+      return
+    }
+    if (deliveryLocation?.latitude == null || deliveryLocation.longitude == null) {
+      setCheckoutWarning({
+        tone: 'warning',
+        eyebrow: 'MAP PIN REQUIRED',
+        title: 'Pin your delivery location',
+        description: 'Your saved address needs an exact map pin so our delivery partners can find your doorstep easily.',
+        primaryAction: {
+          label: 'Set map pin in profile',
+          onClick: () => {
+            setCheckoutWarning(null)
+            navigate('/profile')
+          },
+        },
+        secondaryAction: {
+          label: 'Close',
+          variant: 'secondary',
+          onClick: () => setCheckoutWarning(null),
+        },
+      })
+      return
+    }
+    if (subtotal < (restaurant?.minimum_order_paise || 0)) {
+      const remainingPaise = (restaurant?.minimum_order_paise || 0) - subtotal
+      setCheckoutWarning({
+        tone: 'warning',
+        eyebrow: 'MINIMUM ORDER',
+        title: 'A little more flavor needed',
+        description: `Our minimum order for delivery is ${formatINR(restaurant?.minimum_order_paise || 0)}. Please add ${formatINR(remainingPaise)} more to checkout.`,
+        primaryAction: {
+          label: 'Browse the menu',
+          onClick: () => {
+            setCheckoutWarning(null)
+            setCartOpen(false)
+            goToMenu()
+          },
+        },
+        secondaryAction: {
+          label: 'Review cart',
+          variant: 'secondary',
+          onClick: () => setCheckoutWarning(null),
+        },
+      })
+      return
+    }
+    if (deliveryEstimate && !deliveryEstimate.within_radius) {
+      setCheckoutWarning({
+        tone: 'danger',
+        eyebrow: 'OUTSIDE DELIVERY AREA',
+        title: 'Delivery location too far',
+        description: `Your delivery location is ${deliveryEstimate.distance_km} km away, which exceeds our maximum delivery radius of ${deliveryEstimate.max_radius_km} km.`,
+        primaryAction: {
+          label: 'Manage address in profile',
+          onClick: () => {
+            setCheckoutWarning(null)
+            navigate('/profile')
+          },
+        },
+        secondaryAction: {
+          label: 'Close',
+          variant: 'secondary',
+          onClick: () => setCheckoutWarning(null),
+        },
+      })
+      return
+    }
+
+    if (paymentMethod === 'CASH') {
+      setCancelCountdownActive(true)
+      cancelTimerRef.current = setTimeout(() => {
+        setCancelCountdownActive(false)
+        cancelTimerRef.current = null
+        void executeOrderPlacement(deliveryLocation)
+      }, 5000)
+    } else {
+      void executeOrderPlacement(deliveryLocation)
     }
   }
 
@@ -1173,11 +1392,32 @@ export default function Storefront() {
           <p>{item.description}</p>
           <div className="food-card-bottom" onClick={(event) => event.stopPropagation()}>
             <strong>
-              {item.is_custom || (item.variations && item.variations.length > 0) ? (
-                `From ${formatINR(getMenuItemLowestPrice(item))}`
-              ) : (
-                <>{formatINR(item.discounted_price_paise ?? (item.discount_percent ? Math.round(item.price_paise * (100 - item.discount_percent) / 100) : item.price_paise))}{(item.discount_percent || item.discounted_price_paise) && <del>{formatINR(item.price_paise)}</del>}</>
-              )}
+              {(() => {
+                const isCustomOrVar = Boolean(item.is_custom || (item.variations && item.variations.length > 0))
+                const rawLowest = getMenuItemLowestPrice(item)
+                const discountedLowest = getItemDiscountedLowestPrice(item, rawLowest)
+                const hasDiscount = discountedLowest < rawLowest
+
+                if (isCustomOrVar) {
+                  return hasDiscount ? (
+                    <>
+                      <span>From {formatINR(discountedLowest)}</span>
+                      <del>{formatINR(rawLowest)}</del>
+                    </>
+                  ) : (
+                    <span>From {formatINR(rawLowest)}</span>
+                  )
+                }
+
+                return hasDiscount ? (
+                  <>
+                    <span>{formatINR(discountedLowest)}</span>
+                    <del>{formatINR(rawLowest)}</del>
+                  </>
+                ) : (
+                  <span>{formatINR(rawLowest)}</span>
+                )
+              })()}
             </strong>
             {orderingClosed || item.is_paused ? (
               <span className="closed-menu-label">
@@ -1384,16 +1624,28 @@ export default function Storefront() {
                     ]}
                   />
                 </div>
-                <Button className="checkout-button" disabled={busy || orderingClosed} onClick={placeOrder}>
-                  {busy ? (
-                    'Just a second…'
-                  ) : orderingClosed ? (
-                    !isRestaurantOpen ? 'Sorry, we are closed' : 'Currently not delivering (Walk-in only)'
-                  ) : isApproachingClosing ? (
-                    <>Place order · {formatINR(payable)} (Closing soon) <ArrowRight size={16} /></>
-                  ) : (
-                    <>Place order · {formatINR(payable)} <ArrowRight size={16} /></>
-                  )}
+                <Button
+                  className={`checkout-button ${cancelCountdownActive ? 'cancelling-mode' : ''}`}
+                  disabled={busy || orderingClosed}
+                  onClick={placeOrder}
+                >
+                  {cancelCountdownActive && <span className="checkout-loading-bar" />}
+                  <span className="checkout-button-content">
+                    {cancelCountdownActive ? (
+                      <>
+                        <span>Cancel</span>
+                        <X size={15} />
+                      </>
+                    ) : busy ? (
+                      'Just a second…'
+                    ) : orderingClosed ? (
+                      !isRestaurantOpen ? 'Sorry, we are closed' : 'Currently not delivering (Walk-in only)'
+                    ) : isApproachingClosing ? (
+                      <>Place order · {formatINR(payable)} (Closing soon) <ArrowRight size={16} /></>
+                    ) : (
+                      <>Place order · {formatINR(payable)} <ArrowRight size={16} /></>
+                    )}
+                  </span>
                 </Button>
               </div>
               <div className="checkout-secure">
@@ -1511,16 +1763,31 @@ export default function Storefront() {
                   )}
                   <h3 className="food-detail-title">{activeDetailItem.name}</h3>
                   <div className="food-detail-price">
-                    {isVariations || isCustom ? (
-                      <strong>From {formatINR(getMenuItemLowestPrice(activeDetailItem))}</strong>
-                    ) : (
-                      <>
-                        <strong>{formatINR(modalUnitPrice)}</strong>
-                        {(activeDetailItem.discount_percent || activeDetailItem.discounted_price_paise) && (
-                          <del>{formatINR(activeDetailItem.price_paise)}</del>
-                        )}
-                      </>
-                    )}
+                    {(() => {
+                      const rawLowest = getMenuItemLowestPrice(activeDetailItem)
+                      const discountedLowest = getItemDiscountedLowestPrice(activeDetailItem, rawLowest)
+                      const hasDiscount = discountedLowest < rawLowest
+
+                      if (isVariations || isCustom) {
+                        return hasDiscount ? (
+                          <>
+                            <strong>From {formatINR(discountedLowest)}</strong>
+                            <del>{formatINR(rawLowest)}</del>
+                          </>
+                        ) : (
+                          <strong>From {formatINR(rawLowest)}</strong>
+                        )
+                      }
+
+                      return (
+                        <>
+                          <strong>{formatINR(modalUnitPrice)}</strong>
+                          {hasDiscount && (
+                            <del>{formatINR(activeDetailItem.price_paise)}</del>
+                          )}
+                        </>
+                      )
+                    })()}
                   </div>
                 </div>
 
@@ -1836,6 +2103,18 @@ export default function Storefront() {
           </div>
         </section>
       </div>
+    )}
+    {checkoutWarning && (
+      <CenterDialog
+        isOpen={Boolean(checkoutWarning)}
+        onClose={() => setCheckoutWarning(null)}
+        tone={checkoutWarning.tone || 'warning'}
+        eyebrow={checkoutWarning.eyebrow}
+        title={checkoutWarning.title}
+        description={checkoutWarning.description}
+        primaryAction={checkoutWarning.primaryAction}
+        secondaryAction={checkoutWarning.secondaryAction}
+      />
     )}
   </main>
 }

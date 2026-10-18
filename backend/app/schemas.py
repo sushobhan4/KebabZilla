@@ -6,7 +6,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field, field
 
 from app.config import settings
 from app.models import OrderStatus, PaymentMethod, PaymentStatus, Role
-from app.security import normalize_phone_e164
+from app.security import normalize_phone_e164, validate_password_complexity
 
 
 class ORMModel(BaseModel):
@@ -17,8 +17,14 @@ class AccountCreate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     email: EmailStr
     phone: str | None = Field(default=None, max_length=32)
-    password: str = Field(min_length=10, max_length=128)
+    password: str = Field(min_length=8, max_length=128)
     promotional_consent: bool = Field(default=True)
+
+    @field_validator("password")
+    @classmethod
+    def check_password_complexity(cls, value: str) -> str:
+        validate_password_complexity(value)
+        return value
 
     @field_validator("phone")
     @classmethod
@@ -26,6 +32,11 @@ class AccountCreate(BaseModel):
         if not value:
             return None
         return normalize_phone_e164(value)
+
+
+class RoleChangeInput(BaseModel):
+    role: Role
+    password: str = Field(min_length=1, max_length=128)
 
 
 class AdminAccountCreate(BaseModel):
@@ -109,7 +120,13 @@ class PasswordResetRequest(BaseModel):
 class PasswordResetConfirm(BaseModel):
     email: str = Field(min_length=3, max_length=255)
     otp: str = Field(min_length=6, max_length=64)
-    new_password: str = Field(min_length=10, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def check_password_complexity(cls, value: str) -> str:
+        validate_password_complexity(value)
+        return value
 
     @field_validator("email")
     @classmethod
@@ -185,6 +202,9 @@ class SavedAddressInput(BaseModel):
         return self
 
 
+AddressInput = SavedAddressInput
+
+
 class AccountProfileUpdate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     email: EmailStr
@@ -206,7 +226,13 @@ class PromotionalConsentUpdate(BaseModel):
 
 class PasswordUpdate(BaseModel):
     current_password: str | None = None
-    new_password: str = Field(min_length=10, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def check_password_complexity(cls, value: str) -> str:
+        validate_password_complexity(value)
+        return value
 
 
 class TwoFactorVerifyRequest(BaseModel):
@@ -287,6 +313,24 @@ class TokenOut(BaseModel):
     email: str | None = None
     role: Role | None = None
     csrf_token: str | None = None
+
+
+class UserSessionOut(BaseModel):
+    id: int
+    device_name: str
+    device_type: str = "desktop"
+    country: str = ""
+    region: str = ""
+    city: str = ""
+    location: str = ""
+    ip_address: str = ""
+    created_at: datetime
+    last_active_at: datetime
+    is_current: bool = False
+    is_revoked: bool = False
+
+    model_config = ConfigDict(from_attributes=True)
+
 
 
 class MenuItemVariationInput(BaseModel):
@@ -506,6 +550,7 @@ class AdminOrdersPageOut(BaseModel):
 
 
 class RestaurantSettingsInput(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     restaurant_name: str = Field(min_length=2, max_length=120)
     tagline: str = Field(max_length=200)
     phone: str = Field(max_length=300)
@@ -521,11 +566,12 @@ class RestaurantSettingsInput(BaseModel):
     delivery_fee_per_km_paise: int = Field(ge=0, le=1_000_000)
     accepting_orders: bool
     is_delivery_open: bool = Field(default=True)
+    delivery_paused_reason: str | None = Field(default=None, max_length=200)
     order_cutoff_minutes_before_closing: int = Field(default=30, ge=0, le=720)
+    delivery_paused_until: datetime | None = None
     admin_override_open: bool | None = None
     admin_override_state: bool | None = None
     admin_override_until: datetime | None = None
-    distance_calculation_mode: str = Field(default="AUTO", pattern=r"^(AUTO|GOOGLE_MAPS|HAVERSINE)$")
     enforce_driver_geofence: bool = Field(default=False)
     driver_geofence_meters: int = Field(default=500, ge=50, le=50000)
     haversine_routing_factor: float = Field(default=1.3627, ge=1.0, le=4.0)
@@ -577,6 +623,8 @@ class RestaurantSettingsOut(ORMModel):
     accepting_orders: bool
     is_restaurant_open: bool = False
     is_delivery_open: bool = True
+    delivery_paused_until: datetime | None = None
+    delivery_paused_reason: str | None = "Currently not delivering"
     order_cutoff_minutes_before_closing: int = 30
     delivery_status: str = "OPEN"
     delivery_status_heading: str = "Menu"
@@ -589,7 +637,6 @@ class RestaurantSettingsOut(ORMModel):
     is_currently_scheduled_open: bool = False
     schedule_status: str = ""
     next_schedule_refresh: datetime | None = None
-    distance_calculation_mode: str = "AUTO"
     enforce_driver_geofence: bool = False
     driver_geofence_meters: int = 500
     haversine_routing_factor: float = 1.3627
@@ -621,6 +668,20 @@ class PublicRestaurantOut(ORMModel):
     is_restaurant_open: bool
     is_delivery_open: bool = True
     weekly_schedule: dict = Field(default_factory=dict)
+    minimum_order_paise: int = 0
+    delivery_radius_km: float = 10.0
+    free_delivery_radius_km: float = 3.0
+    delivery_fee_per_km_paise: int = 0
+    charge_from_zero_beyond_free_radius: bool = False
+    accepting_orders: bool = True
+    order_cutoff_minutes_before_closing: int = 30
+    delivery_status: str = "OPEN"
+    delivery_status_heading: str = "Menu"
+    delivery_status_message: str = "Choose what you’d like to order."
+    closing_in_minutes: int | None = None
+    cutoff_in_minutes: int | None = None
+    closing_time: str | None = None
+    schedule_status: str = ""
 
 
 class DriverDutyInput(BaseModel):

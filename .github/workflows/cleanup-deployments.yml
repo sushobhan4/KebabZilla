@@ -1,0 +1,113 @@
+name: Cleanup Deployments and Workflows
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      keep_latest:
+        description: 'Number of latest items to keep'
+        default: '5'
+        required: true
+
+permissions:
+  deployments: write
+  actions: write
+
+concurrency:
+  group: cleanup-deployments-and-workflows
+  cancel-in-progress: true
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Retain latest deployments and delete older ones
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const raw = '${{ github.event.inputs.keep_latest }}';
+            const parsed = parseInt(raw, 10);
+            const keep = (!isNaN(parsed) && parsed > 0) ? parsed : 5;
+
+            console.log(`Querying deployments for ${context.repo.owner}/${context.repo.repo}...`);
+            const deployments = await github.paginate(github.rest.repos.listDeployments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100,
+            });
+
+            console.log(`Found ${deployments.length} total deployments. Keeping latest ${keep}...`);
+            const toDelete = deployments.slice(keep);
+
+            for (const dep of toDelete) {
+              try {
+                // Deployment must be marked inactive before it can be deleted
+                await github.rest.repos.createDeploymentStatus({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  deployment_id: dep.id,
+                  state: 'inactive',
+                });
+              } catch (e) {
+                // Ignore if already inactive
+              }
+              try {
+                await github.rest.repos.deleteDeployment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  deployment_id: dep.id,
+                });
+                console.log(`Deleted deployment ${dep.id}`);
+              } catch (err) {
+                console.warn(`Could not delete deployment ${dep.id}:`, err.message);
+              }
+            }
+            console.log(`Deleted ${toDelete.length} old deployments. Retained latest ${Math.min(keep, deployments.length)}.`);
+
+      - name: Retain latest workflow runs and delete older ones
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const raw = '${{ github.event.inputs.keep_latest }}';
+            const parsed = parseInt(raw, 10);
+            const keep = (!isNaN(parsed) && parsed > 0) ? parsed : 5;
+
+            console.log(`Querying workflow runs for ${context.repo.owner}/${context.repo.repo}...`);
+            let page = 1;
+            const allRuns = [];
+            while (true) {
+              const res = await github.rest.actions.listWorkflowRunsForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                per_page: 100,
+                page: page,
+              });
+              const runs = res.data.workflow_runs || [];
+              allRuns.push(...runs);
+              if (runs.length < 100 || allRuns.length >= res.data.total_count) {
+                break;
+              }
+              page++;
+            }
+
+            console.log(`Found ${allRuns.length} total workflow runs.`);
+
+            // Exclude currently running workflow
+            const completedRuns = allRuns.filter(r => r.id !== context.runId && r.status === 'completed');
+            const toDelete = completedRuns.slice(keep);
+
+            console.log(`Keeping latest ${keep} runs. Deleting ${toDelete.length} older runs...`);
+            for (const r of toDelete) {
+              try {
+                await github.rest.actions.deleteWorkflowRun({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: r.id,
+                });
+                console.log(`Deleted workflow run ${r.id}: "${r.name}" #${r.run_number}`);
+              } catch (err) {
+                console.warn(`Could not delete run ${r.id}:`, err.message);
+              }
+            }
+            console.log(`Workflow runs cleanup complete. Deleted ${toDelete.length} old runs.`);

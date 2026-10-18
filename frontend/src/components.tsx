@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { ArrowLeft, ArrowRight, Calendar, Check, ChevronDown, CircleAlert, Clock, ImageOff, LoaderCircle, Minus, Plus, Search, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Calendar, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, ImageOff, LoaderCircle, Minus, Plus, Search, X, AlertTriangle } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { formatStatus, resolveImageUrl } from './api'
@@ -361,11 +361,11 @@ export function StatusBadge({ status }: { status: string }) {
   return <Badge tone={tone}>{formatStatus(status)}</Badge>
 }
 
-export function Button({ children, variant = 'primary', size = '', className = '', type = 'button', disabled, onClick, style }: {
+export const Button = forwardRef<HTMLButtonElement, {
   children: ReactNode; variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'light'; size?: string; className?: string; type?: 'button' | 'submit'; disabled?: boolean; onClick?: () => void; style?: CSSProperties
-}) {
-  return <button className={`button button-${variant} ${size} ${className}`} type={type} disabled={disabled} onClick={onClick} style={style}>{children}</button>
-}
+}>(function Button({ children, variant = 'primary', size = '', className = '', type = 'button', disabled, onClick, style }, ref) {
+  return <button ref={ref} className={`button button-${variant} ${size} ${className}`} type={type} disabled={disabled} onClick={onClick} style={style}>{children}</button>
+})
 
 export function Loading({ label = 'Loading your table…' }: { label?: string }) {
   return <div className="loading-state"><LoaderCircle className="spin" size={22} /><span>{label}</span></div>
@@ -387,7 +387,7 @@ export function QuantityPicker({ quantity, onChange, small = false }: { quantity
   </div>
 }
 
-export function MenuImageCarousel({ images, alt, className = '' }: { images: string[]; alt: string; className?: string }) {
+export function MenuImageCarousel({ images, alt, className = '', showBadge = true }: { images: string[]; alt: string; className?: string; showBadge?: boolean }) {
   const urls = images.filter(Boolean).map((url) => resolveImageUrl(url))
   const [modalOpen, setModalOpen] = useState(false)
   const [active, setActive] = useState(0)
@@ -447,7 +447,7 @@ export function MenuImageCarousel({ images, alt, className = '' }: { images: str
         ) : (
           <img src={mainUrl} alt={alt} crossOrigin="anonymous" onError={() => setFailedSource(mainUrl)} />
         )}
-        {urls.length > 1 && (
+        {showBadge && urls.length > 1 && (
           <span className="menu-photo-multi-badge" title={`${urls.length} photos · Click to view`}>
             <span>{urls.length}</span>
           </span>
@@ -735,4 +735,275 @@ export const PhoneInput = forwardRef<HTMLInputElement, PhoneInputProps>(function
     />
   )
 })
+
+export interface CenterDialogAction {
+  label: string
+  onClick: () => void | Promise<void>
+  variant?: 'primary' | 'secondary' | 'danger' | 'ghost'
+  disabled?: boolean
+}
+
+export interface CenterDialogProps {
+  open?: boolean
+  isOpen?: boolean
+  onClose?: () => void
+  tone?: 'success' | 'warning' | 'danger' | 'info'
+  eyebrow?: string
+  title: string
+  description?: ReactNode
+  children?: ReactNode
+  primaryAction: CenterDialogAction
+  secondaryAction?: CenterDialogAction
+  maxWidth?: number | string
+  zIndex?: number
+}
+
+export function CenterDialog({
+  open,
+  isOpen,
+  onClose,
+  tone = 'info',
+  eyebrow,
+  title,
+  description,
+  children,
+  primaryAction,
+  secondaryAction,
+  maxWidth = 440,
+  zIndex = 100050,
+}: CenterDialogProps) {
+  const isDialogOpen = open ?? isOpen ?? true
+  const primaryBtnRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    if (!isDialogOpen) return
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (secondaryAction && !secondaryAction.disabled) {
+          secondaryAction.onClick()
+        } else if (onClose) {
+          onClose()
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+
+    const timer = setTimeout(() => {
+      primaryBtnRef.current?.focus()
+    }, 60)
+
+    return () => {
+      document.body.style.overflow = prevOverflow
+      window.removeEventListener('keydown', handleKeyDown)
+      clearTimeout(timer)
+    }
+  }, [isDialogOpen, onClose, secondaryAction])
+
+  if (!isDialogOpen) return null
+
+  const renderIcon = () => {
+    switch (tone) {
+      case 'success':
+        return (
+          <div className="center-dialog-icon-wrap center-dialog-icon-success">
+            <Check size={28} strokeWidth={2.5} />
+          </div>
+        )
+      case 'warning':
+        return (
+          <div className="center-dialog-icon-wrap center-dialog-icon-warning">
+            <AlertTriangle size={28} strokeWidth={2.3} />
+          </div>
+        )
+      case 'danger':
+        return (
+          <div className="center-dialog-icon-wrap center-dialog-icon-danger">
+            <AlertTriangle size={28} strokeWidth={2.3} />
+          </div>
+        )
+      case 'info':
+      default:
+        return (
+          <div className="center-dialog-icon-wrap center-dialog-icon-info">
+            <CircleAlert size={28} strokeWidth={2.3} />
+          </div>
+        )
+    }
+  }
+
+  const handleBackdropMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget) {
+      if (secondaryAction && !secondaryAction.disabled) {
+        secondaryAction.onClick()
+      } else if (onClose) {
+        onClose()
+      }
+    }
+  }
+
+  return createPortal(
+    <div
+      className="center-dialog-backdrop"
+      style={{ zIndex }}
+      onMouseDown={handleBackdropMouseDown}
+    >
+      <div
+        className="center-dialog-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="center-dialog-title"
+        style={{ maxWidth }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {onClose && (
+          <button
+            type="button"
+            className="center-dialog-close"
+            onClick={onClose}
+            aria-label="Close dialog"
+          >
+            <X size={18} />
+          </button>
+        )}
+
+        {renderIcon()}
+
+        {eyebrow && <span className={`center-dialog-eyebrow center-dialog-eyebrow-${tone}`}>{eyebrow}</span>}
+        <h2 id="center-dialog-title" className="center-dialog-title">
+          {title}
+        </h2>
+
+        {description && (
+          <div className="center-dialog-description">
+            {description}
+          </div>
+        )}
+
+        {children}
+
+        <div className={`center-dialog-actions ${secondaryAction ? 'has-secondary' : 'center-dialog-actions-single'}`}>
+          {secondaryAction && (
+            <Button
+              type="button"
+              variant={secondaryAction.variant || 'secondary'}
+              disabled={secondaryAction.disabled}
+              onClick={secondaryAction.onClick}
+            >
+              {secondaryAction.label}
+            </Button>
+          )}
+          <Button
+            ref={primaryBtnRef}
+            type="button"
+            variant={primaryAction.variant || (tone === 'danger' ? 'danger' : 'primary')}
+            disabled={primaryAction.disabled}
+            onClick={primaryAction.onClick}
+          >
+            {primaryAction.label}
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
+}
+
+export { CenterDialog as ToastDialog, CenterDialog as WarningDialog }
+
+export function Pagination({
+  limit,
+  offset,
+  total,
+  label = 'orders',
+  onChange,
+}: {
+  limit: number
+  offset: number
+  total: number
+  label?: string
+  onChange: (newOffset: number) => void
+}) {
+  if (total <= limit) return null
+
+  const currentPage = Math.floor(offset / limit) + 1
+  const totalPages = Math.max(1, Math.ceil(total / limit))
+  const from = total === 0 ? 0 : offset + 1
+  const to = Math.min(offset + limit, total)
+
+  const getPageNumbers = () => {
+    const pages: (number | 'ellipsis')[] = []
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i)
+    } else {
+      pages.push(1)
+      if (currentPage > 3) pages.push('ellipsis')
+      const start = Math.max(2, currentPage - 1)
+      const end = Math.min(totalPages - 1, currentPage + 1)
+      for (let i = start; i <= end; i++) pages.push(i)
+      if (currentPage < totalPages - 2) pages.push('ellipsis')
+      pages.push(totalPages)
+    }
+    return pages
+  }
+
+  const pageNumbers = getPageNumbers()
+
+  return (
+    <div className="pagination-container">
+      <div className="pagination-indicator">
+        <span>
+          Showing <strong>{from}–{to}</strong> of <strong>{total}</strong> {label}
+        </span>
+        <span className="pagination-page-badge">
+          Page {currentPage} of {totalPages}
+        </span>
+      </div>
+      {totalPages > 1 && (
+        <div className="pagination-controls" role="navigation" aria-label="Pagination">
+          <button
+            type="button"
+            className="pagination-btn pagination-prev"
+            disabled={offset === 0}
+            onClick={() => onChange(Math.max(0, offset - limit))}
+            aria-label="Previous page"
+          >
+            <ChevronLeft size={15} />
+            <span>Prev</span>
+          </button>
+          <div className="pagination-numbers">
+            {pageNumbers.map((p, idx) =>
+              p === 'ellipsis' ? (
+                <span className="pagination-ellipsis" key={`ellipsis-${idx}`}>…</span>
+              ) : (
+                <button
+                  type="button"
+                  key={p}
+                  className={`pagination-num-btn ${p === currentPage ? 'active' : ''}`}
+                  onClick={() => onChange((p - 1) * limit)}
+                  aria-current={p === currentPage ? 'page' : undefined}
+                >
+                  {p}
+                </button>
+              )
+            )}
+          </div>
+          <button
+            type="button"
+            className="pagination-btn pagination-next"
+            disabled={to >= total}
+            onClick={() => onChange(offset + limit)}
+            aria-label="Next page"
+          >
+            <span>Next</span>
+            <ChevronRight size={15} />
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 

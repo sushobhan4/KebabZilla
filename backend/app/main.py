@@ -15,7 +15,10 @@ import html
 import os
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, Response
+import logging
+
+logger = logging.getLogger("kebabzilla")
 
 app = FastAPI(
     title=settings.app_name,
@@ -36,17 +39,22 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
         if "Content-Security-Policy" not in response.headers:
-            response.headers["Content-Security-Policy"] = (
-                "default-src 'self'; "
-                "script-src 'self' 'unsafe-inline'; "
-                "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-                "font-src 'self' https://fonts.gstatic.com data:; "
-                "img-src 'self' data: blob: https:; "
-                "connect-src 'self' https:; "
-                "frame-ancestors 'none'; "
-                "base-uri 'self'; "
-                "object-src 'none'"
-            )
+            if request.url.path.startswith("/api/") or request.url.path.startswith(settings.api_prefix):
+                response.headers["Content-Security-Policy"] = (
+                    "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+                )
+            else:
+                response.headers["Content-Security-Policy"] = (
+                    "default-src 'self'; "
+                    "script-src 'self' 'unsafe-inline'; "
+                    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+                    "font-src 'self' https://fonts.gstatic.com data:; "
+                    "img-src 'self' data: blob: https:; "
+                    "connect-src 'self' https:; "
+                    "frame-ancestors 'none'; "
+                    "base-uri 'self'; "
+                    "object-src 'none'"
+                )
         return response
 
 app.add_middleware(SecurityHeadersMiddleware)
@@ -65,6 +73,25 @@ for route_module in (auth, menu, cart, orders, staff, delivery, admin, payments,
     app.include_router(route_module.router, prefix=settings.api_prefix)
 
 
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled server error processing %s %s: %s", request.method, request.url.path, exc)
+    origin = request.headers.get("origin")
+    headers = {}
+    allowed_origins = set(settings.cors_origins if isinstance(settings.cors_origins, list) else [settings.cors_origins])
+    allowed_origins.update(["https://kebabzilla.in", "http://localhost:5173", "http://127.0.0.1:5173"])
+    if origin and (origin in allowed_origins or (is_dev and origin.endswith(".trycloudflare.com"))):
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+        headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, X-Razorpay-Signature, X-CSRF-Token"
+        headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Our servers are currently down. Please check back in a few minutes.", "error": str(exc)},
+        headers=headers,
+    )
+
+
 
 def format_public_weekly_schedule(raw_schedule: dict | None) -> dict:
     if not isinstance(raw_schedule, dict):
@@ -72,21 +99,30 @@ def format_public_weekly_schedule(raw_schedule: dict | None) -> dict:
     all_days = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
     clean = {}
     custom_schedules = raw_schedule.get("custom_schedules")
-    for day in all_days:
-        day_data = raw_schedule.get(day)
-        if isinstance(day_data, dict) and "open" in day_data:
-            clean[day] = {
-                "open": bool(day_data.get("open", False)),
-                "opens": str(day_data.get("opens", "10:00")),
-                "closes": str(day_data.get("closes", "22:00")),
-            }
-        elif isinstance(custom_schedules, list):
+    if isinstance(custom_schedules, list):
+        clean["custom_schedules"] = custom_schedules
+        for day in all_days:
             matching = [s for s in custom_schedules if isinstance(s, dict) and day in (s.get("days") or [])]
             if matching:
                 clean[day] = {
                     "open": True,
                     "opens": str(matching[0].get("start_time", "10:00")),
                     "closes": str(matching[0].get("end_time", "22:00")),
+                }
+            else:
+                clean[day] = {
+                    "open": False,
+                    "opens": "10:00",
+                    "closes": "22:00",
+                }
+    else:
+        for day in all_days:
+            day_data = raw_schedule.get(day)
+            if isinstance(day_data, dict) and "open" in day_data:
+                clean[day] = {
+                    "open": bool(day_data.get("open", False)),
+                    "opens": str(day_data.get("opens", "10:00")),
+                    "closes": str(day_data.get("closes", "22:00")),
                 }
             else:
                 clean[day] = {
@@ -485,6 +521,20 @@ def public_restaurant(db: DbSession, response: Response):
         "is_restaurant_open": status_info["is_restaurant_open"],
         "is_delivery_open": status_info["is_delivery_open"],
         "weekly_schedule": format_public_weekly_schedule(config.weekly_schedule),
+        "minimum_order_paise": getattr(config, "minimum_order_paise", 0) or 0,
+        "delivery_radius_km": getattr(config, "delivery_radius_km", 10.0) or 10.0,
+        "free_delivery_radius_km": getattr(config, "free_delivery_radius_km", 3.0) or 3.0,
+        "delivery_fee_per_km_paise": getattr(config, "delivery_fee_per_km_paise", 0) or 0,
+        "charge_from_zero_beyond_free_radius": getattr(config, "charge_from_zero_beyond_free_radius", False) or False,
+        "accepting_orders": status_info.get("accepting_orders", status_info["is_restaurant_open"]),
+        "order_cutoff_minutes_before_closing": status_info.get("order_cutoff_minutes_before_closing", 30),
+        "delivery_status": status_info["delivery_status"],
+        "delivery_status_heading": status_info["delivery_status_heading"],
+        "delivery_status_message": status_info["delivery_status_message"],
+        "closing_in_minutes": status_info["closing_in_minutes"],
+        "cutoff_in_minutes": status_info.get("cutoff_in_minutes"),
+        "closing_time": status_info["closing_time"],
+        "schedule_status": status_info.get("schedule_status", ""),
     }
     cache.set(KEY_PUBLIC_RESTAURANT, data, ttl_seconds=15.0)
     response.headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"

@@ -169,6 +169,10 @@ class UserSession(Base):
     user_agent: Mapped[str] = mapped_column(String(512), default="")
     ip_address: Mapped[str] = mapped_column(String(64), default="")
     device_fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    device_name: Mapped[str] = mapped_column(String(128), default="")
+    country: Mapped[str] = mapped_column(String(64), default="")
+    region: Mapped[str] = mapped_column(String(64), default="")
+    city: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_active_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
@@ -307,6 +311,7 @@ class RestaurantSettings(Base):
     accepting_orders: Mapped[bool] = mapped_column(Boolean, default=True)
     is_delivery_open: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     order_cutoff_minutes_before_closing: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
+    delivery_paused_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
     admin_override_state: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
     admin_override_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
 
@@ -321,7 +326,25 @@ class RestaurantSettings(Base):
     @is_restaurant_open.setter
     def is_restaurant_open(self, val: bool) -> None:
         self.accepting_orders = val
-    distance_calculation_mode: Mapped[str] = mapped_column(String(20), default="AUTO", server_default="AUTO")
+
+    @property
+    def delivery_paused_reason(self) -> str:
+        if isinstance(self.weekly_schedule, dict) and self.weekly_schedule.get("delivery_paused_reason"):
+            return str(self.weekly_schedule["delivery_paused_reason"]).strip() or "Currently not delivering"
+        return "Currently not delivering"
+
+    @delivery_paused_reason.setter
+    def delivery_paused_reason(self, val: str | None) -> None:
+        if not isinstance(self.weekly_schedule, dict):
+            self.weekly_schedule = {}
+        sched = dict(self.weekly_schedule)
+        if val is not None:
+            cleaned = str(val).strip()
+            sched["delivery_paused_reason"] = cleaned if cleaned else "Currently not delivering"
+        else:
+            sched["delivery_paused_reason"] = "Currently not delivering"
+        self.weekly_schedule = sched
+
     enforce_driver_geofence: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     driver_geofence_meters: Mapped[int] = mapped_column(Integer, default=500, server_default="500")
     haversine_routing_factor: Mapped[float] = mapped_column(Float, default=1.3627, server_default="1.3627")

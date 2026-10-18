@@ -6,6 +6,22 @@ import { useAuth, useRestaurant } from '../state'
 import { Brand, EmptyState, PhoneInput } from '../components'
 import { api, confirmPasswordReset, requestPasswordReset } from '../api'
 
+function destinationForRole(role?: string): string {
+  if (role === 'ADMIN') return '/admin'
+  if (role === 'EMPLOYEE') return '/ops'
+  if (role === 'DELIVERY') return '/delivery'
+  return '/'
+}
+
+export function validatePasswordComplexity(pwd: string): string | null {
+  if (pwd.length < 8) return 'Password must be at least 8 characters long.'
+  if (!/[a-z]/.test(pwd)) return 'Password must contain at least one lowercase letter.'
+  if (!/[A-Z]/.test(pwd)) return 'Password must contain at least one uppercase letter.'
+  if (!/\d/.test(pwd)) return 'Password must contain at least one number.'
+  if (!/[^A-Za-z0-9]/.test(pwd)) return 'Password must contain at least one special character.'
+  return null
+}
+
 export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recovery' }) {
   const { signIn, register, googleSignIn, verify2fa } = useAuth()
   const { restaurant } = useRestaurant()
@@ -68,11 +84,13 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
             setBusy(false)
             return
           }
-          if (password.length < 10) {
-            setError('Password must be at least 10 characters long.')
+          const pwdError = validatePasswordComplexity(password)
+          if (pwdError) {
+            setError(pwdError)
             setBusy(false)
             return
           }
+
           await confirmPasswordReset(email.trim(), tokenParam, password)
           setSuccess('Your password has been set. Signing you in…')
           try {
@@ -82,7 +100,7 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
               setSuccess(`A 6-digit verification code has been sent to ${loginRes.email}`)
               return
             }
-            navigate('/workspace', { replace: true })
+            navigate(destinationForRole(loginRes.account?.role), { replace: true })
           } catch {
             navigate('/login', { replace: true })
           }
@@ -94,6 +112,12 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
           setOtpSent(true)
           setSuccess('If an active account uses that email, a 6-digit reset code has been sent.')
         } else {
+          const pwdError = validatePasswordComplexity(password)
+          if (pwdError) {
+            setError(pwdError)
+            setBusy(false)
+            return
+          }
           await confirmPasswordReset(email.trim(), otp.trim(), password)
           setSuccess('Your password has been reset. You can now sign in.')
           setOtpSent(false)
@@ -108,6 +132,11 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
           setError('Please enter a valid 10-digit mobile number.')
           return
         }
+        const pwdError = validatePasswordComplexity(password)
+        if (pwdError) {
+          setError(pwdError)
+          return
+        }
         const phoneToSubmit = phoneDigits.length === 10 ? `+91${phoneDigits}` : ''
         await register(name.trim(), email.trim(), phoneToSubmit, password)
         navigate('/', { replace: true })
@@ -118,13 +147,15 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
           setSuccess(`A 6-digit verification code has been sent to ${res.email}`)
           return
         }
-        navigate('/workspace', { replace: true })
+        navigate(destinationForRole(res.account?.role), { replace: true })
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Something went wrong. Please try again.'
       const lower = msg.toLowerCase()
       if (lower.includes('server') || lower.includes('down') || lower.includes('unavailable') || lower.includes('reach')) {
         setServerDown(true)
+      } else if (isRegister && (lower.includes('already exist') || lower.includes('already registered'))) {
+        setError('An account with this email address already exists. Please sign in or use a different email.')
       } else {
         setError(msg)
       }
@@ -145,7 +176,7 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
         setSuccess(`A 6-digit verification code has been sent to ${res.email}`)
         return
       }
-      navigate(isRegister ? '/' : '/workspace', { replace: true })
+      navigate(isRegister ? '/' : destinationForRole(res.account?.role), { replace: true })
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Google sign-in was unsuccessful.'
       const lower = msg.toLowerCase()
@@ -166,8 +197,8 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
     setSuccess('')
     setBusy(true)
     try {
-      await verify2fa(twoFactor.temp_token, twoFactorCode.trim())
-      navigate('/workspace', { replace: true })
+      const verifiedAccount = await verify2fa(twoFactor.temp_token, twoFactorCode.trim())
+      navigate(destinationForRole(verifiedAccount?.role), { replace: true })
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Invalid verification code. Please try again.'
       const lower = msg.toLowerCase()
@@ -279,9 +310,14 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
         <>
           <div className="auth-heading"><div className="eyebrow">{hasInviteToken ? 'ACCOUNT ACTIVATION' : isRecovery ? 'WE CAN HELP' : isRegister ? 'GOOD TASTE STARTS HERE' : 'WELCOME BACK'}</div><h1>{hasInviteToken ? 'Set up your password' : isRecovery ? 'Reset your password' : isRegister ? 'Create your account' : 'Come on in.'}</h1><p>{hasInviteToken ? 'Choose a strong password or continue with Google to access your workspace.' : isRecovery ? 'Enter the email for your customer, admin, employee, or delivery account. Your restaurant administrator can help restore access.' : isRegister ? 'Get your favorites to your door in a few taps.' : 'The grill’s hot and your favorites are waiting.'}</p></div>
           {error && (
-            <div className="auth-inline-error" style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#c2410c', fontSize: '0.875rem', margin: '8px 0 16px', fontWeight: 500 }}>
+            <div className="auth-inline-error" style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#c2410c', fontSize: '0.875rem', margin: '8px 0 16px', fontWeight: 500, flexWrap: 'wrap' }}>
               <CircleAlert size={16} />
               <span>{error}</span>
+              {isRegister && error.toLowerCase().includes('already exists') && (
+                <Link to="/login" style={{ color: 'var(--primary, #cb7452)', fontWeight: 700, textDecoration: 'underline', marginLeft: '4px' }}>
+                  Sign in here →
+                </Link>
+              )}
             </div>
           )}
           {success && <div className="notice notice-success">{success}</div>}
@@ -311,13 +347,13 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
 
             {hasInviteToken && (
               <>
-                <label className="field-label">New password<div className="input-wrap"><LockKeyhole size={17} /><input type={showPassword ? 'text' : 'password'} autoComplete="new-password" required minLength={10} maxLength={128} placeholder="At least 10 characters" value={password} onChange={(event) => setPassword(event.target.value)} /><button className="input-trailing" type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></label>
-                <label className="field-label">Confirm password<div className="input-wrap"><LockKeyhole size={17} /><input type={showConfirmPassword ? 'text' : 'password'} autoComplete="new-password" required minLength={10} maxLength={128} placeholder="Re-enter your password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} /><button className="input-trailing" type="button" onClick={() => setShowConfirmPassword(!showConfirmPassword)} aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}>{showConfirmPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></label>
+                <label className="field-label">New password<div className="input-wrap"><LockKeyhole size={17} /><input type={showPassword ? 'text' : 'password'} autoComplete="new-password" required minLength={8} maxLength={128} placeholder="At least 8 characters (a-z, A-Z, 0-9, special)" value={password} onChange={(event) => setPassword(event.target.value)} /><button className="input-trailing" type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></label>
+                <label className="field-label">Confirm password<div className="input-wrap"><LockKeyhole size={17} /><input type={showConfirmPassword ? 'text' : 'password'} autoComplete="new-password" required minLength={8} maxLength={128} placeholder="Re-enter your password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} /><button className="input-trailing" type="button" onClick={() => setShowConfirmPassword(!showConfirmPassword)} aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}>{showConfirmPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></label>
               </>
             )}
 
-            {!isRecovery && <><label className="field-label">Password<div className="input-wrap"><LockKeyhole size={17} /><input id="password" name="password" type={showPassword ? 'text' : 'password'} autoComplete={isRegister ? 'new-password' : 'current-password'} required minLength={isRegister ? 10 : 1} maxLength={128} placeholder={isRegister ? 'At least 10 characters' : 'Your password'} value={password} onChange={(event) => setPassword(event.target.value)} /><button className="input-trailing" type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></label>{!isRegister && <Link className="forgot-password-link" to="/forgot-password">Forgot password?</Link>}</>}
-            {isRecovery && !hasInviteToken && otpSent && <><label className="field-label">One-time code<div className="input-wrap"><LockKeyhole size={17} /><input inputMode="numeric" autoComplete="one-time-code" required pattern="\d{6}" maxLength={6} placeholder="6-digit code from your email" value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, '').slice(0, 6))} /></div></label><label className="field-label">New password<div className="input-wrap"><LockKeyhole size={17} /><input type={showPassword ? 'text' : 'password'} autoComplete="new-password" required minLength={10} maxLength={128} placeholder="At least 10 characters" value={password} onChange={(event) => setPassword(event.target.value)} /><button className="input-trailing" type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></label></>}
+            {!isRecovery && <><label className="field-label">Password<div className="input-wrap"><LockKeyhole size={17} /><input id="password" name="password" type={showPassword ? 'text' : 'password'} autoComplete={isRegister ? 'new-password' : 'current-password'} required minLength={isRegister ? 8 : 1} maxLength={128} placeholder={isRegister ? 'At least 8 characters (a-z, A-Z, 0-9, special)' : 'Your password'} value={password} onChange={(event) => setPassword(event.target.value)} /><button className="input-trailing" type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></label>{!isRegister && <Link className="forgot-password-link" to="/forgot-password">Forgot password?</Link>}</>}
+            {isRecovery && !hasInviteToken && otpSent && <><label className="field-label">One-time code<div className="input-wrap"><LockKeyhole size={17} /><input inputMode="numeric" autoComplete="one-time-code" required pattern="\d{6}" maxLength={6} placeholder="6-digit code from your email" value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, '').slice(0, 6))} /></div></label><label className="field-label">New password<div className="input-wrap"><LockKeyhole size={17} /><input type={showPassword ? 'text' : 'password'} autoComplete="new-password" required minLength={8} maxLength={128} placeholder="At least 8 characters (a-z, A-Z, 0-9, special)" value={password} onChange={(event) => setPassword(event.target.value)} /><button className="input-trailing" type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></label></>}
             {isRecovery ? <button className="button button-dark auth-submit" type="submit" disabled={busy}>{busy ? 'One moment…' : hasInviteToken ? 'Set password & continue' : otpSent ? 'Verify code & reset password' : 'Send OTP'}<ArrowRight size={17} /></button> : <button className="button button-dark auth-submit" type="submit" disabled={busy}>{busy ? 'One moment…' : isRegister ? 'Create my account' : 'Sign in'}<ArrowRight size={17} /></button>}
           </form>
           {!isRecovery && Boolean(googleClientId) && <>

@@ -1,0 +1,92 @@
+# Google Cloud Build definition for KebabZilla Backend
+# Automatically builds, deploys to Cloud Run, and cleans up older revisions and Artifact Registry images.
+
+steps:
+  # 1. Build the Docker container image
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'Build'
+    args:
+      - 'build'
+      - '--no-cache'
+      - '-t'
+      - '$_AR_HOSTNAME/$_AR_PROJECT_ID/$_AR_REPOSITORY/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA'
+      - '.'
+      - '-f'
+      - 'Dockerfile'
+
+  # 2. Push Docker image to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'Push'
+    args:
+      - 'push'
+      - '$_AR_HOSTNAME/$_AR_PROJECT_ID/$_AR_REPOSITORY/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA'
+
+  # 3. Deploy new revision to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    id: 'Deploy'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'services'
+      - 'update'
+      - '$_SERVICE_NAME'
+      - '--platform=managed'
+      - '--image=$_AR_HOSTNAME/$_AR_PROJECT_ID/$_AR_REPOSITORY/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA'
+      - '--labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=$COMMIT_SHA,gcb-build-id=$BUILD_ID,gcb-trigger-id=$_TRIGGER_ID'
+      - '--region=$_DEPLOY_REGION'
+      - '--quiet'
+
+  # 4. Clean up older Cloud Run revisions (keep latest 3, delete the rest)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    id: 'Cleanup-Revisions'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "Listing Cloud Run revisions for $_SERVICE_NAME in $_DEPLOY_REGION..."
+        revisions=$$(gcloud run revisions list --service "$_SERVICE_NAME" --region "$_DEPLOY_REGION" --sort-by="~metadata.creationTimestamp" --format="value(metadata.name)")
+        echo "$$revisions" | sed -e '1,3d' | while read -r rev; do
+          if [ -n "$$rev" ]; then
+            echo "Deleting old Cloud Run revision: $$rev"
+            gcloud run revisions delete "$$rev" --region "$_DEPLOY_REGION" --quiet || true
+          fi
+        done
+
+  # 5. Clean up older Artifact Registry container images (keep latest 3, delete the rest)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    id: 'Cleanup-Artifact-Registry'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "Listing Artifact Registry images for $_SERVICE_NAME..."
+        img_path="$_AR_HOSTNAME/$_AR_PROJECT_ID/$_AR_REPOSITORY/$REPO_NAME/$_SERVICE_NAME"
+        images=$$(gcloud artifacts docker images list "$$img_path" --sort-by="~CREATE_TIME" --format="value[separator='@'](IMAGE,DIGEST)")
+        echo "$$images" | sed -e '1,3d' | while read -r img; do
+          if [ -n "$$img" ]; then
+            echo "Deleting old Artifact Registry image: $$img"
+            gcloud artifacts docker images delete "$$img" --delete-tags --quiet || true
+          fi
+        done
+
+images:
+  - '$_AR_HOSTNAME/$_AR_PROJECT_ID/$_AR_REPOSITORY/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  substitutionOption: ALLOW_LOOSE
+
+substitutions:
+  REPO_NAME: kebabzilla
+  _AR_HOSTNAME: asia-south2-docker.pkg.dev
+  _AR_PROJECT_ID: kebabzilla
+  _AR_REPOSITORY: cloud-run-source-deploy
+  _DEPLOY_REGION: asia-south2
+  _PLATFORM: managed
+  _SERVICE_NAME: kebabzilla-backend
+  _TRIGGER_ID: 1150a81a-2bd0-4eaa-b494-4844e721e103
+
+tags:
+  - gcp-cloud-build-deploy-cloud-run
+  - gcp-cloud-build-deploy-cloud-run-managed
+  - kebabzilla-backend

@@ -29,6 +29,7 @@ from app.schemas import (
     PromotionalConsentUpdate,
     TokenOut,
     TwoFactorVerifyRequest,
+    UserSessionOut,
 )
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
@@ -43,10 +44,13 @@ from app.security import (
     generate_2fa_temp_token,
     generate_csrf_token,
     generate_session_token,
+    get_client_ip,
     hash_2fa_code,
     hash_2fa_temp_token,
     hash_password,
     hash_session_token,
+    parse_device_info,
+    resolve_ip_location,
     set_csrf_cookie,
     set_session_cookie,
     verify_2fa_code,
@@ -60,8 +64,10 @@ def issue_session(account: Account, request: Request, response: Response, db: Se
     raw_token = generate_session_token()
     token_hash = hash_session_token(raw_token)
     user_agent = request.headers.get("user-agent", "")
-    ip_address = request.client.host if request.client else ""
+    ip_address = get_client_ip(request)
     device_fingerprint = compute_device_fingerprint(user_agent)
+    device_info = parse_device_info(user_agent)
+    geo_info = resolve_ip_location(ip_address)
     now = utcnow()
     expires_at = now + timedelta(days=SESSION_LIFETIME_DAYS)
 
@@ -71,6 +77,10 @@ def issue_session(account: Account, request: Request, response: Response, db: Se
         user_agent=user_agent[:512],
         ip_address=ip_address[:64],
         device_fingerprint=device_fingerprint,
+        device_name=device_info.get("device_name", "")[:128],
+        country=geo_info.get("country", "")[:64],
+        region=geo_info.get("region", "")[:64],
+        city=geo_info.get("city", "")[:64],
         created_at=now,
         last_active_at=now,
         expires_at=expires_at,
@@ -203,7 +213,7 @@ def login(
     background_tasks: BackgroundTasks,
 ):
     email = data.email.lower().strip()
-    ip_address = request.client.host if request.client else "unknown"
+    ip_address = get_client_ip(request) or "unknown"
     rate_limit_key = f"{ip_address}:{email}"
     check_login_rate_limit(rate_limit_key)
     account = db.scalar(select(Account).where(Account.email == email))
@@ -350,7 +360,7 @@ def request_password_reset(
     background_tasks: BackgroundTasks,
     db: DbSession,
 ):
-    ip_address = request.client.host if request.client else "unknown"
+    ip_address = get_client_ip(request) or "unknown"
     now = time.time()
     with _rate_limit_lock:
         if len(_forgot_password_attempts) > 1000:
@@ -467,7 +477,7 @@ def update_profile(data: AccountProfileUpdate, account: CurrentAccount, db: DbSe
     account.phone = data.phone.strip() if data.phone else None
     if data.promotional_consent is not None:
         account.promotional_consent = data.promotional_consent
-    if account.role == Role.USER and data.addresses is not None:
+    if data.addresses is not None:
         addresses = [item.model_dump() for item in data.addresses]
         ids = [item["id"] for item in addresses]
         if len(ids) != len(set(ids)):
@@ -569,4 +579,122 @@ def logout(
 
     delete_session_cookie(response)
     delete_csrf_cookie(response)
+
+
+@router.get("/sessions", response_model=list[UserSessionOut])
+def list_sessions(
+    account: CurrentAccount,
+    request: Request,
+    db: DbSession,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)] = None,
+):
+    bearer_token = credentials.credentials if credentials and credentials.scheme.casefold() == "bearer" else None
+    cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
+    current_token = cookie_token or bearer_token
+    current_hash = hash_session_token(current_token) if current_token else None
+
+    sessions = (
+        db.query(UserSession)
+        .filter(UserSession.account_id == account.id)
+        .order_by(UserSession.is_revoked.asc(), UserSession.last_active_at.desc())
+        .all()
+    )
+
+    out: list[UserSessionOut] = []
+    for s in sessions:
+        d_name = s.device_name
+        d_type = "desktop"
+        if s.user_agent:
+            parsed = parse_device_info(s.user_agent)
+            if not d_name:
+                d_name = parsed.get("device_name", "Desktop")
+            d_type = parsed.get("device_type", "desktop")
+
+        city = s.city or ""
+        region = s.region or ""
+        country = s.country or ""
+        if not (city or country) and s.ip_address:
+            geo = resolve_ip_location(s.ip_address)
+            city = geo.get("city", "")
+            region = geo.get("region", "")
+            country = geo.get("country", "")
+
+        loc_parts = [p for p in [city, country] if p and p != "Unknown"]
+        location = ", ".join(loc_parts) if loc_parts else (city or country or "Unknown location")
+
+        is_cur = bool(current_hash and s.token_hash == current_hash)
+
+        out.append(
+            UserSessionOut(
+                id=s.id,
+                device_name=d_name or "Device",
+                device_type=d_type,
+                country=country,
+                region=region,
+                city=city,
+                location=location,
+                ip_address=s.ip_address,
+                created_at=s.created_at,
+                last_active_at=s.last_active_at,
+                is_current=is_cur,
+                is_revoked=s.is_revoked,
+            )
+        )
+    return out
+
+
+@router.post("/sessions/{session_id}/revoke")
+def revoke_session(
+    session_id: int,
+    account: CurrentAccount,
+    request: Request,
+    response: Response,
+    db: DbSession,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)] = None,
+):
+    session = (
+        db.query(UserSession)
+        .filter(UserSession.id == session_id, UserSession.account_id == account.id)
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    session.is_revoked = True
+    db.commit()
+
+    bearer_token = credentials.credentials if credentials and credentials.scheme.casefold() == "bearer" else None
+    cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
+    current_token = cookie_token or bearer_token
+    current_hash = hash_session_token(current_token) if current_token else None
+
+    # If the user revoked their currently active device session, delete cookie
+    is_current = bool(current_hash and session.token_hash == current_hash)
+    if is_current:
+        delete_session_cookie(response)
+        delete_csrf_cookie(response)
+
+    return {"revoked": True, "is_current": is_current}
+
+
+@router.post("/sessions/revoke-others")
+def revoke_other_sessions(
+    account: CurrentAccount,
+    request: Request,
+    db: DbSession,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)] = None,
+):
+    bearer_token = credentials.credentials if credentials and credentials.scheme.casefold() == "bearer" else None
+    cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
+    current_token = cookie_token or bearer_token
+    current_hash = hash_session_token(current_token) if current_token else None
+
+    query = db.query(UserSession).filter(UserSession.account_id == account.id, UserSession.is_revoked == False)
+    if current_hash:
+        query = query.filter(UserSession.token_hash != current_hash)
+    count = query.update({UserSession.is_revoked: True}, synchronize_session=False)
+    db.commit()
+
+    return {"revoked_count": count}
+
 

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { ArrowLeft, Check, LocateFixed, MapPin, Plus, Save, Star, Trash2, X } from 'lucide-react'
+import { ArrowLeft, Check, CircleAlert, LocateFixed, MapPin, Plus, Save, Shield, Star, Trash2, X } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { importLibrary, setOptions } from '@googlemaps/js-api-loader'
 import { api, formatSavedAddress, type Account, type SavedAddress } from '../api'
 import { useAuth, useRestaurant } from '../state'
-import { Button, Loading, Notice, PageTitle, PhoneInput, formatPhoneWithPrefix, isValidIndianMobile } from '../components'
+import { Button, CenterDialog, Loading, PageTitle, PhoneInput, formatPhoneWithPrefix, isValidIndianMobile } from '../components'
+import { validatePasswordComplexity } from './AuthPage'
 
 const defaults = (): SavedAddress[] => [
   { id: 'home', label: 'Home', house_number: '', road: '', area: '', city: '', pincode: '', landmark: '', latitude: null, longitude: null, is_default: true },
@@ -38,6 +39,29 @@ function AddressMap({ address, onSave, onClose }: { address: SavedAddress; onSav
   const [mapReady, setMapReady] = useState(false)
   const [locating, setLocating] = useState(false)
   const [selected, setSelected] = useState(address.latitude != null && address.longitude != null)
+
+  const distanceInfo = useMemo(() => {
+    if (restaurant?.latitude == null || restaurant?.longitude == null) {
+      return { distKm: null, isWithinRadius: true, maxRadiusKm: restaurant?.delivery_radius_km ?? 15 }
+    }
+    const earthRadiusKm = 6371.0
+    const dLat = ((point.lat - restaurant.latitude) * Math.PI) / 180
+    const dLng = ((point.lng - restaurant.longitude) * Math.PI) / 180
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos((restaurant.latitude * Math.PI) / 180) *
+        Math.cos((point.lat * Math.PI) / 180) *
+        Math.sin(dLng / 2) ** 2
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+    const factor = restaurant.haversine_routing_factor || 1.3
+    const distKm = Math.round(earthRadiusKm * c * factor * 10) / 10
+    const maxRadiusKm = restaurant.delivery_radius_km ?? 15
+    return {
+      distKm,
+      isWithinRadius: distKm <= maxRadiusKm,
+      maxRadiusKm,
+    }
+  }, [point.lat, point.lng, restaurant])
 
   useEffect(() => {
     const apiKey = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY || restaurant?.google_maps_api_key || '').trim()
@@ -113,13 +137,24 @@ function AddressMap({ address, onSave, onClose }: { address: SavedAddress; onSav
       }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 15000 })
     }}><LocateFixed size={19} /></button></div>
     <div className="address-map-status"><MapPin size={15} /><span>{mapLoading ? 'Loading Google Maps…' : locating ? 'Finding your current location…' : looking ? 'Finding nearby address details…' : lookup}</span></div>
-    <div className="address-map-actions"><Button type="button" variant="secondary" onClick={onClose}>Cancel</Button><Button type="button" disabled={!selected || looking || mapLoading || !mapReady} onClick={() => { onSave(point.lat, point.lng, parts); onClose() }}><Check size={15} /> Use this pin</Button></div>
+    {selected && !distanceInfo.isWithinRadius && (
+      <div className="address-map-warning-box">
+        <CircleAlert size={16} />
+        <span>This location is {distanceInfo.distKm} km away, which is outside our maximum delivery radius of {distanceInfo.maxRadiusKm} km. Please select a spot within {distanceInfo.maxRadiusKm} km.</span>
+      </div>
+    )}
+    {selected && distanceInfo.isWithinRadius && distanceInfo.distKm !== null && (
+      <div className="address-map-success-box">
+        <Check size={14} />
+        <span>Distance: {distanceInfo.distKm} km (Within our {distanceInfo.maxRadiusKm} km delivery limit)</span>
+      </div>
+    )}
+    <div className="address-map-actions"><Button type="button" variant="secondary" onClick={onClose}>Cancel</Button><Button type="button" disabled={!selected || looking || mapLoading || !mapReady || !distanceInfo.isWithinRadius} onClick={() => { onSave(point.lat, point.lng, parts); onClose() }}><Check size={15} /> Use this pin</Button></div>
   </section></div>
 }
 
 export default function Profile() {
   const { account, loading, updateAccount } = useAuth()
-  const isCustomer = account?.role === 'USER'
   const [form, setForm] = useState({ name: account?.name || '', email: account?.email || '', phone: formatPhoneWithPrefix(account?.phone) })
   const [addresses, setAddresses] = useState<SavedAddress[]>(account?.addresses?.length ? account.addresses : defaults())
   const [activeAddress, setActiveAddress] = useState('home')
@@ -131,6 +166,9 @@ export default function Profile() {
   const [notice, setNotice] = useState('')
   const [addressToDelete, setAddressToDelete] = useState<SavedAddress | null>(null)
   const savedProfile = useRef('')
+  const profileFormRef = useRef<HTMLFormElement>(null)
+  const passwordFormRef = useRef<HTMLFormElement>(null)
+  const isUpdatingPassword = Boolean(password.current_password || password.new_password || password.confirm)
 
   useEffect(() => {
     if (loading || !account) return
@@ -152,21 +190,21 @@ export default function Profile() {
       return
     }
     const savedAddressId = activeAddress
-    const incomplete = isCustomer ? addresses.find((item) => (item.latitude != null || item.longitude != null) && (item.latitude == null || item.longitude == null || !item.house_number?.trim() || !item.road?.trim() || !item.area?.trim() || !item.city?.trim() || !(item.pincode || item.postal_code)?.trim())) : undefined
+    const incomplete = addresses.find((item) => (item.latitude != null || item.longitude != null) && (item.latitude == null || item.longitude == null || !item.house_number?.trim() || !item.road?.trim() || !item.area?.trim() || !item.city?.trim() || !(item.pincode || item.postal_code)?.trim()))
     if (incomplete) {
       setActiveAddress(incomplete.id)
       setError(`Complete the house or flat, road, area, city, and PIN code for ${incomplete.label}. Landmark is optional.`)
       return
     }
     setBusy(true)
-    const normalized = isCustomer ? addresses.map(({ postal_code, ...item }) => ({ ...item, pincode: item.pincode || postal_code || '' })) : undefined
+    const normalized = addresses.map(({ postal_code, ...item }) => ({ ...item, pincode: item.pincode || postal_code || '' }))
     try {
-      const updated = await api<Account>('/auth/profile', { method: 'PATCH', body: JSON.stringify({ ...form, phone: form.phone || null, ...(normalized ? { addresses: normalized } : {}) }) })
+      const updated = await api<Account>('/auth/profile', { method: 'PATCH', body: JSON.stringify({ ...form, phone: form.phone || null, addresses: normalized }) })
       const updatedPhone = formatPhoneWithPrefix(updated.phone)
-      updateAccount(updated); setForm({ name: updated.name, email: updated.email, phone: updatedPhone }); if (isCustomer) setAddresses(updated.addresses)
-      savedProfile.current = JSON.stringify({ form: { name: updated.name, email: updated.email, phone: updatedPhone }, addresses: isCustomer ? updated.addresses : addresses })
+      updateAccount(updated); setForm({ name: updated.name, email: updated.email, phone: updatedPhone }); setAddresses(updated.addresses)
+      savedProfile.current = JSON.stringify({ form: { name: updated.name, email: updated.email, phone: updatedPhone }, addresses: updated.addresses })
       if (updated.addresses.some((item) => item.id === savedAddressId)) setActiveAddress(savedAddressId)
-      setNotice(isCustomer ? 'Profile and saved addresses updated.' : 'Profile updated.')
+      setNotice('Profile and saved addresses updated.')
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not save your profile.') }
     finally { setBusy(false) }
   }
@@ -174,6 +212,8 @@ export default function Profile() {
   async function changePassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (password.new_password !== password.confirm) { setError('The new passwords do not match.'); return }
+    const pwdError = validatePasswordComplexity(password.new_password)
+    if (pwdError) { setError(pwdError); return }
     setBusy(true); setError(''); setNotice('')
     try {
       await api('/auth/change-password', { method: 'POST', body: JSON.stringify({ current_password: password.current_password, new_password: password.new_password }) })
@@ -208,16 +248,14 @@ export default function Profile() {
   if (loading) return <main className="customer-page profile-page"><Loading label="Loading your profile…" /></main>
   return <main className="customer-page profile-page">
     <PageTitle eyebrow={`${account?.role || 'YOUR'} KEBABZILLA ACCOUNT`} title="Edit profile" description="Update your personal details and password." action={<Link className="button button-secondary" to={account && account.role !== 'USER' ? homeForProfile(account.role) : '/'}><ArrowLeft size={15} /> Back</Link>} />
-    {error && <Notice onDismiss={() => setError('')}>{error}</Notice>}
-    {notice && <Notice tone="success" onDismiss={() => setNotice('')}>{notice}</Notice>}
-    <form className="profile-card" onSubmit={(event) => void saveProfile(event)}>
+    <form ref={profileFormRef} className="profile-card" onSubmit={(event) => void saveProfile(event)}>
       <div className="profile-card-heading"><h2>Personal details</h2></div>
       <div className="profile-form-grid">
         <label className="field-label"><span>Name <sup className="field-required">*</sup></span><input required minLength={2} maxLength={120} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
         <label className="field-label"><span>Email address <sup className="field-required">*</sup></span><input required type="email" maxLength={255} value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} /></label>
         <label className="field-label"><span>Mobile number <sup className="field-required">*</sup></span><PhoneInput required value={form.phone} onChange={(val) => setForm({ ...form, phone: val })} /></label>
       </div>
-      {isCustomer && <><div className="profile-card-heading profile-address-heading"><span><h2>Saved addresses</h2><small>Select a tab to edit that address. Home is included by default.</small></span></div>
+      <div className="profile-card-heading profile-address-heading"><span><h2>Saved addresses</h2><small>Select a tab to edit that address. Home is included by default.</small></span></div>
       <div className="address-tabs" role="tablist" aria-label="Saved addresses">
         {addresses.map((item) => {
           const isHome = item.id === 'home' || item.label.trim().toLowerCase() === 'home'
@@ -276,71 +314,102 @@ export default function Profile() {
         </div>
         </> : <div className="address-pin-first"><span><MapPin size={18} /></span><div><strong>Set the exact location first</strong><small>House or flat, road, area, city, PIN code, and landmark fields appear after you save a map pin.</small></div><Button type="button" onClick={() => setMapAddress(selectedAddress.id)}><MapPin size={15} /> Set location on map</Button></div>}
       </article>}
-      </>}
-      {profileChanged && <div className="profile-save-row"><Button type="submit" disabled={busy}><Save size={15} /> {busy ? 'Saving…' : isCustomer ? 'Save profile & address' : 'Save profile'}</Button></div>}
+      {profileChanged && <div className="profile-save-row"><Button type="submit" disabled={busy}><Save size={15} /> {busy ? 'Saving…' : 'Save profile & address'}</Button></div>}
     </form>
-    <form className="profile-card password-card" onSubmit={(event) => void changePassword(event)}>
-      <div className="profile-card-heading"><h2>Change password</h2><span>At least 10 characters for the new password.</span></div>
-      <div className="profile-form-grid">
-        <label className="field-label"><span>Current password <sup className="field-required">*</sup></span><input required type="password" autoComplete="current-password" value={password.current_password} onChange={(event) => setPassword({ ...password, current_password: event.target.value })} /></label>
-        <label className="field-label"><span>New password <sup className="field-required">*</sup></span><input required minLength={10} maxLength={128} type="password" autoComplete="new-password" value={password.new_password} onChange={(event) => setPassword({ ...password, new_password: event.target.value })} /></label>
-        <label className="field-label"><span>Confirm new password <sup className="field-required">*</sup></span><input required minLength={10} maxLength={128} type="password" autoComplete="new-password" value={password.confirm} onChange={(event) => setPassword({ ...password, confirm: event.target.value })} /></label>
+    <form ref={passwordFormRef} className="profile-card password-card" onSubmit={(event) => void changePassword(event)}>
+      <div className="profile-card-heading"><h2>Change password</h2><span>At least 8 characters (a-z, A-Z, 0-9, special).</span></div>
+      <div className="profile-password-form-grid">
+        <label className="field-label password-full-row"><span>Current password <sup className="field-required">*</sup></span><input required type="password" autoComplete="current-password" value={password.current_password} onChange={(event) => setPassword({ ...password, current_password: event.target.value })} /></label>
+        <div className="password-split-row">
+          <label className="field-label"><span>New password <sup className="field-required">*</sup></span><input required minLength={8} maxLength={128} type="password" autoComplete="new-password" value={password.new_password} onChange={(event) => setPassword({ ...password, new_password: event.target.value })} /></label>
+          <label className="field-label"><span>Confirm new password <sup className="field-required">*</sup></span><input required minLength={8} maxLength={128} type="password" autoComplete="new-password" value={password.confirm} onChange={(event) => setPassword({ ...password, confirm: event.target.value })} /></label>
+        </div>
       </div>
-      <div className="profile-save-row"><Button type="submit" variant="secondary" disabled={busy}><Check size={15} /> Update password</Button></div>
     </form>
-    {isCustomer && mapAddress && addresses.find((item) => item.id === mapAddress) && <AddressMap address={addresses.find((item) => item.id === mapAddress)!} onClose={() => setMapAddress(null)} onSave={(latitude, longitude, parts) => { editAddress(mapAddress, { ...parts, latitude, longitude }); setEditingAddress(mapAddress) }} />}
+    {account && ['ADMIN', 'EMPLOYEE', 'DELIVERY'].includes(account.role) && (
+      <div className="profile-security-banner">
+        <div>
+          <h3>Account security & login activity</h3>
+          <p>Review devices logged into your account and manage active sessions.</p>
+        </div>
+        <Link to="/security" className="button button-secondary">
+          <Shield size={15} /> Security
+        </Link>
+      </div>
+    )}
+    <div className="profile-sticky-bottom-bar">
+      <div className="profile-sticky-inner">
+        {isUpdatingPassword ? (
+          <Button
+            type="button"
+            className="profile-save-button"
+            disabled={busy}
+            onClick={() => passwordFormRef.current?.requestSubmit()}
+          >
+            <Check size={18} /> {busy ? 'Updating…' : 'Update password'}
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            className="profile-save-button"
+            disabled={busy}
+            onClick={() => profileFormRef.current?.requestSubmit()}
+          >
+            <Save size={18} /> {busy ? 'Saving…' : 'Save profile & address'}
+          </Button>
+        )}
+      </div>
+    </div>
+    {mapAddress && addresses.find((item) => item.id === mapAddress) && <AddressMap address={addresses.find((item) => item.id === mapAddress)!} onClose={() => setMapAddress(null)} onSave={(latitude, longitude, parts) => { editAddress(mapAddress, { ...parts, latitude, longitude }); setEditingAddress(mapAddress) }} />}
     {addressToDelete && (
-      <div
-        className="modal-backdrop"
-        onMouseDown={(e) => {
-          if (e.target === e.currentTarget) setAddressToDelete(null)
+      <CenterDialog
+        isOpen={Boolean(addressToDelete)}
+        onClose={() => setAddressToDelete(null)}
+        tone="danger"
+        eyebrow="DELETE ADDRESS"
+        title={`Delete ${addressToDelete.label}?`}
+        description={`Are you sure you want to delete ${addressToDelete.label}? This action cannot be undone.${formatSavedAddress(addressToDelete) ? ` (${formatSavedAddress(addressToDelete)})` : ''}`}
+        primaryAction={{
+          label: "Delete address",
+          variant: "danger",
+          onClick: () => confirmDeleteAddress(addressToDelete.id),
         }}
-      >
-        <section className="modal-card address-delete-modal" role="dialog" aria-modal="true" aria-labelledby="delete-addr-title">
-          <div className="modal-heading">
-            <div>
-              <span className="eyebrow" style={{ color: '#b4483a' }}>WARNING · DELETE ADDRESS</span>
-              <h2 id="delete-addr-title">Delete {addressToDelete.label}?</h2>
-            </div>
-            <button
-              className="icon-button"
-              type="button"
-              onClick={() => setAddressToDelete(null)}
-              aria-label="Close"
-            >
-              <X size={18} />
-            </button>
-          </div>
-          <div className="address-delete-modal-body">
-            <p>
-              Are you sure you want to delete <strong>{addressToDelete.label}</strong>? This action cannot be undone.
-              {formatSavedAddress(addressToDelete) && (
-                <span className="address-delete-preview" style={{ display: 'block', marginTop: '6px' }}>
-                  <small style={{ color: 'var(--muted)' }}>
-                    {formatSavedAddress(addressToDelete)}
-                  </small>
-                </span>
-              )}
-            </p>
-            <div className="address-delete-modal-actions">
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => setAddressToDelete(null)}
-              >
-                Cancel
-              </Button>
-              <button
-                type="button"
-                className="button button-danger"
-                onClick={() => confirmDeleteAddress(addressToDelete.id)}
-              >
-                <Trash2 size={15} /> Delete address
-              </button>
-            </div>
-          </div>
-        </section>
-      </div>
+        secondaryAction={{
+          label: "Keep address",
+          variant: "secondary",
+          onClick: () => setAddressToDelete(null),
+        }}
+      />
+    )}
+    {error && (
+      <CenterDialog
+        isOpen={Boolean(error)}
+        onClose={() => setError('')}
+        tone="danger"
+        eyebrow={isUpdatingPassword ? "PASSWORD ERROR" : "PROFILE ERROR"}
+        title={isUpdatingPassword ? "Password update error" : "Could not save profile"}
+        description={error}
+        primaryAction={{
+          label: "Dismiss",
+          variant: "primary",
+          onClick: () => setError(''),
+        }}
+      />
+    )}
+    {notice && (
+      <CenterDialog
+        isOpen={Boolean(notice)}
+        onClose={() => setNotice('')}
+        tone="success"
+        eyebrow="CHANGES SAVED"
+        title="Account updated"
+        description={notice}
+        primaryAction={{
+          label: "Done",
+          variant: "primary",
+          onClick: () => setNotice(''),
+        }}
+      />
     )}
   </main>
 }

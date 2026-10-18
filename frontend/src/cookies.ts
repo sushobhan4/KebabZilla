@@ -209,7 +209,7 @@ export function clearAllPreferenceCookies(): void {
 }
 
 /**
- * Get a UI preference value from session cookie (with localStorage fallback)
+ * Get a UI preference value from cookie (with localStorage fallback and cookie sync)
  */
 export function getPreference<T>(key: string, defaultValue: T): T {
   const cookieKey = key.startsWith('kz_') ? key : `kz_pref_${key}`;
@@ -226,8 +226,11 @@ export function getPreference<T>(key: string, defaultValue: T): T {
     const rawLocal = localStorage.getItem(cookieKey);
     if (rawLocal !== null) {
       try {
-        return JSON.parse(rawLocal);
+        const parsed = JSON.parse(rawLocal);
+        setCookie(cookieKey, rawLocal, 365);
+        return parsed;
       } catch {
+        setCookie(cookieKey, rawLocal, 365);
         return rawLocal as unknown as T;
       }
     }
@@ -237,16 +240,14 @@ export function getPreference<T>(key: string, defaultValue: T): T {
 }
 
 /**
- * Set a UI preference value in a session cookie
+ * Set a UI preference value in a persistent cookie and localStorage
  */
 export function setPreference<T>(key: string, value: T): void {
   const cookieKey = key.startsWith('kz_') ? key : `kz_pref_${key}`;
   const str = typeof value === 'string' ? value : JSON.stringify(value);
 
-  // If user allows preferences, store in session cookie
-  if (hasPreferenceConsent()) {
-    setSessionCookie(cookieKey, str);
-  }
+  // Store in persistent cookie for 365 days across sessions
+  setCookie(cookieKey, str, 365);
 
   // Also maintain in localStorage for continuity
   if (typeof localStorage !== 'undefined') {

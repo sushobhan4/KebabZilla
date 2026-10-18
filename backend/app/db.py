@@ -55,8 +55,15 @@ if settings.database_url.startswith("sqlite"):
                     cursor.execute("ALTER TABLE restaurant_settings ADD COLUMN is_delivery_open BOOLEAN DEFAULT 1")
                 if "order_cutoff_minutes_before_closing" not in cols:
                     cursor.execute("ALTER TABLE restaurant_settings ADD COLUMN order_cutoff_minutes_before_closing INTEGER DEFAULT 30")
+                if "delivery_paused_until" not in cols:
+                    cursor.execute("ALTER TABLE restaurant_settings ADD COLUMN delivery_paused_until DATETIME")
                 if "email" not in cols:
                     cursor.execute("ALTER TABLE restaurant_settings ADD COLUMN email VARCHAR(255) DEFAULT 'support@kebabzilla.in'")
+                if "distance_calculation_mode" in cols:
+                    try:
+                        cursor.execute("ALTER TABLE restaurant_settings DROP COLUMN distance_calculation_mode")
+                    except Exception:
+                        pass
 
             cursor.execute("PRAGMA table_info(orders)")
             order_cols = {row[1] for row in cursor.fetchall()}
@@ -67,6 +74,18 @@ if settings.database_url.startswith("sqlite"):
             account_cols = {row[1] for row in cursor.fetchall()}
             if account_cols and "promotional_consent" not in account_cols:
                 cursor.execute("ALTER TABLE accounts ADD COLUMN promotional_consent BOOLEAN DEFAULT 1")
+
+            cursor.execute("PRAGMA table_info(user_sessions)")
+            session_cols = {row[1] for row in cursor.fetchall()}
+            if session_cols:
+                if "device_name" not in session_cols:
+                    cursor.execute("ALTER TABLE user_sessions ADD COLUMN device_name VARCHAR(128) DEFAULT ''")
+                if "country" not in session_cols:
+                    cursor.execute("ALTER TABLE user_sessions ADD COLUMN country VARCHAR(64) DEFAULT ''")
+                if "region" not in session_cols:
+                    cursor.execute("ALTER TABLE user_sessions ADD COLUMN region VARCHAR(64) DEFAULT ''")
+                if "city" not in session_cols:
+                    cursor.execute("ALTER TABLE user_sessions ADD COLUMN city VARCHAR(64) DEFAULT ''")
         except Exception:
             pass
         cursor.close()
@@ -83,10 +102,19 @@ else:
                     conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS charge_from_zero_beyond_free_radius BOOLEAN DEFAULT FALSE;")
                     conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS is_delivery_open BOOLEAN DEFAULT TRUE;")
                     conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS order_cutoff_minutes_before_closing INTEGER DEFAULT 30;")
+                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS delivery_paused_until TIMESTAMPTZ;")
                     conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS email VARCHAR(255) DEFAULT 'support@kebabzilla.in';")
+                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS enforce_driver_geofence BOOLEAN DEFAULT FALSE;")
+                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS driver_geofence_meters INTEGER DEFAULT 500;")
+                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS haversine_routing_factor FLOAT DEFAULT 1.3627;")
                     conn.exec_driver_sql("ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_started_at TIMESTAMPTZ;")
                     conn.exec_driver_sql("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS promotional_consent BOOLEAN DEFAULT TRUE;")
+                    conn.exec_driver_sql("ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS device_name VARCHAR(128) DEFAULT '';")
+                    conn.exec_driver_sql("ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS country VARCHAR(64) DEFAULT '';")
+                    conn.exec_driver_sql("ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS region VARCHAR(64) DEFAULT '';")
+                    conn.exec_driver_sql("ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS city VARCHAR(64) DEFAULT '';")
                     conn.exec_driver_sql("ALTER TABLE restaurant_settings DROP COLUMN IF EXISTS admin_override_open;")
+                    conn.exec_driver_sql("ALTER TABLE restaurant_settings DROP COLUMN IF EXISTS distance_calculation_mode;")
                     conn.exec_driver_sql("""
                         DO $$
                         BEGIN

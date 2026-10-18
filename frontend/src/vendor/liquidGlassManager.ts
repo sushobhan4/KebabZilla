@@ -10,6 +10,7 @@ import {
   DEFAULTS,
   type GlassConfig,
 } from "./liquidglass.js";
+import { getCookie, setCookie } from "../cookies";
 
 export interface GlassSettings extends GlassConfig {
   applyToNav: boolean;
@@ -196,7 +197,7 @@ class LiquidGlassManager {
 
   private loadFromStorage() {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
+      const saved = getCookie(STORAGE_KEY) || (typeof localStorage !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null);
       if (saved) {
         const parsed = JSON.parse(saved);
         this.settings = { ...DEFAULT_SETTINGS, ...parsed };
@@ -208,7 +209,11 @@ class LiquidGlassManager {
 
   public saveToStorage() {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.settings));
+      const str = JSON.stringify(this.settings);
+      setCookie(STORAGE_KEY, str, 365);
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem(STORAGE_KEY, str);
+      }
     } catch (e) {
       console.warn("Failed to save liquid glass config:", e);
     }

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 from app.config import settings
 from app.dependencies import CurrentAccount, DbSession
@@ -13,8 +13,6 @@ router = APIRouter(prefix="/orders", tags=["customer orders"])
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_order(data: OrderCreate, account: CurrentAccount, db: DbSession):
-    if account.role not in (Role.USER, Role.ADMIN):
-        raise HTTPException(status_code=403, detail="Customer ordering is only available to customer and administrator accounts")
     if data.payment_method == PaymentMethod.RAZORPAY:
         if not settings.razorpay_key_id or not settings.razorpay_key_secret:
             raise HTTPException(status_code=503, detail="Online payment is not configured. Choose cash or contact the restaurant.")
@@ -58,14 +56,27 @@ def razorpay_key_id() -> str:
 
 
 @router.get("")
-def my_orders(account: CurrentAccount, db: DbSession):
+def my_orders(
+    account: CurrentAccount,
+    db: DbSession,
+    limit: int = 10,
+    offset: int = 0,
+):
+    effective_limit = min(limit, 10)
+    total = db.scalar(select(func.count(Order.order_id)).where(Order.customer_id == account.id)) or 0
     orders = db.scalars(
         select(Order)
         .where(Order.customer_id == account.id)
         .order_by(Order.created_at.desc())
-        .limit(100)
+        .offset(offset)
+        .limit(effective_limit)
     ).all()
-    return [order_payload(order, include_delivery_otp=True) for order in orders]
+    return {
+        "items": [order_payload(order, include_delivery_otp=True) for order in orders],
+        "total": total,
+        "limit": effective_limit,
+        "offset": offset,
+    }
 
 
 @router.post("/{order_id}/switch-to-cash")

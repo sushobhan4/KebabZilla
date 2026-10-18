@@ -96,6 +96,21 @@ export type ProvisionedAccount = Account & {
   temporary_password: string | null
   notification_status: 'EMAIL_SENT' | 'EMAIL_FAILED' | 'NOT_CONFIGURED'
 }
+export type UserSession = {
+  id: number
+  device_name: string
+  device_type: 'desktop' | 'mobile' | 'tablet' | string
+  country: string
+  region: string
+  city: string
+  location: string
+  ip_address: string
+  created_at: string
+  last_active_at: string
+  is_current: boolean
+  is_revoked: boolean
+}
+
 export type SavedAddress = {
   id: string; label: string; house_number?: string; area?: string; road?: string
   landmark?: string; city?: string; pincode?: string; postal_code?: string; latitude?: number | null; longitude?: number | null; is_default?: boolean
@@ -174,10 +189,34 @@ export function getCustomItemLowestPrice(item: CustomMenuItem): number {
 }
 
 export function getMenuItemLowestPrice(item: MenuItem): number {
+  if (item.is_custom) {
+    if (item.custom_sections && item.custom_sections.length > 0) {
+      let total = item.base_price_paise ?? item.price_paise
+      for (const sec of item.custom_sections) {
+        if (sec.required !== false && sec.options && sec.options.length > 0) {
+          const minExtra = Math.min(...sec.options.map((o) => o.extra_paise || 0))
+          total += minExtra
+        }
+      }
+      return total
+    }
+    return item.price_paise
+  }
   if (item.variations && item.variations.length > 0) {
     return Math.min(...item.variations.map((v) => v.price_paise))
   }
   return item.price_paise
+}
+
+export function getItemDiscountedLowestPrice(item: MenuItem, lowestOriginalPrice?: number): number {
+  const original = lowestOriginalPrice ?? getMenuItemLowestPrice(item)
+  if (item.discount_percent && item.discount_percent > 0) {
+    return Math.max(1, Math.round((original * (100 - item.discount_percent)) / 100))
+  }
+  if (item.discounted_price_paise != null && item.discounted_price_paise < original) {
+    return item.discounted_price_paise
+  }
+  return original
 }
 export type SavedCartItem = {
   id?: number
@@ -231,6 +270,7 @@ export type Restaurant = {
   accepting_orders: boolean
   is_restaurant_open?: boolean
   is_delivery_open?: boolean
+  delivery_paused_reason?: string | null
   order_cutoff_minutes_before_closing?: number
   delivery_status?: 'OPEN' | 'CLOSING_SOON' | 'DELIVERY_CUTOFF' | 'DELIVERY_PAUSED' | 'RESTAURANT_CLOSED'
   delivery_status_heading?: string
@@ -244,7 +284,6 @@ export type Restaurant = {
   is_currently_scheduled_open?: boolean
   schedule_status?: string
   next_schedule_refresh?: string | null
-  distance_calculation_mode?: 'AUTO' | 'GOOGLE_MAPS' | 'HAVERSINE'
   enforce_driver_geofence?: boolean
   driver_geofence_meters?: number
   haversine_routing_factor?: number

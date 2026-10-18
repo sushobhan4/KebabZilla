@@ -12,6 +12,7 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  deployments: write
 
 concurrency:
   group: pages
@@ -56,3 +57,46 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  cleanup:
+    runs-on: ubuntu-latest
+    needs: deploy
+    steps:
+      - name: Retain latest 5 deployments and delete older ones
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const keep = 5;
+            const deployments = await github.paginate(github.rest.repos.listDeployments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              environment: 'github-pages',
+              per_page: 100,
+            });
+
+            console.log(`Found ${deployments.length} total deployments. Keeping latest ${keep}...`);
+            const toDelete = deployments.slice(keep);
+
+            for (const dep of toDelete) {
+              try {
+                await github.rest.repos.createDeploymentStatus({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  deployment_id: dep.id,
+                  state: 'inactive',
+                });
+              } catch (e) {
+                // Ignore if already inactive or cannot set inactive
+              }
+              try {
+                await github.rest.repos.deleteDeployment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  deployment_id: dep.id,
+                });
+                console.log(`Deleted deployment ${dep.id}`);
+              } catch (err) {
+                console.warn(`Could not delete deployment ${dep.id}:`, err.message);
+              }
+            }
+            console.log(`Cleanup complete. Deleted ${toDelete.length} old deployments.`);

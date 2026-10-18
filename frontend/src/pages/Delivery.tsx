@@ -9,8 +9,10 @@ import {
   PackageCheck,
   Phone,
   Power,
+  RefreshCw,
   Route as RouteIcon,
   Search,
+  ServerCrash,
   ShieldCheck,
   UserRound,
 } from "lucide-react";
@@ -33,6 +35,7 @@ import {
   StatusBadge,
 } from "../components";
 import { useRestaurant } from "../state";
+import { usePreference } from "../cookies";
 
 function DeliveryWaypointsMap({
   restaurantLat,
@@ -444,7 +447,7 @@ function PastDeliveries() {
 }
 
 export default function Delivery() {
-  const [deliveryTab, setDeliveryTab] = useState<"CURRENT" | "PAST">("CURRENT");
+  const [deliveryTab, setDeliveryTab] = usePreference<"CURRENT" | "PAST">("delivery_active_tab", "CURRENT");
   const [orders, setOrders] = useState<Order[]>([]);
   const [search, setSearch] = useState("");
   const [dutyStatus, setDutyStatus] = useState<DriverDutyStatus | null>(null);
@@ -470,21 +473,35 @@ export default function Delivery() {
 
   const refresh = useCallback(
     () =>
-      Promise.all([
+      Promise.allSettled([
         api<Order[]>("/delivery/queue"),
         api<DriverDutyStatus>("/delivery/duty-status"),
         api<RecommendedBatchesResponse>("/delivery/recommended-batches"),
       ])
-        .then(([queue, duty, recommendations]) => {
-          setOrders(queue);
-          setDutyStatus(duty);
-          setSuggestedBatches(recommendations);
+        .then(([queueRes, dutyRes, recRes]) => {
+          if (queueRes.status === "fulfilled") {
+            setOrders(queueRes.value);
+          }
+          if (dutyRes.status === "fulfilled") {
+            setDutyStatus(dutyRes.value);
+          }
+          if (recRes.status === "fulfilled") {
+            setSuggestedBatches(recRes.value);
+          }
+
+          if (dutyRes.status === "rejected") {
+            setError(
+              dutyRes.reason instanceof Error
+                ? dutyRes.reason.message
+                : "Could not load delivery data.",
+            );
+          } else if (recRes.status === "rejected" && dutyRes.status === "fulfilled") {
+            console.warn("Could not load recommended batches:", recRes.reason);
+            setError("");
+          } else {
+            setError("");
+          }
         })
-        .catch((err) =>
-          setError(
-            err instanceof Error ? err.message : "Could not load delivery data.",
-          ),
-        )
         .finally(() => setLoading(false)),
     [],
   );
@@ -663,10 +680,31 @@ export default function Delivery() {
         </button>
       </div>
 
-      {error && <Notice onDismiss={() => setError("")}>{error}</Notice>}
+      {error && dutyStatus !== null && <Notice onDismiss={() => setError("")}>{error}</Notice>}
 
       {deliveryTab === "PAST" ? (
         <PastDeliveries />
+      ) : dutyStatus === null ? (
+        <EmptyState
+          icon={<ServerCrash size={28} />}
+          title="Unable to connect to delivery workspace"
+          description={
+            error ||
+            "Could not load restaurant operating status or dispatch queue. Please check your network connection or server availability."
+          }
+          action={
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setLoading(true);
+                void refresh();
+              }}
+              style={{ marginTop: "1rem" }}
+            >
+              <RefreshCw size={15} style={{ marginRight: "6px" }} /> Retry connection
+            </Button>
+          }
+        />
       ) : (
         <>
           {/* Duty status toggle card - only shown when not currently on an active delivery */}
@@ -678,8 +716,8 @@ export default function Delivery() {
                 justifyContent: "space-between",
                 alignItems: "center",
                 padding: "16px 20px",
-                background: dutyStatus?.is_accepting_deliveries ? "#f0f7ed" : "#faf9f6",
-                border: `1.5px solid ${dutyStatus?.is_accepting_deliveries ? "#a5d6a7" : "#e0ded4"}`,
+                background: dutyStatus.is_accepting_deliveries ? "#f0f7ed" : "#faf9f6",
+                border: `1.5px solid ${dutyStatus.is_accepting_deliveries ? "#a5d6a7" : "#e0ded4"}`,
                 borderRadius: "14px",
                 marginBottom: "1.5rem",
                 boxShadow: "0 2px 8px rgba(0,0,0,0.03)",
@@ -691,8 +729,8 @@ export default function Delivery() {
                     width: "42px",
                     height: "42px",
                     borderRadius: "12px",
-                    background: dutyStatus?.is_accepting_deliveries ? "#c8e6c9" : "#eae8e0",
-                    color: dutyStatus?.is_accepting_deliveries ? "#2b7a4b" : "#7d8076",
+                    background: dutyStatus.is_accepting_deliveries ? "#c8e6c9" : "#eae8e0",
+                    color: dutyStatus.is_accepting_deliveries ? "#2b7a4b" : "#7d8076",
                     display: "grid",
                     placeItems: "center",
                   }}
@@ -702,7 +740,7 @@ export default function Delivery() {
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
                     <strong style={{ fontSize: "16px", color: "var(--foreground)" }}>
-                      {dutyStatus?.is_accepting_deliveries
+                      {dutyStatus.is_accepting_deliveries
                         ? "Accepting deliveries"
                         : "Off-duty"}
                     </strong>
@@ -713,18 +751,18 @@ export default function Delivery() {
                         letterSpacing: "0.5px",
                         padding: "2px 9px",
                         borderRadius: "12px",
-                        background: dutyStatus?.is_accepting_deliveries ? "#2b7a4b" : "#84887d",
+                        background: dutyStatus.is_accepting_deliveries ? "#2b7a4b" : "#84887d",
                         color: "#fff",
                       }}
                     >
-                      {dutyStatus?.is_accepting_deliveries ? "ONLINE" : "OFFLINE"}
+                      {dutyStatus.is_accepting_deliveries ? "ONLINE" : "OFFLINE"}
                     </span>
                   </div>
                   <div style={{ color: "#666", fontSize: "12px", marginTop: "3px" }}>
-                    {dutyStatus?.schedule_status ? `${dutyStatus.schedule_status} · ` : ""}
-                    <strong>{dutyStatus?.active_riders || 0}</strong> active driver
-                    {dutyStatus?.active_riders === 1 ? "" : "s"} on duty
-                    {dutyStatus?.enforce_geofence && (
+                    {dutyStatus.schedule_status ? `${dutyStatus.schedule_status} · ` : ""}
+                    <strong>{dutyStatus.active_riders || 0}</strong> active driver
+                    {dutyStatus.active_riders === 1 ? "" : "s"} on duty
+                    {dutyStatus.enforce_geofence && (
                       <span style={{ marginLeft: "8px", color: "#896f3d" }}>
                         · Restaurant geofence active ({dutyStatus.geofence_meters}m)
                       </span>
@@ -737,7 +775,7 @@ export default function Delivery() {
                 <span style={{ fontSize: "13px", fontWeight: 600, color: "#444" }}>
                   {dutyBusy
                     ? "Updating…"
-                    : !dutyStatus?.is_restaurant_open
+                    : !dutyStatus.is_restaurant_open
                       ? "Restaurant closed"
                       : "Accepting delivery"}
                 </span>
@@ -745,8 +783,8 @@ export default function Delivery() {
                   <input
                     type="checkbox"
                     aria-label="Toggle accepting delivery"
-                    checked={Boolean(dutyStatus?.is_accepting_deliveries && dutyStatus?.is_restaurant_open)}
-                    disabled={dutyBusy || !dutyStatus?.is_restaurant_open}
+                    checked={Boolean(dutyStatus.is_accepting_deliveries && dutyStatus.is_restaurant_open)}
+                    disabled={dutyBusy || !dutyStatus.is_restaurant_open}
                     onChange={(event) => void handleToggleDuty(event.target.checked)}
                   />
                   <span />
@@ -756,17 +794,17 @@ export default function Delivery() {
           )}
 
           {/* If driver is offline */}
-          {!dutyStatus?.is_accepting_deliveries || !dutyStatus?.is_restaurant_open ? (
+          {!dutyStatus.is_accepting_deliveries || !dutyStatus.is_restaurant_open ? (
             <EmptyState
               icon={<Power size={24} />}
               title={
-                !dutyStatus?.is_restaurant_open
+                !dutyStatus.is_restaurant_open
                   ? "Restaurant is currently closed"
                   : "You are currently off-duty"
               }
               description={
-                !dutyStatus?.is_restaurant_open
-                  ? `Operating hours ended or orders not currently active (${dutyStatus?.schedule_status || "Closed"}). Accepting deliveries will automatically unlock when open.`
+                !dutyStatus.is_restaurant_open
+                  ? `Operating hours ended or orders not currently active (${dutyStatus.schedule_status || "Closed"}). Accepting deliveries will automatically unlock when open.`
                   : "Turn on 'Accepting delivery' toggle above to become available, view orders, and join dispatch clustering."
               }
             />

@@ -14,4 +14,4 @@ if [ -n "$SEED_ADMIN_PASSWORD" ]; then
 fi
 
 echo "==> Starting KebabZilla API server on port ${PORT:-8080}..."
-exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8080}"
+exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8080}" --proxy-headers --forwarded-allow-ips "*"

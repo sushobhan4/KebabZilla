@@ -1,9 +1,13 @@
 from datetime import datetime, timedelta, timezone
+import functools
 import hashlib
+import ipaddress
+import re
 import secrets
 
+import httpx
 import jwt
-from fastapi import Response
+from fastapi import Request, Response
 from pwdlib import PasswordHash
 
 from app.config import settings
@@ -12,6 +16,19 @@ password_hash = PasswordHash.recommended()
 
 SESSION_COOKIE_NAME = settings.session_cookie_name
 SESSION_LIFETIME_DAYS = settings.session_lifetime_days
+
+
+def validate_password_complexity(password: str) -> None:
+    if len(password) < 8:
+        raise ValueError("Password must be at least 8 characters long")
+    if not re.search(r"[a-z]", password):
+        raise ValueError("Password must contain at least one lowercase letter")
+    if not re.search(r"[A-Z]", password):
+        raise ValueError("Password must contain at least one uppercase letter")
+    if not re.search(r"\d", password):
+        raise ValueError("Password must contain at least one number")
+    if not re.search(r"[^A-Za-z0-9]", password):
+        raise ValueError("Password must contain at least one special character")
 
 
 def hash_password(password: str) -> str:
@@ -38,13 +55,83 @@ def compute_device_fingerprint(user_agent: str | None) -> str:
     return hashlib.sha256(clean_ua.encode("utf-8")).hexdigest()
 
 
+def parse_device_info(user_agent: str | None) -> dict[str, str]:
+    ua = (user_agent or "").strip()
+    device_type = "desktop"
+    device_name = "Desktop"
+
+    if not ua:
+        return {"device_name": "Unknown device", "device_type": "desktop"}
+
+    if "iPad" in ua:
+        device_type = "tablet"
+        device_name = "iPad"
+    elif "iPhone" in ua:
+        device_type = "mobile"
+        device_name = "iPhone"
+    elif "Android" in ua:
+        device_type = "tablet" if ("Tablet" in ua or "tab" in ua.lower()) else "mobile"
+        match = re.search(r"Android\s+[\d\.]+;\s*([^;)]+?)(?:\s+Build|\s*;|\))", ua, re.IGNORECASE)
+        if match:
+            raw_model = match.group(1).strip()
+            raw_model = re.sub(r"\s+Build.*$", "", raw_model, flags=re.IGNORECASE).strip()
+            if raw_model and raw_model.lower() not in ("k", "wv", "mobile"):
+                device_name = raw_model
+            else:
+                device_name = "Android device"
+        else:
+            device_name = "Android device"
+    elif "Windows" in ua:
+        device_type = "desktop"
+        device_name = "Windows"
+    elif "Macintosh" in ua or "Mac OS" in ua:
+        device_type = "desktop"
+        device_name = "Mac"
+    elif "Linux" in ua:
+        device_type = "desktop"
+        device_name = "Linux"
+
+    return {"device_name": device_name, "device_type": device_type}
+
+
+@functools.lru_cache(maxsize=2048)
+def resolve_ip_location(ip: str | None) -> dict[str, str]:
+    clean_ip = (ip or "").strip()
+    if not clean_ip or clean_ip in ("localhost", "testclient"):
+        return {"country": "Local", "region": "", "city": "Localhost"}
+
+    try:
+        obj = ipaddress.ip_address(clean_ip)
+        if obj.is_private or obj.is_loopback or obj.is_reserved or obj.is_link_local:
+            return {"country": "Local", "region": "", "city": "Localhost"}
+    except ValueError:
+        return {"country": "Unknown", "region": "", "city": "Unknown"}
+
+    try:
+        resp = httpx.get(
+            f"http://ip-api.com/json/{clean_ip}?fields=status,country,regionName,city",
+            timeout=2.5,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("status") == "success":
+                return {
+                    "country": (data.get("country") or "").strip(),
+                    "region": (data.get("regionName") or "").strip(),
+                    "city": (data.get("city") or "").strip(),
+                }
+    except Exception:
+        pass
+
+    return {"country": "Unknown", "region": "", "city": "Unknown"}
+
+
 def get_cookie_security_params() -> dict:
     is_production = settings.environment.casefold() == "production"
     secure = settings.session_cookie_secure if settings.session_cookie_secure is not None else is_production
     samesite = settings.session_cookie_samesite.lower()
 
-    if not secure and samesite == "none":
-        # Browsers reject SameSite=None without Secure=True
+    if samesite not in ("lax", "strict"):
         samesite = "lax"
 
     return {
@@ -182,4 +269,43 @@ def generate_2fa_temp_token() -> str:
 
 def hash_2fa_temp_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def get_client_ip(request: Request | None) -> str:
+    """
+    Extract the real client IP address from request headers or socket.
+    Prioritizes headers set by reverse proxies / CDNs (Cloudflare, Cloud Run, Nginx).
+    """
+    if not request:
+        return ""
+
+    # 1. Cloudflare header: CF-Connecting-IP
+    # Cloudflare overwrites this header with the client's actual IP address before forwarding.
+    cf_ip = request.headers.get("cf-connecting-ip")
+    if cf_ip:
+        ip = cf_ip.strip()
+        if ip:
+            return ip
+
+    # 2. X-Real-IP (set by Nginx / reverse proxies)
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        ip = real_ip.strip()
+        if ip:
+            return ip
+
+    # 3. X-Forwarded-For (standard header: client, proxy1, proxy2)
+    # The original client IP is the first non-empty IP in the comma-separated list
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        parts = [p.strip() for p in forwarded_for.split(",") if p.strip()]
+        if parts:
+            return parts[0]
+
+    # 4. Fallback to raw TCP socket remote address
+    if request.client and request.client.host:
+        return request.client.host.strip()
+
+    return ""
+
 

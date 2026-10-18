@@ -148,21 +148,22 @@ class CustomerNotifier:
         if settings.environment == "development":
             return
         if not phone or not settings.delivery_otp_api_url or not settings.delivery_otp_api_token:
-            if not email:
-                raise HTTPException(status_code=503, detail="Delivery OTP messaging is not configured")
             return
-        async with httpx.AsyncClient(timeout=12) as client:
-            response = await client.post(
-                settings.delivery_otp_api_url,
-                headers={"Authorization": f"Bearer {settings.delivery_otp_api_token}"},
-                json={
-                    "to": phone,
-                    "sender": settings.delivery_otp_sender,
-                    "message": f"Your KebabZilla delivery code for {order_number} is {otp}. Share it with your delivery partner to confirm delivery.",
-                },
-            )
-        if response.is_error and not email:
-            raise HTTPException(status_code=502, detail="The delivery code could not be sent. Please retry dispatch.")
+        try:
+            async with httpx.AsyncClient(timeout=12) as client:
+                response = await client.post(
+                    settings.delivery_otp_api_url,
+                    headers={"Authorization": f"Bearer {settings.delivery_otp_api_token}"},
+                    json={
+                        "to": phone,
+                        "sender": settings.delivery_otp_sender,
+                        "message": f"Your KebabZilla delivery code for {order_number} is {otp}. Share it with your delivery partner to confirm delivery.",
+                    },
+                )
+            if response.is_error:
+                print(f"[CustomerNotifier] Delivery OTP SMS upstream error: {response.status_code}")
+        except Exception as exc:
+            print(f"[CustomerNotifier] Delivery OTP SMS dispatch failed: {exc}")
 
 
 class StaffAccountNotifier:

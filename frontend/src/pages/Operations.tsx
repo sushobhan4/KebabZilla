@@ -2,14 +2,15 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react
 import { ArrowRight, BadgeIndianRupee, Check, CircleCheck, ClipboardList, CookingPot, Flame, Plus, ReceiptText, Save, Trash2, Truck, UserRound, Search, Sparkles, X } from 'lucide-react'
 import { Link, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { api, formatINR, friendlyDate, getCustomItemLowestPrice, resolveImageUrl, type CustomMenuItem, type CustomMenuSectionOption, type MenuItem, type MenuItemVariation, type Order } from '../api'
-import { Badge, Button, EmptyState, Loading, MenuImageCarousel, Notice, PageTitle, PhoneInput, QuantityPicker, StatusBadge, formatPhoneWithPrefix, isValidIndianMobile } from '../components'
+import { Badge, Button, CenterDialog, EmptyState, Loading, MenuImageCarousel, Notice, PageTitle, PhoneInput, QuantityPicker, StatusBadge, formatPhoneWithPrefix, isValidIndianMobile } from '../components'
+import { usePreference } from '../cookies'
 
 function Queue() {
   const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
-  const [filter, setFilter] = useState('ACTIVE')
+  const [filter, setFilter] = usePreference<string>('ops_queue_filter', 'ACTIVE')
 
   const refresh = useCallback(() => api<Order[]>('/staff/orders').then((ordersList) => {
     setOrders(ordersList)
@@ -64,8 +65,7 @@ function Queue() {
     <div className="filter-tabs ops-filter-tabs"><button className={filter === 'ACTIVE' ? 'active' : ''} onClick={() => setFilter('ACTIVE')}>Active</button><button className={filter === 'PLACED' ? 'active' : ''} onClick={() => setFilter('PLACED')}>New <b>{orders.filter((order) => order.status === 'PLACED').length}</b></button><button className={filter === 'READY' ? 'active' : ''} onClick={() => setFilter('READY')}>Ready</button></div>
     {!displayed.length ? <EmptyState icon={<CookingPot size={21} />} title="A quiet moment at the pass" description="New orders show up here as soon as they’re placed." /> : <div className="ops-order-grid">{displayed.map((order, index) => <article className="ops-order-card" key={order.order_id}><div className="ops-order-head"><div><span className="ops-order-time">{friendlyDate(order.created_at)}</span><h3><strong className="ops-queue-number">Order #{index + 1}</strong></h3></div><StatusBadge status={order.status} /></div><div className="ops-customer"><span className="mini-person"><UserRound size={15} /></span><span><strong>{order.customer_name}</strong><small>{order.order_type === 'DINE_IN' ? 'Walk-in · dine-in' : order.order_type === 'PICKUP' ? 'Walk-in · collection' : order.customer_phone || 'Delivery order'}</small></span>{order.customer_id !== null ? <Badge tone="amber">ONLINE ORDER</Badge> : <Badge tone="soft">WALK-IN</Badge>}</div><div className="ops-order-items">{order.items.map((line) => <div className="ops-order-item" key={`${line.menu_item_id}-${line.name}`}>{(line.image_urls?.length || line.image_url) && <span className="ops-order-item-art"><MenuImageCarousel images={line.image_urls?.length ? line.image_urls : line.image_url ? [line.image_url] : []} alt={line.name} className="menu-gallery-order" /></span>}<span><b>{line.quantity}×</b> {line.name}</span><strong>{formatINR(line.line_total_paise)}</strong></div>)}</div><div className="ops-order-address"><Truck size={14} /><span>{order.order_type === 'DINE_IN' || order.order_type === 'PICKUP' ? 'Restaurant counter pickup' : 'Delivery order'}</span></div><div className="ops-order-bottom"><span>Total <strong>{formatINR(order.total_paise)}</strong></span><div className="order-actions">
       {order.status === 'PLACED' && <><Button variant="ghost" className="reject-action" disabled={busy === order.order_id} onClick={() => void update(order, 'REJECTED')}>Reject</Button><Button size="button-sm" disabled={busy === order.order_id} onClick={() => void update(order, 'ACCEPTED')}>Accept <Check size={14} /></Button></>}
-      {order.status === 'ACCEPTED' && <Button size="button-sm" disabled={busy === order.order_id} onClick={() => void update(order, 'PREPARING')}>Start grilling <ArrowRight size={14} /></Button>}
-      {order.status === 'PREPARING' && <Button size="button-sm" disabled={busy === order.order_id} onClick={() => void markReadyAndPrint(order)}>Mark and print the receipt <ReceiptText size={14} /></Button>}
+      {(order.status === 'ACCEPTED' || order.status === 'PREPARING') && <Button size="button-sm" disabled={busy === order.order_id} onClick={() => void markReadyAndPrint(order)}>Print bill & ready <ReceiptText size={14} /></Button>}
       {order.status === 'READY' && <span className="queue-waiting">Waiting for delivery partner</span>}
     </div></div></article>)}</div>}
   </>
@@ -211,78 +211,28 @@ function MenuAvailability() {
       </section>
 
       {pendingPauseItem && (
-        <div
-          className="modal-backdrop"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setPendingPauseItem(null)
+        <CenterDialog
+          isOpen={Boolean(pendingPauseItem)}
+          onClose={() => setPendingPauseItem(null)}
+          tone="warning"
+          eyebrow="MENU AVAILABILITY WARNING"
+          title={`Turn off ${pendingPauseItem.name}?`}
+          description={`Are you sure you want to turn off ${pendingPauseItem.name}? This will grey out the item on the customer menu and mark it as currently unavailable until the next working day.`}
+          primaryAction={{
+            label: "Turn off menu item",
+            variant: "danger",
+            onClick: () => {
+              const target = pendingPauseItem;
+              setPendingPauseItem(null);
+              void setItem(target, "today");
+            },
           }}
-        >
-          <section
-            className="modal-card"
-            style={{ maxWidth: "460px" }}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="pause-warning-title"
-          >
-            <div className="modal-heading">
-              <div>
-                <span className="eyebrow" style={{ color: "#c54d2f" }}>
-                  MENU AVAILABILITY WARNING
-                </span>
-                <h2 id="pause-warning-title">Turn off {pendingPauseItem.name}?</h2>
-              </div>
-              <button
-                className="icon-button"
-                type="button"
-                onClick={() => setPendingPauseItem(null)}
-                aria-label="Close"
-              >
-                <X size={18} />
-              </button>
-            </div>
-            <div className="modal-form" style={{ padding: "18px 24px" }}>
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: "0.92rem",
-                  lineHeight: 1.5,
-                  color: "#354039",
-                }}
-              >
-                Are you sure you want to turn off{" "}
-                <strong>{pendingPauseItem.name}</strong>?
-              </p>
-              <Notice tone="info">
-                This will grey out the item on the customer menu and mark it as{" "}
-                <strong>currently unavailable</strong> until the next working day.
-              </Notice>
-              <div className="modal-actions" style={{ marginTop: "12px" }}>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => setPendingPauseItem(null)}
-                >
-                  Keep available
-                </Button>
-                <Button
-                  type="button"
-                  style={{
-                    background: "#c54d2f",
-                    borderColor: "#c54d2f",
-                    color: "#ffffff",
-                  }}
-                  onClick={() => {
-                    const target = pendingPauseItem
-                    setPendingPauseItem(null)
-                    void setItem(target, "today")
-                  }}
-                >
-                  Turn off menu item
-                </Button>
-              </div>
-            </div>
-          </section>
-        </div>
+          secondaryAction={{
+            label: "Keep available",
+            variant: "secondary",
+            onClick: () => setPendingPauseItem(null),
+          }}
+        />
       )}
     </>
   )
@@ -309,6 +259,7 @@ function Billing() {
   const [phone, setPhone] = useState('+91')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [draftSavedOpen, setDraftSavedOpen] = useState(false)
   const [invoice, setInvoice] = useState<Order | null>(null)
   const location = useLocation()
   const navigate = useNavigate()
@@ -519,7 +470,7 @@ function Billing() {
       setCart([])
       setName('')
       setPhone('+91')
-      setError('Draft saved. You can pick it up any time from Saved drafts.')
+      setDraftSavedOpen(true)
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not save draft.') }
   }
 
@@ -558,8 +509,8 @@ function Billing() {
 
   if (invoice) return <div className="invoice-wrap"><article className="invoice-card"><div className="invoice-success"><span><Check size={20} /></span><div><div className="eyebrow">BILL PAID · WALK-IN</div><h1>All squared away.</h1></div></div><div className="invoice-brand"><span><Flame size={15} /></span> KebabZilla <small> · PAYMENT RECEIPT</small></div><div className="invoice-id"><span>INVOICE</span><strong>{invoice.order_id}</strong><small>{friendlyDate(invoice.created_at)}</small></div><div className="invoice-lines">{invoice.items.map((line, idx) => <div key={`${line.menu_item_id ?? idx}-${line.name}`}><span>{line.quantity} × {line.name}</span><strong>{formatINR(line.line_total_paise)}</strong></div>)}<div className="invoice-total"><span>Total paid</span><strong>{formatINR(invoice.total_paise)}</strong></div></div><div className="invoice-customer"><span><UserRound size={14} /> {invoice.customer_name}</span><Badge tone="success">CASH</Badge></div><div className="invoice-actions"><Button onClick={() => window.print()}><ReceiptText size={16} /> Print receipt</Button><Button variant="secondary" onClick={() => { setInvoice(null); setCart([]); setName(''); setPhone('') }}>New bill</Button></div></article></div>
 
-  return <><PageTitle eyebrow="AT THE COUNTER" title="Walk-in billing" description="Close out a dine-in bill when your guest is ready to leave." action={<Link className="button button-secondary" to="/ops/drafts"><ReceiptText size={15} /> Saved drafts</Link>} />
-    {error && <Notice tone={error.startsWith('Draft saved') ? 'success' : 'error'} onDismiss={() => setError('')} >{error}</Notice>}
+  return <><PageTitle eyebrow="AT THE COUNTER" title="Walk-in billing" description="Close out a dine-in bill when your guest is ready to leave." />
+    {error && <Notice onDismiss={() => setError('')}>{error}</Notice>}
     <form onSubmit={submit} className="billing-layout"><section className="billing-menu"><label className="menu-search billing-menu-search"><Search size={17} /><input type="search" aria-label="Search walk-in menu" value={menuSearch} onChange={(event) => setMenuSearch(event.target.value)} placeholder="Search menu items" /></label><div className="billing-item-grid">{menu.filter((item) => `${item.name} ${getCategoryName(item.category)} ${item.description}`.toLocaleLowerCase().includes(menuSearch.trim().toLocaleLowerCase())).map((item) => { const count = itemCountFor(item.id, Boolean(item.is_custom)); const hasVariations = Boolean(item.variations && item.variations.length > 0); return <div role="button" tabIndex={0} aria-pressed={count > 0} className={`billing-item ${count ? 'in-cart' : ''}`} key={`${item.is_custom ? 'c-' : 'm-'}${item.id}`} onClick={() => handleItemClick(item)} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); handleItemClick(item) } }}>{item.image_urls?.length || item.image_url ? <span className="billing-item-icon billing-item-photo"><img src={resolveImageUrl(item.image_urls?.[0] || item.image_url || '')} alt={item.name} loading="lazy" /></span> : <span className="billing-item-icon">{item.is_vegetarian ? '🥬' : '🍢'}</span>}<span><strong>{item.name} {item.is_custom ? <Badge tone="amber">Custom</Badge> : hasVariations ? <Badge tone="soft">Options</Badge> : null}</strong><small>{getCategoryName(item.category)} · {item.is_custom || hasVariations ? `From ${formatINR(item.price_paise)}` : formatINR(item.price_paise)}</small></span>{count > 0 ? <Badge tone="soft">×{count}</Badge> : item.is_custom || hasVariations ? <Sparkles size={15} /> : <Plus size={16} />}</div>})}</div></section>
       <aside className="billing-ticket">
         <div className="ticket-heading">
@@ -596,7 +547,7 @@ function Billing() {
           <strong>{formatINR(total)}</strong>
         </div>
         <Button type="submit" disabled={busy || !cart.length || !name.trim()} className="full-width">{busy ? 'Working…' : <>Complete bill · {formatINR(total)} <BadgeIndianRupee size={16} /></>}</Button>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', width: '100%' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', width: '100%', marginTop: '12px' }}>
           <Button type="button" variant="secondary" disabled={!cart.length} onClick={() => void saveDraft()}><Save size={15} /> Save draft</Button>
           <Link to="/ops/drafts" className="button button-secondary" style={{ textAlign: 'center', justifyContent: 'center' }}><ReceiptText size={15} /> Saved drafts</Link>
         </div>
@@ -712,6 +663,29 @@ function Billing() {
         </section>
       </div>
     )}
+    {draftSavedOpen && (
+      <CenterDialog
+        isOpen={draftSavedOpen}
+        onClose={() => setDraftSavedOpen(false)}
+        tone="success"
+        eyebrow="DRAFT SAVED"
+        title="Draft bill saved successfully"
+        description="The draft bill has been safely saved. You can pick it up at any time from Saved drafts or start a fresh bill."
+        primaryAction={{
+          label: "View saved drafts",
+          variant: "primary",
+          onClick: () => {
+            setDraftSavedOpen(false);
+            navigate("/ops/drafts");
+          },
+        }}
+        secondaryAction={{
+          label: "Start new bill",
+          variant: "secondary",
+          onClick: () => setDraftSavedOpen(false),
+        }}
+      />
+    )}
   </>
 }
 
@@ -719,6 +693,7 @@ function Drafts() {
   const [drafts, setDrafts] = useState<{ id: number; customer_name: string; payload: { phone?: string; notes?: string; items?: { id: number; quantity: number }[] }; created_at: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [draftToDelete, setDraftToDelete] = useState<{ id: number; customer_name: string } | null>(null)
   const navigate = useNavigate()
   const refresh = useCallback(() => api<typeof drafts>('/staff/drafts').then(setDrafts).catch((err) => setError(err instanceof Error ? err.message : 'Could not load drafts.')).finally(() => setLoading(false)), [])
   useEffect(() => { void refresh() }, [refresh])
@@ -727,7 +702,31 @@ function Drafts() {
     catch (err) { setError(err instanceof Error ? err.message : 'Could not delete this draft.') }
   }
   return <><PageTitle eyebrow="PICK UP WHERE YOU LEFT OFF" title="Saved drafts" description="Unfinished bills, saved for the next quiet moment." action={<Link className="button button-primary" to="/ops/billing"><Plus size={16} /> New bill</Link>} />
-    {error && <Notice>{error}</Notice>}{loading ? <Loading label="Finding saved drafts…" /> : !drafts.length ? <EmptyState icon={<Save size={20} />} title="No drafts waiting" description="Save an unfinished counter bill and it’ll be right here." /> : <div className="draft-list">{drafts.map((draft) => <article className="draft-row" key={draft.id}><span className="draft-icon"><ReceiptText size={18} /></span><div className="draft-main"><strong>{draft.customer_name || 'Walk-in'}</strong><span>{(draft.payload.items || []).length} line items · saved {friendlyDate(draft.created_at)}</span></div><div className="draft-preview">{(draft.payload.items || []).map((line) => <span key={line.id}>{line.quantity}×</span>)}</div><div className="draft-actions"><Button size="button-sm" onClick={() => navigate('/ops/billing', { state: { draft } })}>Resume <ArrowRight size={14} /></Button><button className="icon-button danger-icon" title="Delete draft" onClick={() => void remove(draft.id)}><Trash2 size={16} /></button></div></article>)}</div>}
+    {error && <Notice>{error}</Notice>}{loading ? <Loading label="Finding saved drafts…" /> : !drafts.length ? <EmptyState icon={<Save size={20} />} title="No drafts waiting" description="Save an unfinished counter bill and it’ll be right here." /> : <div className="draft-list">{drafts.map((draft) => <article className="draft-row" key={draft.id}><span className="draft-icon"><ReceiptText size={18} /></span><div className="draft-main"><strong>{draft.customer_name || 'Walk-in'}</strong><span>{(draft.payload.items || []).length} line items · saved {friendlyDate(draft.created_at)}</span></div><div className="draft-preview">{(draft.payload.items || []).map((line) => <span key={line.id}>{line.quantity}×</span>)}</div><div className="draft-actions"><Button size="button-sm" onClick={() => navigate('/ops/billing', { state: { draft } })}>Resume <ArrowRight size={14} /></Button><button className="icon-button danger-icon" title="Delete draft" onClick={() => setDraftToDelete({ id: draft.id, customer_name: draft.customer_name || 'Walk-in' })}><Trash2 size={16} /></button></div></article>)}</div>}
+    {draftToDelete && (
+      <CenterDialog
+        isOpen={Boolean(draftToDelete)}
+        onClose={() => setDraftToDelete(null)}
+        tone="danger"
+        eyebrow="DELETE DRAFT"
+        title="Delete saved draft?"
+        description={`Are you sure you want to delete the saved draft for ${draftToDelete.customer_name}? This action cannot be undone.`}
+        primaryAction={{
+          label: "Delete draft",
+          variant: "danger",
+          onClick: async () => {
+            const id = draftToDelete.id;
+            setDraftToDelete(null);
+            await remove(id);
+          },
+        }}
+        secondaryAction={{
+          label: "Keep draft",
+          variant: "secondary",
+          onClick: () => setDraftToDelete(null),
+        }}
+      />
+    )}
   </>
 }
 

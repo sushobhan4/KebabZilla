@@ -209,6 +209,21 @@ def _get_node_name(node: Any, default: str) -> str:
     return default
 
 
+def _serialize_stop_node(s: Any) -> Optional[Dict[str, Any]]:
+    if s is None:
+        return None
+    nid = getattr(s, "id", None) if hasattr(s, "id") else (s.get("id") if isinstance(s, dict) else None)
+    lat = getattr(s, "lat", None) if hasattr(s, "lat") else (s.get("lat") if isinstance(s, dict) else None)
+    lng = getattr(s, "lng", None) if hasattr(s, "lng") else (s.get("lng") if isinstance(s, dict) else None)
+    name = getattr(s, "name", None) if hasattr(s, "name") else (s.get("name") if isinstance(s, dict) else None)
+    return {
+        "id": str(nid) if nid is not None else None,
+        "lat": float(lat) if lat is not None else None,
+        "lng": float(lng) if lng is not None else None,
+        "name": str(name) if name is not None else None,
+    }
+
+
 def solve_optimal_trip(
     restaurant: Any,
     stops: List[Any],
@@ -266,7 +281,7 @@ def solve_optimal_trip(
                 "type": "OUTBOUND",
                 "from": "Restaurant",
                 "to": s_name,
-                "stop": s,
+                "stop": _serialize_stop_node(s),
                 "distanceKm": x_dist,
                 "travelTimeMinutes": round(x_travel_time, 1),
                 "serviceTimeMinutes": service_time_mins,
@@ -450,7 +465,7 @@ def solve_optimal_trip(
             "type": "OUTBOUND",
             "from": from_label,
             "to": to_label,
-            "stop": s,
+            "stop": _serialize_stop_node(s),
             "distanceKm": leg_road_km,
             "travelTimeMinutes": round(leg_travel_time, 1),
             "serviceTimeMinutes": service_time_mins,
