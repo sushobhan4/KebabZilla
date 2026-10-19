@@ -39,13 +39,15 @@ class Settings(BaseSettings):
     offer_email_api_url: str | None = None
     offer_email_api_token: str | None = None
     offer_sender: str = "KebabZilla"
-    smtp_host: str = "smtp.gmail.com"
-    smtp_port: int = 587
-    smtp_username: str = "support@kebabzilla.in"
-    smtp_password: str | None = None
-    smtp_email: str | None = None
-    smtp_from_email: str = "support@kebabzilla.in"
-    smtp_from_name: str = "KebabZilla"
+    email_from_address: str = "support@kebabzilla.in"
+    email_from_name: str = "KebabZilla"
+    gmail_client_id: str | None = None
+    gmail_client_secret: str | None = None
+    gmail_refresh_token: str | None = None
+    gmail_service_account_json: str | None = None
+    gmail_service_account_file: str | None = None
+    gmail_delegated_user: str | None = None
+    email_sender_backend: str = "auto"
     gcs_bucket_name: str = "kebabzilla_cloud_storage"
     gcs_project_id: str = "kebabzilla"
     gcs_menu_images_folder: str = "menuImages"
@@ -70,8 +72,15 @@ class Settings(BaseSettings):
             "razorpay_key_secret": ["razorpayKeySecret", "RAZORPAY_KEY_SECRET"],
             "seed_admin_email": ["seedAdminEmail", "SEED_ADMIN_EMAIL"],
             "seed_admin_password": ["seedAdminPassword", "SEED_ADMIN_PASSWORD"],
-            "smtp_email": ["SMTPemail", "smtpEmail", "SMTP_EMAIL"],
-            "smtp_password": ["SMTPpassword", "smtpPassword", "SMTP_PASSWORD"],
+            "email_from_address": ["EMAIL_FROM_ADDRESS", "emailFromAddress", "SMTP_FROM_EMAIL", "SMTP_EMAIL", "smtp_from_email", "smtp_email"],
+            "email_from_name": ["EMAIL_FROM_NAME", "emailFromName", "SMTP_FROM_NAME", "smtp_from_name"],
+            "gmail_client_id": ["GMAIL_CLIENT_ID", "gmailClientId"],
+            "gmail_client_secret": ["GMAIL_CLIENT_SECRET", "gmailClientSecret"],
+            "gmail_refresh_token": ["GMAIL_REFRESH_TOKEN", "gmailRefreshToken"],
+            "gmail_service_account_json": ["GMAIL_SERVICE_ACCOUNT_JSON", "gmailServiceAccountJson"],
+            "gmail_service_account_file": ["GMAIL_SERVICE_ACCOUNT_FILE", "gmailServiceAccountFile"],
+            "gmail_delegated_user": ["GMAIL_DELEGATED_USER", "gmailDelegatedUser"],
+            "email_sender_backend": ["EMAIL_SENDER_BACKEND", "emailSenderBackend"],
         }
         res = dict(data) if isinstance(data, dict) else {}
         for field, aliases in alias_map.items():
@@ -142,12 +151,21 @@ class Settings(BaseSettings):
                 raise ValueError("Production requires PostgreSQL")
             if not self.cors_origins or "*" in self.cors_origins:
                 raise ValueError("Production CORS_ORIGINS must explicitly list trusted frontend origins")
-        if self.smtp_email:
-            if not self.smtp_username or self.smtp_username == "support@kebabzilla.in":
-                self.smtp_username = self.smtp_email
-            if not self.smtp_from_email or self.smtp_from_email == "support@kebabzilla.in":
-                self.smtp_from_email = self.smtp_email
+        if not self.gmail_client_id and self.google_client_id:
+            self.gmail_client_id = self.google_client_id
+        if not self.gmail_client_secret and self.google_client_secret:
+            self.gmail_client_secret = self.google_client_secret
+        if not self.gmail_delegated_user:
+            self.gmail_delegated_user = self.email_from_address or "support@kebabzilla.in"
         return self
+
+    @property
+    def smtp_from_email(self) -> str:
+        return self.email_from_address
+
+    @property
+    def smtp_from_name(self) -> str:
+        return self.email_from_name
 
 
 @lru_cache

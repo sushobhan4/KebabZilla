@@ -73,7 +73,27 @@ export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
   const isGet = method === 'GET'
 
   if (!isGet) {
-    clearApiCache()
+    if (path.includes('/cart')) {
+      clearApiCache('/cart')
+    } else if (path.includes('/orders')) {
+      clearApiCache('/orders')
+      clearApiCache('/delivery')
+    } else if (path.includes('/delivery')) {
+      clearApiCache('/delivery')
+      clearApiCache('/orders')
+    } else if (path.includes('/menu')) {
+      clearApiCache('/menu')
+    } else if (path.includes('/discounts')) {
+      clearApiCache('/discounts')
+      clearApiCache('/menu')
+    } else if (path.includes('/admin/settings') || path.includes('/restaurant')) {
+      clearApiCache('/restaurant')
+      clearApiCache('/admin/settings')
+    } else if (path.includes('/auth')) {
+      clearApiCache('/auth')
+    } else {
+      clearApiCache()
+    }
   } else if (!init.skipCache) {
     const cached = apiGetCache.get(path)
     if (cached && (Date.now() - cached.timestamp < CACHE_FRESH_MS)) {
@@ -331,6 +351,7 @@ export type Restaurant = {
   minimum_order_paise: number
   delivery_radius_km: number
   free_delivery_radius_km: number
+  free_delivery_threshold_paise?: number
   delivery_fee_per_km_paise: number
   charge_from_zero_beyond_free_radius?: boolean
   accepting_orders: boolean

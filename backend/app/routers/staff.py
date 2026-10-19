@@ -25,6 +25,7 @@ from app.security import normalize_phone_e164
 from app.config import settings
 from app.services import assemble_order, order_payload, order_total_paise, restaurant_settings, transition_order
 from app.cache import (
+    KEY_STAFF_MENU,
     PREFIX_ORDERS,
     cache,
     invalidate_delivery_cache,
@@ -37,7 +38,13 @@ router = APIRouter(prefix="/staff", tags=["staff operations"], dependencies=[Dep
 
 @router.get("/menu", response_model=list[MenuItemOut])
 def staff_menu(db: DbSession):
-    return db.scalars(select(MenuItem).order_by(MenuItem.name)).all()
+    cached = cache.get(KEY_STAFF_MENU)
+    if cached is not None:
+        return cached
+
+    items = db.scalars(select(MenuItem).order_by(MenuItem.name)).all()
+    cache.set(KEY_STAFF_MENU, items, ttl_seconds=60.0)
+    return items
 
 
 @router.get("/menu-pauses")

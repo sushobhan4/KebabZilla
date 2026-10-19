@@ -7,7 +7,7 @@ from app.models import AdminEvent, CustomMenuItem, CustomMenuSection, MenuCatego
 from app.schemas import CustomMenuItemInput, CustomMenuItemOut
 from app.services import get_next_menu_id, resolve_categories
 from app.storage import cleanup_unreferenced_gcs_images
-from app.cache import PREFIX_MENU, cache, invalidate_menu_cache
+from app.cache import KEY_CUSTOM_MENU_MANAGE, PREFIX_MENU, cache, invalidate_menu_cache
 
 router = APIRouter(prefix="/custom-menu", tags=["custom menu"])
 
@@ -53,11 +53,17 @@ def list_custom_menu(db: DbSession, response: Response):
 
 @router.get("/manage", response_model=list[CustomMenuItemOut], dependencies=[Depends(require_roles(Role.ADMIN, Role.EMPLOYEE))])
 def list_all_custom_menu(db: DbSession):
-    return db.scalars(
+    cached = cache.get(KEY_CUSTOM_MENU_MANAGE)
+    if cached is not None:
+        return cached
+
+    items = db.scalars(
         select(CustomMenuItem)
         .where(CustomMenuItem.is_customizable.is_(True))
         .order_by(CustomMenuItem.name)
     ).all()
+    cache.set(KEY_CUSTOM_MENU_MANAGE, items, ttl_seconds=60.0)
+    return items
 
 
 @router.post("", response_model=CustomMenuItemOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_roles(Role.ADMIN))])

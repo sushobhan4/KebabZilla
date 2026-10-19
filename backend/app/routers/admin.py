@@ -8,10 +8,12 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
 import httpx
 from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.dependencies import CurrentAccount, DbSession, require_roles
 from app.config import settings
 from app.campaign_dispatcher import campaign_dispatcher
+from app.email_sender import email_sender
 from app.integrations import staff_account_notifier
 from app.models import (
     Account,
@@ -47,13 +49,22 @@ from app.services import (
     issue_razorpay_refund,
     order_payload,
     order_total_paise,
+    recalculate_all_address_distances,
     restaurant_settings,
     transition_order,
 )
 from app.cache import (
+    KEY_ADMIN_ACCOUNTS,
+    KEY_ADMIN_DISCOUNTS,
+    KEY_ADMIN_OFFERS,
     KEY_ADMIN_SETTINGS,
+    KEY_EMAIL_STATUS,
+    PREFIX_EVENTS,
+    PREFIX_REPORTS,
     cache,
+    invalidate_accounts_cache,
     invalidate_delivery_cache,
+    invalidate_discounts_cache,
     invalidate_menu_cache,
     invalidate_orders_cache,
     invalidate_restaurant_cache,
@@ -73,6 +84,12 @@ def accounts(
     limit: int = Query(default=15, ge=1, le=250),
     offset: int = Query(default=0, ge=0),
 ):
+    is_default_query = not q.strip() and role is None and not exclude_users and sort == "newest" and offset == 0 and limit == 15
+    if is_default_query:
+        cached = cache.get(KEY_ADMIN_ACCOUNTS)
+        if cached is not None:
+            return cached
+
     filters = []
     if q.strip():
         pattern = f"%{q.strip()}%"
@@ -93,11 +110,21 @@ def accounts(
     elif sort == "role":
         order_clause = Account.role.asc()
 
-    rows = db.scalars(select(Account).where(*filters).order_by(order_clause).offset(offset).limit(limit)).all()
+    rows = db.scalars(
+        select(Account)
+        .where(*filters)
+        .options(joinedload(Account.staff_info))
+        .order_by(order_clause)
+        .offset(offset)
+        .limit(limit)
+    ).all()
     role_counts = {item.value: 0 for item in Role}
     for role_value, count in db.execute(select(Account.role, func.count(Account.id)).group_by(Account.role)):
         role_counts[role_value.value] = int(count)
-    return {"items": rows, "total": total, "limit": limit, "offset": offset, "role_counts": role_counts}
+    result = {"items": rows, "total": total, "limit": limit, "offset": offset, "role_counts": role_counts}
+    if is_default_query:
+        cache.set(KEY_ADMIN_ACCOUNTS, result, ttl_seconds=20.0)
+    return result
 
 
 def generated_temporary_password(name: str) -> str:
@@ -134,6 +161,7 @@ def create_account(data: AdminAccountCreate, db: DbSession):
 
     db.add(AdminEvent(event_type="account_created", message=f"{account.name} created with role {account.role.value}", details={"role": account.role.value, "email": account.email}))
     db.commit()
+    invalidate_accounts_cache()
     db.refresh(account)
 
     notification_status = staff_account_notifier.send_account_created_notice(
@@ -172,6 +200,7 @@ def change_role(account_id: int, data: RoleChangeInput, actor: CurrentAccount, d
         )
     db.add(AdminEvent(event_type="account_role_changed", message=f"{account.name}'s role changed to {data.role.value}", actor_id=actor.id, details={"account_id": account.id, "role": data.role.value}))
     db.commit()
+    invalidate_accounts_cache()
     db.refresh(account)
     return account
 
@@ -208,7 +237,19 @@ def admin_orders(
         pattern = f"%{q.strip()}%"
         filters.append(or_(Order.order_id.ilike(pattern), Order.customer_name.ilike(pattern), Order.customer_phone.ilike(pattern)))
     total = db.scalar(select(func.count(Order.order_id)).where(*filters)) or 0
-    rows = db.scalars(select(Order).where(*filters).order_by(Order.created_at.desc()).offset(offset).limit(effective_limit)).all()
+    rows = db.scalars(
+        select(Order)
+        .where(*filters)
+        .options(
+            joinedload(Order.customer),
+            joinedload(Order.payment),
+            joinedload(Order.delivery),
+            selectinload(Order.items).joinedload(OrderItem.menu_item),
+        )
+        .order_by(Order.created_at.desc())
+        .offset(offset)
+        .limit(effective_limit)
+    ).all()
     status_counts = {item.value: 0 for item in OrderStatus}
     for status_value, count in db.execute(select(Order.status, func.count(Order.order_id)).group_by(Order.status)):
         status_counts[status_value.value] = int(count)
@@ -321,18 +362,16 @@ async def refund_order(order_id: str, db: DbSession):
 def sync_override_if_expired(settings_obj: RestaurantSettings, db: DbSession | None = None) -> None:
     now_utc = datetime.now(timezone.utc)
     changed = False
-    if settings_obj.admin_override_until is not None:
+    is_sched_open, _ = is_scheduled_open(settings_obj, now_utc)
+
+    if settings_obj.admin_override_state is not None:
         until_utc = settings_obj.admin_override_until
-        if until_utc.tzinfo is None:
+        if until_utc is not None and until_utc.tzinfo is None:
             until_utc = until_utc.replace(tzinfo=timezone.utc)
-        if now_utc >= until_utc:
+        if (until_utc is not None and now_utc >= until_utc) or (settings_obj.admin_override_state == is_sched_open):
             settings_obj.admin_override_state = None
             settings_obj.admin_override_until = None
-            is_open, _ = is_scheduled_open(settings_obj)
-            settings_obj.accepting_orders = is_open
-            if is_open:
-                settings_obj.is_delivery_open = True
-                settings_obj.delivery_paused_until = None
+            settings_obj.accepting_orders = is_sched_open
             changed = True
 
     paused_until = getattr(settings_obj, "delivery_paused_until", None)
@@ -342,10 +381,15 @@ def sync_override_if_expired(settings_obj: RestaurantSettings, db: DbSession | N
         if now_utc >= paused_until:
             settings_obj.delivery_paused_until = None
             settings_obj.is_delivery_open = True
+            settings_obj.delivery_paused_reason = "Delivery is currently unavailable"
             changed = True
 
     if changed and db is not None:
-        db.commit()
+        try:
+            db.commit()
+            db.refresh(settings_obj)
+        except Exception:
+            pass
 
 
 def serialize_restaurant_settings(settings_obj: RestaurantSettings, db: DbSession | None = None) -> dict:
@@ -367,6 +411,12 @@ def serialize_restaurant_settings(settings_obj: RestaurantSettings, db: DbSessio
             )
         ) or 0
 
+    has_active_override = bool(settings_obj.admin_override_state is not None and is_open != sched_open)
+    is_deliv_open = bool(getattr(settings_obj, "is_delivery_open", True)) if not is_open else (status_info["delivery_status"] != "DELIVERY_PAUSED")
+    deliv_reason = "Delivery is currently unavailable"
+    if not is_deliv_open:
+        deliv_reason = getattr(settings_obj, "delivery_paused_reason", "Delivery is currently unavailable") or "Delivery is currently unavailable"
+
     return {
         "id": settings_obj.id,
         "restaurant_name": settings_obj.restaurant_name,
@@ -381,22 +431,23 @@ def serialize_restaurant_settings(settings_obj: RestaurantSettings, db: DbSessio
         "minimum_order_paise": settings_obj.minimum_order_paise,
         "delivery_radius_km": settings_obj.delivery_radius_km,
         "free_delivery_radius_km": settings_obj.free_delivery_radius_km,
+        "free_delivery_threshold_paise": getattr(settings_obj, "free_delivery_threshold_paise", 0) or 0,
         "delivery_fee_per_km_paise": settings_obj.delivery_fee_per_km_paise,
         "charge_from_zero_beyond_free_radius": getattr(settings_obj, "charge_from_zero_beyond_free_radius", False) or False,
         "accepting_orders": is_open,
         "is_restaurant_open": is_open,
-        "is_delivery_open": bool(getattr(settings_obj, "is_delivery_open", True)) if not is_open else (status_info["delivery_status"] != "DELIVERY_PAUSED"),
+        "is_delivery_open": is_deliv_open,
         "delivery_paused_until": getattr(settings_obj, "delivery_paused_until", None),
-        "delivery_paused_reason": getattr(settings_obj, "delivery_paused_reason", "Currently not delivering") or "Currently not delivering",
+        "delivery_paused_reason": deliv_reason,
         "order_cutoff_minutes_before_closing": getattr(settings_obj, "order_cutoff_minutes_before_closing", 30) or 30,
         "delivery_status": status_info["delivery_status"],
         "delivery_status_heading": status_info["delivery_status_heading"],
         "delivery_status_message": status_info["delivery_status_message"],
         "closing_in_minutes": status_info["closing_in_minutes"],
         "closing_time": status_info["closing_time"],
-        "admin_override_open": bool(settings_obj.admin_override_state is True),
-        "admin_override_state": settings_obj.admin_override_state,
-        "admin_override_until": settings_obj.admin_override_until,
+        "admin_override_open": bool(has_active_override and settings_obj.admin_override_state is True),
+        "admin_override_state": settings_obj.admin_override_state if has_active_override else None,
+        "admin_override_until": settings_obj.admin_override_until if has_active_override else None,
         "is_currently_scheduled_open": sched_open,
         "schedule_status": status_reason,
         "next_schedule_refresh": next_refresh,
@@ -410,6 +461,21 @@ def serialize_restaurant_settings(settings_obj: RestaurantSettings, db: DbSessio
         "max_orders_per_driver": getattr(settings_obj, "max_orders_per_driver", 5) or 5,
         "available_drivers_ready": active_drivers_ready,
     }
+@router.get("/email-status")
+def get_email_status():
+    """Diagnostic endpoint to inspect active email sender backend."""
+    cached = cache.get(KEY_EMAIL_STATUS)
+    if cached is not None:
+        return cached
+
+    data = {
+        "configured": email_sender.is_configured(),
+        "backend": email_sender.active_backend(),
+        "from_email": settings.email_from_address,
+        "from_name": settings.email_from_name,
+    }
+    cache.set(KEY_EMAIL_STATUS, data, ttl_seconds=300.0)
+    return data
 
 
 @router.get("/settings")
@@ -421,7 +487,7 @@ def get_settings(db: DbSession):
     settings = restaurant_settings(db)
     sync_override_if_expired(settings, db)
     data = serialize_restaurant_settings(settings, db=db)
-    cache.set(KEY_ADMIN_SETTINGS, data, ttl_seconds=10.0)
+    cache.set(KEY_ADMIN_SETTINGS, data, ttl_seconds=60.0)
     return data
 
 
@@ -463,12 +529,21 @@ def update_settings(data: RestaurantSettingsInput, db: DbSession):
         target_delivery_open = payload_data.pop("is_delivery_open", None)
         payload_data.pop("delivery_paused_until", None)
         target_delivery_reason = payload_data.pop("delivery_paused_reason", None)
-        if target_delivery_reason is not None:
-            settings.delivery_paused_reason = target_delivery_reason
+
+        old_lat = settings.latitude
+        old_lng = settings.longitude
+        old_factor = getattr(settings, "haversine_routing_factor", 1.3627)
 
         for field, value in payload_data.items():
             if hasattr(settings, field):
                 setattr(settings, field, value)
+
+        new_lat = settings.latitude
+        new_lng = settings.longitude
+        new_factor = getattr(settings, "haversine_routing_factor", 1.3627)
+        if (old_lat != new_lat) or (old_lng != new_lng) or (old_factor != new_factor):
+            recalculated_count = recalculate_all_address_distances(db, settings)
+            logger.info("Restaurant location or routing factor changed. Recalculated %d address distances.", recalculated_count)
 
         is_now_open, _ = is_restaurant_open(settings, now_dt)
 
@@ -477,14 +552,25 @@ def update_settings(data: RestaurantSettingsInput, db: DbSession):
             # Restaurant transitioning from closed to open: online order starts with it!
             settings.is_delivery_open = True
             settings.delivery_paused_until = None
+            settings.delivery_paused_reason = "Delivery is currently unavailable"
         elif target_delivery_open is not None:
             if target_delivery_open is False:
                 settings.is_delivery_open = False
                 closing = get_current_closing_time(settings, now_dt)
                 settings.delivery_paused_until = closing
+                if target_delivery_reason and target_delivery_reason.strip():
+                    settings.delivery_paused_reason = target_delivery_reason.strip()
+                else:
+                    settings.delivery_paused_reason = "Delivery is currently unavailable"
             else:
                 settings.is_delivery_open = True
                 settings.delivery_paused_until = None
+                settings.delivery_paused_reason = "Delivery is currently unavailable"
+        else:
+            if settings.is_delivery_open:
+                settings.delivery_paused_reason = "Delivery is currently unavailable"
+            elif target_delivery_reason is not None:
+                settings.delivery_paused_reason = target_delivery_reason.strip() or "Delivery is currently unavailable"
 
         if not is_now_open:
             db.execute(
@@ -527,6 +613,18 @@ def update_settings(data: RestaurantSettingsInput, db: DbSession):
         )
 
 
+@router.post("/settings/recalculate-distances")
+def recalculate_distances_endpoint(db: DbSession):
+    """Explicitly trigger distance recalculation for all customer addresses."""
+    settings_obj = restaurant_settings(db)
+    count = recalculate_all_address_distances(db, settings_obj)
+    db.commit()
+    return {
+        "status": "success",
+        "recalculated_count": count,
+        "message": f"Successfully recalculated distances for {count} customer address(es).",
+    }
+
 
 @router.get("/events")
 def admin_events(
@@ -551,9 +649,15 @@ def admin_events(
                 AdminEvent.actor.has(Account.name.ilike(pattern)),
             )
         )
+    is_default = not q.strip() and period == "all" and sort == "newest" and offset == 0
+    if is_default:
+        cached = cache.get(f"{PREFIX_EVENTS}default")
+        if cached is not None:
+            return cached
+
     total = db.scalar(select(func.count(AdminEvent.id)).where(*filters)) or 0
 
-    stmt = select(AdminEvent).where(*filters)
+    stmt = select(AdminEvent).where(*filters).options(joinedload(AdminEvent.actor))
     if sort == "oldest":
         stmt = stmt.order_by(AdminEvent.created_at.asc())
     elif sort == "actor":
@@ -578,12 +682,15 @@ def admin_events(
         }
         for row in rows
     ]
-    return {
+    result = {
         "items": items,
         "total": total,
         "limit": effective_limit,
         "offset": offset,
     }
+    if is_default:
+        cache.set(f"{PREFIX_EVENTS}default", result, ttl_seconds=10.0)
+    return result
 
 
 
@@ -674,7 +781,7 @@ async def create_offer(data: OfferInput, actor: CurrentAccount, db: DbSession, b
         customers = [person for person in customers if not order_counts.get(person.id, 0)]
     elif data.audience == "RETURNING":
         customers = [person for person in customers if order_counts.get(person.id, 0)]
-    configured = {"SMS": False, "EMAIL": bool(settings.smtp_password)}
+    configured = {"SMS": False, "EMAIL": bool(email_sender.is_configured())}
     eligible = {channel: [person for person in customers if (person.phone if channel == "SMS" else person.email)] for channel in data.channels}
     recipients = list({person.id: person for people in eligible.values() for person in people}.values())
     failures = []
@@ -703,6 +810,7 @@ async def create_offer(data: OfferInput, actor: CurrentAccount, db: DbSession, b
     db.add(AdminEvent(event_type="offer_sent", message=f"Offer message campaign queued by {actor.name}", actor_id=actor.id, details={"audience": data.audience, "channels": data.channels, "recipients": len(recipients), "status": state}))
     db.commit()
     db.refresh(log)
+    cache.delete(KEY_ADMIN_OFFERS)
 
     if configured.get("EMAIL") and email_recipients:
         campaign_dispatcher.enqueue_email_campaign(
@@ -748,20 +856,55 @@ async def create_offer(data: OfferInput, actor: CurrentAccount, db: DbSession, b
 
 @router.get("/offers")
 def offer_history(db: DbSession):
+    cached = cache.get(KEY_ADMIN_OFFERS)
+    if cached is not None:
+        return cached
+
     logs = db.scalars(select(OfferLog).order_by(OfferLog.created_at.desc()).limit(100)).all()
-    return [{"id": log.id, "audience": log.audience, "channels": log.channels, "subject": log.subject, "message": log.message, "delivery_counts": log.delivery_counts or {channel: {"recipient_count": log.recipient_count, "sent_count": log.sent_count} for channel in log.channels}, "recipient_count": log.recipient_count, "sent_count": log.sent_count, "status": log.status, "created_at": log.created_at} for log in logs]
+    results = [
+        {
+            "id": log.id,
+            "audience": log.audience,
+            "channels": log.channels,
+            "subject": log.subject,
+            "message": log.message,
+            "delivery_counts": log.delivery_counts or {channel: {"recipient_count": log.recipient_count, "sent_count": log.sent_count} for channel in log.channels},
+            "recipient_count": log.recipient_count,
+            "sent_count": log.sent_count,
+            "status": log.status,
+            "created_at": log.created_at,
+        }
+        for log in logs
+    ]
+    cache.set(KEY_ADMIN_OFFERS, results, ttl_seconds=60.0)
+    return results
 
 
 @router.get("/discounts")
 def list_discounts(db: DbSession):
-    rows = db.scalars(select(MenuDiscount).order_by(MenuDiscount.starts_at.desc())).all()
+    cached = cache.get(KEY_ADMIN_DISCOUNTS)
+    if cached is not None:
+        return cached
+
+    rows = db.scalars(
+        select(MenuDiscount)
+        .options(selectinload(MenuDiscount.items))
+        .order_by(MenuDiscount.starts_at.desc())
+    ).all()
+
+    # Batch load all referenced items in 1 query
+    all_item_ids = {link.menu_item_id for row in rows for link in row.items if link.menu_item_id is not None}
+    item_map = {}
+    if all_item_ids:
+        items = db.scalars(select(MenuItem).where(MenuItem.id.in_(all_item_ids))).all()
+        item_map = {item.id: item.name for item in items}
+
     campaigns = []
     for row in rows:
         starts_at = row.starts_at if row.starts_at.tzinfo else row.starts_at.replace(tzinfo=timezone.utc)
         ends_at = row.ends_at if row.ends_at.tzinfo else row.ends_at.replace(tzinfo=timezone.utc)
         item_ids = [link.menu_item_id for link in row.items if link.menu_item_id is not None]
-        items = db.scalars(select(MenuItem).where(MenuItem.id.in_(item_ids))).all() if item_ids else []
-        item_names = [item.name for item in items]
+        item_names = [item_map[i] for i in item_ids if i in item_map]
         campaigns.append({
             "id": row.id,
             "campaign_name": row.campaign_name,
@@ -773,6 +916,7 @@ def list_discounts(db: DbSession):
             "ends_at": ends_at.isoformat(),
             "created_at": row.created_at,
         })
+    cache.set(KEY_ADMIN_DISCOUNTS, campaigns, ttl_seconds=30.0)
     return campaigns
 
 
@@ -802,7 +946,7 @@ def create_discount(data: MenuDiscountInput, actor: CurrentAccount, db: DbSessio
     db.add(AdminEvent(event_type="menu_discount_created", message=f"{data.discount_percent}% discount scheduled for {', '.join(item_names)}", actor_id=actor.id, details={"menu_item_ids": item_ids, "discount_percent": data.discount_percent, "starts_at": starts_at.isoformat(), "ends_at": ends_at.isoformat()}))
     db.commit()
     db.flush()
-    invalidate_menu_cache()
+    invalidate_discounts_cache()
     return {
         "id": discount.id,
         "campaign_name": data.campaign_name,
@@ -849,7 +993,7 @@ def update_discount(discount_id: int, data: MenuDiscountInput, actor: CurrentAcc
     current.ends_at = ends_at
     db.add(AdminEvent(event_type="menu_discount_updated", message=f"{data.discount_percent}% discount campaign updated for {', '.join(item_names)}", actor_id=actor.id, details={"discount_id": discount_id, "menu_item_ids": item_ids, "discount_percent": data.discount_percent, "starts_at": starts_at.isoformat(), "ends_at": ends_at.isoformat()}))
     db.commit()
-    invalidate_menu_cache()
+    invalidate_discounts_cache()
     return {
         "id": current.id,
         "campaign_name": data.campaign_name,
@@ -876,7 +1020,7 @@ def delete_discount(discount_id: int, actor: CurrentAccount, db: DbSession):
     db.add(AdminEvent(event_type="menu_discount_deleted", message=f"Scheduled discount for {', '.join(all_names)} deleted", actor_id=actor.id, details={"menu_item_ids": item_ids, "discount_percent": discount.discount_percent}))
     db.delete(discount)
     db.commit()
-    invalidate_menu_cache()
+    invalidate_discounts_cache()
 
 
 
@@ -916,8 +1060,21 @@ def bucket_label(value: datetime, granularity: str) -> str:
 
 @router.get("/reports/sales")
 def sales_report(db: DbSession, period: str = "week", at: datetime | None = None):
+    cache_key = f"{PREFIX_REPORTS}sales:{period}:{at.isoformat() if at else 'now'}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     start, end, granularity = date_range(period, at)
-    orders = db.scalars(select(Order).where(Order.created_at >= start, Order.created_at < end).order_by(Order.created_at)).all()
+    orders = db.scalars(
+        select(Order)
+        .where(Order.created_at >= start, Order.created_at < end)
+        .options(
+            joinedload(Order.payment),
+            selectinload(Order.items).joinedload(OrderItem.menu_item),
+        )
+        .order_by(Order.created_at)
+    ).all()
     paid = [order for order in orders if order.payment and order.payment.status == PaymentStatus.PAID]
     revenue = sum(order_total_paise(order) for order in paid)
     buckets: dict[str, dict] = {}
@@ -1016,7 +1173,7 @@ def sales_report(db: DbSession, period: str = "week", at: datetime | None = None
                 fulfillment_durations.append(dur)
     avg_fulfillment_minutes = round(sum(fulfillment_durations) / len(fulfillment_durations), 1) if fulfillment_durations else None
 
-    return {
+    result = {
         "period": period,
         "from": start,
         "to": end,
@@ -1035,3 +1192,5 @@ def sales_report(db: DbSession, period: str = "week", at: datetime | None = None
         "new_customers": new_customers,
         "avg_fulfillment_minutes": avg_fulfillment_minutes,
     }
+    cache.set(cache_key, result, ttl_seconds=30.0)
+    return result

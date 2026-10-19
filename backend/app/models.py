@@ -321,6 +321,7 @@ class RestaurantSettings(Base):
     minimum_order_paise: Mapped[int] = mapped_column(Integer, default=19900)
     delivery_radius_km: Mapped[float] = mapped_column(Float, default=10.0, server_default="10")
     free_delivery_radius_km: Mapped[float] = mapped_column(Float, default=3.0, server_default="3")
+    free_delivery_threshold_paise: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     delivery_fee_per_km_paise: Mapped[int] = mapped_column(Integer, default=1000, server_default="1000")
     accepting_orders: Mapped[bool] = mapped_column(Boolean, default=True)
     is_delivery_open: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
@@ -344,8 +345,8 @@ class RestaurantSettings(Base):
     @property
     def delivery_paused_reason(self) -> str:
         if isinstance(self.weekly_schedule, dict) and self.weekly_schedule.get("delivery_paused_reason"):
-            return str(self.weekly_schedule["delivery_paused_reason"]).strip() or "Currently not delivering"
-        return "Currently not delivering"
+            return str(self.weekly_schedule["delivery_paused_reason"]).strip() or "Delivery is currently unavailable"
+        return "Delivery is currently unavailable"
 
     @delivery_paused_reason.setter
     def delivery_paused_reason(self, val: str | None) -> None:
@@ -354,9 +355,9 @@ class RestaurantSettings(Base):
         sched = dict(self.weekly_schedule)
         if val is not None:
             cleaned = str(val).strip()
-            sched["delivery_paused_reason"] = cleaned if cleaned else "Currently not delivering"
+            sched["delivery_paused_reason"] = cleaned if cleaned else "Delivery is currently unavailable"
         else:
-            sched["delivery_paused_reason"] = "Currently not delivering"
+            sched["delivery_paused_reason"] = "Delivery is currently unavailable"
         self.weekly_schedule = sched
 
     enforce_driver_geofence: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")

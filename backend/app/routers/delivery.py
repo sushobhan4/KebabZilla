@@ -6,6 +6,7 @@ logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select, update
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.dependencies import CurrentAccount, DbSession, require_roles
 from app.integrations import customer_notifier
@@ -15,6 +16,7 @@ from app.models import (
     DeliveryBatchOrder,
     StaffInfo,
     Order,
+    OrderItem,
     AdminEvent,
     OrderStatus,
     Payment,
@@ -215,6 +217,12 @@ def queue(account: CurrentAccount, db: DbSession):
     orders = db.scalars(
         select(Order)
         .where(Order.assigned_delivery_id == account.id, Order.status == OrderStatus.OUT_FOR_DELIVERY)
+        .options(
+            joinedload(Order.customer),
+            joinedload(Order.payment),
+            joinedload(Order.delivery),
+            selectinload(Order.items).joinedload(OrderItem.menu_item),
+        )
         .order_by(Order.created_at)
     ).all()
     return [order_payload(order, include_customer_email=False) for order in orders]
@@ -225,7 +233,15 @@ def available_orders(account: CurrentAccount, db: DbSession):
     if account.role == Role.DELIVERY and not account.is_accepting_deliveries:
         return []
     orders = db.scalars(
-        select(Order).where(Order.status == OrderStatus.READY, Order.assigned_delivery_id.is_(None)).order_by(Order.created_at)
+        select(Order)
+        .where(Order.status == OrderStatus.READY, Order.assigned_delivery_id.is_(None))
+        .options(
+            joinedload(Order.customer),
+            joinedload(Order.payment),
+            joinedload(Order.delivery),
+            selectinload(Order.items).joinedload(OrderItem.menu_item),
+        )
+        .order_by(Order.created_at)
     ).all()
     return [order_payload(order, include_customer_email=False) for order in orders]
 
@@ -235,6 +251,12 @@ def delivery_history(account: CurrentAccount, db: DbSession):
     orders = db.scalars(
         select(Order)
         .where(Order.assigned_delivery_id == account.id, Order.status == OrderStatus.DELIVERED)
+        .options(
+            joinedload(Order.customer),
+            joinedload(Order.payment),
+            joinedload(Order.delivery),
+            selectinload(Order.items).joinedload(OrderItem.menu_item),
+        )
         .order_by(Order.delivered_at.desc(), Order.created_at.desc())
         .limit(100)
     ).all()

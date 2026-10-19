@@ -526,6 +526,7 @@ def public_restaurant(db: DbSession, response: Response):
         "minimum_order_paise": getattr(config, "minimum_order_paise", 0) or 0,
         "delivery_radius_km": getattr(config, "delivery_radius_km", 10.0) or 10.0,
         "free_delivery_radius_km": getattr(config, "free_delivery_radius_km", 3.0) or 3.0,
+        "free_delivery_threshold_paise": getattr(config, "free_delivery_threshold_paise", 0) or 0,
         "delivery_fee_per_km_paise": getattr(config, "delivery_fee_per_km_paise", 0) or 0,
         "charge_from_zero_beyond_free_radius": getattr(config, "charge_from_zero_beyond_free_radius", False) or False,
         "accepting_orders": status_info.get("accepting_orders", status_info["is_restaurant_open"]),
@@ -544,13 +545,16 @@ def public_restaurant(db: DbSession, response: Response):
 
 
 @app.get(f"{settings.api_prefix}/restaurant/delivery-estimate", tags=["restaurant"])
-def estimate_delivery(latitude: float, longitude: float, db: DbSession):
+def estimate_delivery(latitude: float, longitude: float, db: DbSession, subtotal: int | None = None):
     config = restaurant_settings(db)
     if config.latitude is None or config.longitude is None:
         raise HTTPException(status_code=503, detail="The restaurant delivery location is not configured")
     distance_km, method = calculate_delivery_distance(config, latitude, longitude)
     within_radius = distance_km <= config.delivery_radius_km
-    if distance_km <= config.free_delivery_radius_km:
+    free_threshold = getattr(config, "free_delivery_threshold_paise", 0) or 0
+    is_threshold_free = bool(free_threshold > 0 and subtotal is not None and subtotal >= free_threshold)
+
+    if not within_radius or is_threshold_free or distance_km <= config.free_delivery_radius_km:
         fee_paise = 0
         raw_fee_inr = 0.0
         raw_fee_paise = 0
@@ -578,7 +582,9 @@ def estimate_delivery(latitude: float, longitude: float, db: DbSession):
         "within_radius": within_radius,
         "max_radius_km": config.delivery_radius_km,
         "free_radius_km": config.free_delivery_radius_km,
+        "free_delivery_threshold_paise": free_threshold,
         "fee_per_km_paise": config.delivery_fee_per_km_paise,
+        "is_free_by_threshold": is_threshold_free,
     }
 
 

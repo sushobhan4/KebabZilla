@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import func, or_, select
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.config import settings
 from app.dependencies import CurrentAccount, DbSession
@@ -67,6 +68,11 @@ def my_orders(
     orders = db.scalars(
         select(Order)
         .where(Order.customer_id == account.id)
+        .options(
+            joinedload(Order.payment),
+            joinedload(Order.delivery),
+            selectinload(Order.items).joinedload(OrderItem.menu_item),
+        )
         .order_by(Order.created_at.desc())
         .offset(offset)
         .limit(effective_limit)

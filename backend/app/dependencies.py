@@ -5,8 +5,10 @@ from typing import Annotated
 import jwt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.orm import Session, joinedload
 
+from app.cache import auth_cache
 from app.config import settings
 from app.db import get_db
 from app.models import Account, Role, UserSession, utcnow
@@ -56,12 +58,38 @@ def current_account_base(
 
     # 2. Check if token corresponds to an active UserSession in the database
     token_hash = hash_session_token(token)
-    session = db.query(UserSession).filter(
-        UserSession.token_hash == token_hash,
-        UserSession.is_revoked == False,
-    ).first()
+    user_agent = request.headers.get("user-agent", "")
+    current_fp = compute_device_fingerprint(user_agent)
 
-    if session:
+    # Fast path: Check in-memory auth_cache
+    cached_session = auth_cache.get(token_hash)
+    if cached_session:
+        expires_at = cached_session["expires_at"]
+        if expires_at <= now:
+            auth_cache.delete(token_hash)
+            raise unauthorized
+        req_fp = cached_session.get("device_fingerprint")
+        if req_fp and req_fp != current_fp:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Session device unrecognized",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        account = db.get(Account, cached_session["account_id"], options=[joinedload(Account.staff_info)])
+        if account:
+            return account
+        auth_cache.delete(token_hash)
+
+    # Cache miss: Single joined query for UserSession and Account
+    stmt = (
+        select(UserSession, Account)
+        .join(Account, UserSession.account_id == Account.id)
+        .where(UserSession.token_hash == token_hash, UserSession.is_revoked == False)
+        .options(joinedload(Account.staff_info))
+    )
+    result = db.execute(stmt).first()
+    if result:
+        session, account = result
         expires_at = session.expires_at
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=now.tzinfo)
@@ -71,9 +99,6 @@ def current_account_base(
             db.commit()
             raise unauthorized
 
-        # Device fingerprint protection: detects cross-device cookie theft
-        user_agent = request.headers.get("user-agent", "")
-        current_fp = compute_device_fingerprint(user_agent)
         if session.device_fingerprint and session.device_fingerprint != current_fp:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -81,19 +106,30 @@ def current_account_base(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        # 30-day sliding activity window: refresh timer on activity
+        # Cache session in-memory for 60 seconds
+        auth_cache.set(
+            token_hash,
+            {
+                "account_id": account.id,
+                "device_fingerprint": session.device_fingerprint,
+                "expires_at": expires_at,
+            },
+            ttl_seconds=60.0,
+        )
+
+        # 30-day sliding activity window: refresh timer on activity (throttled to 30 mins)
         last_active = session.last_active_at
         if last_active.tzinfo is None:
             last_active = last_active.replace(tzinfo=now.tzinfo)
 
-        if now - last_active > timedelta(minutes=5):
+        if now - last_active > timedelta(minutes=30):
             session.last_active_at = now
             session.expires_at = now + timedelta(days=SESSION_LIFETIME_DAYS)
-            db.commit()
+            try:
+                db.commit()
+            except Exception:
+                pass
 
-        account = session.account
-        if account is None:
-            raise unauthorized
         return account
 
     # 3. Fallback: Support legacy JWT tokens for backward compatibility

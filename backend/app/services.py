@@ -19,6 +19,7 @@ from app.config import settings
 from app.integrations import razorpay
 from app.models import (
     Account,
+    AccountAddress,
     CustomMenuItem,
     MenuItem,
     Order,
@@ -247,7 +248,7 @@ def assemble_order(
     if check_minimum and subtotal < config.minimum_order_paise:
         raise HTTPException(status_code=400, detail=f"Minimum order is ₹{config.minimum_order_paise / 100:.0f}")
     tax = 0
-    delivery_fee = _delivery_fee_paise(config, latitude, longitude) if order_type == "DELIVERY" else 0
+    delivery_fee = _delivery_fee_paise(config, latitude, longitude, subtotal) if order_type == "DELIVERY" else 0
     if order_type == "DELIVERY" and not address.strip():
         raise HTTPException(status_code=400, detail="A delivery address is required")
 
@@ -392,6 +393,7 @@ def _delivery_fee_paise(
     config: RestaurantSettings,
     latitude: float | None,
     longitude: float | None,
+    subtotal: int = 0,
 ) -> int:
     if latitude is None or longitude is None:
         raise HTTPException(status_code=400, detail="Delivery coordinates are required to calculate the delivery fee")
@@ -406,6 +408,11 @@ def _delivery_fee_paise(
             status_code=400,
             detail=f"Delivery location is {distance_km:.1f} km away, which exceeds our maximum delivery radius of {config.delivery_radius_km:.1f} km."
         )
+
+    # Free delivery on orders meeting or exceeding the threshold
+    free_threshold = getattr(config, "free_delivery_threshold_paise", 0) or 0
+    if free_threshold > 0 and subtotal >= free_threshold:
+        return 0
 
     # First x km is free
     if distance_km <= config.free_delivery_radius_km:
@@ -648,7 +655,7 @@ def evaluate_restaurant_and_delivery_status(config: RestaurantSettings, value: d
             admin_delivery_open = False
 
     if not admin_delivery_open:
-        paused_heading = getattr(config, "delivery_paused_reason", "Currently not delivering") or "Currently not delivering"
+        paused_heading = getattr(config, "delivery_paused_reason", "Delivery is currently unavailable") or "Delivery is currently unavailable"
         cutoff_msg = "Our shop is open! We are currently only accepting walk-in orders at our counter."
         if closing_in_minutes is not None and closing_in_minutes <= 59:
             cutoff_msg = f"{cutoff_msg} The restaurant is closing in {closing_in_minutes} minutes."
@@ -673,7 +680,7 @@ def evaluate_restaurant_and_delivery_status(config: RestaurantSettings, value: d
             cutoff_msg = "Our shop is open! We are currently only accepting walk-in orders at our counter."
             if closing_in_minutes is not None and closing_in_minutes <= 59:
                 cutoff_msg = f"{cutoff_msg} The restaurant is closing in {closing_in_minutes} minutes."
-            cutoff_heading = getattr(config, "delivery_paused_reason", "Currently not delivering") or "Currently not delivering"
+            cutoff_heading = getattr(config, "delivery_paused_reason", "Delivery is currently unavailable") or "Delivery is currently unavailable"
             return {
                 "is_restaurant_open": True,
                 "is_delivery_open": False,
@@ -775,8 +782,10 @@ def is_restaurant_open(config: RestaurantSettings, value: datetime | None = None
                 friendly_time = f"{local_until.strftime('%A')} at {friendly_time}"
 
             sched_open, sched_reason = is_scheduled_open(config, value)
+            if override_state == sched_open:
+                return sched_open, sched_reason
             if override_state is True:
-                return True, sched_reason if sched_open else f"Open (Admin override until {friendly_time})"
+                return True, f"Open (Admin override until {friendly_time})"
             else:
                 return False, f"Closed (Paused by admin until {friendly_time})"
 
@@ -1037,3 +1046,34 @@ async def issue_razorpay_refund(order: Order, payment: Payment) -> str | None:
         raise HTTPException(status_code=502, detail="Razorpay could not start the refund; try again")
     payment.status = PaymentStatus.REFUNDED if state == "processed" else PaymentStatus.REFUND_PENDING
     return result.get("id")
+
+
+def recalculate_all_address_distances(db: Session, config: RestaurantSettings | None = None) -> int:
+    """Recalculate distance_meters for all account addresses with coordinates using restaurant latitude/longitude."""
+    if config is None:
+        config = restaurant_settings(db)
+
+    addresses = db.execute(
+        select(AccountAddress).where(
+            AccountAddress.latitude.isnot(None),
+            AccountAddress.longitude.isnot(None),
+        )
+    ).scalars().all()
+
+    if config.latitude is None or config.longitude is None:
+        count = 0
+        for addr in addresses:
+            if addr.distance_meters is not None:
+                addr.distance_meters = None
+                count += 1
+        return count
+
+    factor = getattr(config, "haversine_routing_factor", 1.3627) or 1.3627
+    count = 0
+    for addr in addresses:
+        new_dist = int(round(_distance_km(config.latitude, config.longitude, addr.latitude, addr.longitude) * factor * 1000.0))
+        if addr.distance_meters != new_dist:
+            addr.distance_meters = new_dist
+            count += 1
+    return count
+

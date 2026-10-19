@@ -4981,10 +4981,11 @@ function SettingsPage() {
           weekly_schedule: settings.weekly_schedule || {},
           delivery_fee_per_km_paise: settings.delivery_fee_per_km_paise / 100,
           minimum_order_paise: settings.minimum_order_paise / 100,
+          free_delivery_threshold_paise: (settings.free_delivery_threshold_paise || 0) / 100,
           accepting_orders: isRestOpen,
           is_restaurant_open: isRestOpen,
           is_delivery_open: isDelivOpen,
-          delivery_paused_reason: settings.delivery_paused_reason || (settings.weekly_schedule?.delivery_paused_reason) || "Currently not delivering",
+          delivery_paused_reason: isDelivOpen ? "Delivery is currently unavailable" : (settings.delivery_paused_reason || (settings.weekly_schedule?.delivery_paused_reason) || "Delivery is currently unavailable"),
           order_cutoff_minutes_before_closing: settings.order_cutoff_minutes_before_closing ?? 30,
           charge_from_zero_beyond_free_radius: Boolean(settings.charge_from_zero_beyond_free_radius),
           haversine_routing_factor: settings.haversine_routing_factor ?? 1.3627,
@@ -5049,7 +5050,7 @@ function SettingsPage() {
                 is_restaurant_open: isRestOpen,
                 is_delivery_open: isDelivOpen,
                 order_cutoff_minutes_before_closing: settings.order_cutoff_minutes_before_closing ?? 30,
-                delivery_paused_reason: settings.delivery_paused_reason || (settings.weekly_schedule?.delivery_paused_reason) || prev.delivery_paused_reason || "Currently not delivering",
+                delivery_paused_reason: isDelivOpen ? "Delivery is currently unavailable" : (settings.delivery_paused_reason || (settings.weekly_schedule?.delivery_paused_reason) || prev.delivery_paused_reason || "Delivery is currently unavailable"),
                 delivery_status: settings.delivery_status,
                 delivery_status_heading: settings.delivery_status_heading,
                 delivery_status_message: settings.delivery_status_message,
@@ -5083,6 +5084,9 @@ function SettingsPage() {
           accepting_orders: nextVal,
           is_restaurant_open: nextVal,
           is_delivery_open: nextVal ? true : false,
+          admin_override_state: null,
+          admin_override_until: null,
+          delivery_paused_reason: nextVal ? "Delivery is currently unavailable" : prev.delivery_paused_reason,
         };
       });
     }
@@ -5177,7 +5181,10 @@ function SettingsPage() {
     setError("");
     setNotice("");
     try {
-      const weekly = buildWeeklySchedule(schedules, form.delivery_paused_reason);
+      const deliveryPausedReasonToSend = form.is_delivery_open
+        ? "Delivery is currently unavailable"
+        : ((form.delivery_paused_reason || "").trim() || "Delivery is currently unavailable");
+      const weekly = buildWeeklySchedule(schedules, deliveryPausedReasonToSend);
       const cleanPhones = phoneNumbers.map((p) => p.trim()).filter(Boolean);
       const phoneStr = cleanPhones.join(", ");
       const updated = await api<Restaurant>("/admin/settings", {
@@ -5191,10 +5198,9 @@ function SettingsPage() {
           weekly_schedule: weekly,
           delivery_fee_per_km_paise: Math.round(form.delivery_fee_per_km_paise * 100),
           minimum_order_paise: Math.round(form.minimum_order_paise * 100),
+          free_delivery_threshold_paise: Math.max(0, Math.round(Number(form.free_delivery_threshold_paise || 0) * 100)),
           is_delivery_open: Boolean(form.is_delivery_open),
-          delivery_paused_reason: form.delivery_paused_reason !== undefined
-            ? ((form.delivery_paused_reason || "").trim() || "Currently not delivering")
-            : "Currently not delivering",
+          delivery_paused_reason: deliveryPausedReasonToSend,
           order_cutoff_minutes_before_closing: Number(form.order_cutoff_minutes_before_closing) || 30,
           charge_from_zero_beyond_free_radius: Boolean(form.charge_from_zero_beyond_free_radius),
           haversine_routing_factor: Number(form.haversine_routing_factor) || 1.3627,
@@ -5223,10 +5229,11 @@ function SettingsPage() {
         weekly_schedule: updated.weekly_schedule || {},
         delivery_fee_per_km_paise: updated.delivery_fee_per_km_paise / 100,
         minimum_order_paise: updated.minimum_order_paise / 100,
+        free_delivery_threshold_paise: (updated.free_delivery_threshold_paise || 0) / 100,
         accepting_orders: updated.is_restaurant_open ?? updated.accepting_orders,
         is_restaurant_open: updated.is_restaurant_open ?? updated.accepting_orders,
         is_delivery_open: updated.is_delivery_open !== undefined ? Boolean(updated.is_delivery_open) : Boolean(form.is_delivery_open),
-        delivery_paused_reason: updated.delivery_paused_reason || (updated.weekly_schedule?.delivery_paused_reason) || "Currently not delivering",
+        delivery_paused_reason: updated.is_delivery_open ? "Delivery is currently unavailable" : (updated.delivery_paused_reason || (updated.weekly_schedule?.delivery_paused_reason) || "Delivery is currently unavailable"),
         order_cutoff_minutes_before_closing: updated.order_cutoff_minutes_before_closing ?? 30,
         charge_from_zero_beyond_free_radius: Boolean(updated.charge_from_zero_beyond_free_radius),
         haversine_routing_factor: updated.haversine_routing_factor ?? 1.3627,
@@ -5408,6 +5415,14 @@ function SettingsPage() {
         label: "Minimum order amount",
         from: `₹${oldF.minimum_order_paise}`,
         to: `₹${form.minimum_order_paise}`,
+      });
+    }
+
+    if (Number(form.free_delivery_threshold_paise || 0) !== Number(oldF.free_delivery_threshold_paise || 0)) {
+      diffs.push({
+        label: "Free delivery on orders above",
+        from: Number(oldF.free_delivery_threshold_paise || 0) > 0 ? `₹${oldF.free_delivery_threshold_paise}` : "Disabled (₹0)",
+        to: Number(form.free_delivery_threshold_paise || 0) > 0 ? `₹${form.free_delivery_threshold_paise}` : "Disabled (₹0)",
       });
     }
 
@@ -5682,47 +5697,57 @@ function SettingsPage() {
                     <h3 style={{ margin: 0, fontSize: "1.1rem" }}>
                       Opening days and hours
                     </h3>
-                    {form.admin_override_state !== null && form.admin_override_state !== undefined && (
-                      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                        <span
-                          style={{
-                            fontSize: "0.75rem",
-                            fontWeight: 700,
-                            padding: "3px 9px",
-                            borderRadius: "6px",
-                            background: form.accepting_orders ? "#fef3c7" : "#fee2e2",
-                            color: form.accepting_orders ? "#92400e" : "#991b1b",
-                            border: form.accepting_orders ? "1px solid #fde68a" : "1px solid #fecaca",
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: "6px",
-                          }}
-                        >
-                          OVERRIDE ACTIVE · {form.accepting_orders ? "Open" : "Closed"}{form.admin_override_until ? ` until ${formatOverrideTime(form.admin_override_until)}` : ""}
-                        </span>
-                        <button
-                          type="button"
-                          className="button button-sm button-secondary"
-                          style={{ padding: "3px 9px", fontSize: "0.75rem", height: "auto" }}
-                          disabled={busy}
-                          onClick={() => {
-                            const scheduledOpen = form.is_currently_scheduled_open ?? isCurrentlyOpenBySchedule(schedules);
-                            setForm((prev) => {
-                              if (!prev) return null;
-                              return {
-                                ...prev,
-                                accepting_orders: scheduledOpen,
-                                is_restaurant_open: scheduledOpen,
-                                is_delivery_open: scheduledOpen ? true : false,
-                                admin_override_state: false,
-                              };
-                            });
-                          }}
-                        >
-                          Resume schedule
-                        </button>
-                      </div>
-                    )}
+                    {(() => {
+                      const scheduledOpen = form.is_currently_scheduled_open ?? isCurrentlyOpenBySchedule(schedules);
+                      const isOverrideActive = Boolean(
+                        form.admin_override_state !== null &&
+                        form.admin_override_state !== undefined &&
+                        form.accepting_orders !== scheduledOpen
+                      );
+                      if (!isOverrideActive) return null;
+                      return (
+                        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                          <span
+                            style={{
+                              fontSize: "0.75rem",
+                              fontWeight: 700,
+                              padding: "3px 9px",
+                              borderRadius: "6px",
+                              background: form.accepting_orders ? "#fef3c7" : "#fee2e2",
+                              color: form.accepting_orders ? "#92400e" : "#991b1b",
+                              border: form.accepting_orders ? "1px solid #fde68a" : "1px solid #fecaca",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "6px",
+                            }}
+                          >
+                            OVERRIDE ACTIVE · {form.accepting_orders ? "Open" : "Closed"}{form.admin_override_until ? ` until ${formatOverrideTime(form.admin_override_until)}` : ""}
+                          </span>
+                          <button
+                            type="button"
+                            className="button button-sm button-secondary"
+                            style={{ padding: "3px 9px", fontSize: "0.75rem", height: "auto" }}
+                            disabled={busy}
+                            onClick={() => {
+                              setForm((prev) => {
+                                if (!prev) return null;
+                                return {
+                                  ...prev,
+                                  accepting_orders: scheduledOpen,
+                                  is_restaurant_open: scheduledOpen,
+                                  is_delivery_open: scheduledOpen ? true : false,
+                                  admin_override_state: null,
+                                  admin_override_until: null,
+                                  delivery_paused_reason: scheduledOpen ? "Delivery is currently unavailable" : prev.delivery_paused_reason,
+                                };
+                              });
+                            }}
+                          >
+                            Resume schedule
+                          </button>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Dual Controls Card */}
@@ -5876,8 +5901,8 @@ function SettingsPage() {
                         id="reason-closing-online-order"
                         name="reason-closing-online-order"
                         type="text"
-                        placeholder="Currently not delivering"
-                        value={form.delivery_paused_reason ?? "Currently not delivering"}
+                        placeholder="Delivery is currently unavailable"
+                        value={form.delivery_paused_reason ?? "Delivery is currently unavailable"}
                         onChange={(e) =>
                           setForm((prev) =>
                             prev ? { ...prev, delivery_paused_reason: e.target.value } : null
@@ -5996,6 +6021,21 @@ function SettingsPage() {
                   />
                 </label>
                 <label className="field-label">
+                  Free Delivery on Orders Above (₹ - Set to 0 to disable free delivery on order subtotal)
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={form.free_delivery_threshold_paise || 0}
+                    onChange={(event) =>
+                      change(
+                        "free_delivery_threshold_paise",
+                        Math.max(0, Number(event.target.value) || 0)
+                      )
+                    }
+                  />
+                </label>
+                <label className="field-label">
                   Online Order Cutoff Before Closing (minutes)
                   <input
                     type="number"
@@ -6040,7 +6080,7 @@ function SettingsPage() {
                     }
                   />
                 </label>
-                <label className="field-label full-field">
+                <label className="field-label">
                   Delivery Fee Amount per km
                   <input
                     type="number"
@@ -6832,7 +6872,11 @@ function SettingsPage() {
               setDeliveryWarningOpen(false);
               setPendingDeliveryValue(null);
               if (val !== null) {
-                setForm((prev) => (prev ? { ...prev, is_delivery_open: val } : null));
+                setForm((prev) => (prev ? {
+                  ...prev,
+                  is_delivery_open: val,
+                  delivery_paused_reason: "Delivery is currently unavailable",
+                } : null));
               }
             },
           }}

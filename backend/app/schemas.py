@@ -580,6 +580,7 @@ class RestaurantSettingsInput(BaseModel):
     minimum_order_paise: int = Field(ge=0, le=10_000_000)
     delivery_radius_km: float = Field(ge=0.1, le=500)
     free_delivery_radius_km: float = Field(ge=0, le=500)
+    free_delivery_threshold_paise: int = Field(default=0, ge=0, le=10_000_000)
     delivery_fee_per_km_paise: int = Field(ge=0, le=1_000_000)
     accepting_orders: bool
     is_delivery_open: bool = Field(default=True)
@@ -636,12 +637,13 @@ class RestaurantSettingsOut(ORMModel):
     minimum_order_paise: int
     delivery_radius_km: float
     free_delivery_radius_km: float
+    free_delivery_threshold_paise: int = 0
     delivery_fee_per_km_paise: int
     accepting_orders: bool
     is_restaurant_open: bool = False
     is_delivery_open: bool = True
     delivery_paused_until: datetime | None = None
-    delivery_paused_reason: str | None = "Currently not delivering"
+    delivery_paused_reason: str | None = "Delivery is currently unavailable"
     order_cutoff_minutes_before_closing: int = 30
     delivery_status: str = "OPEN"
     delivery_status_heading: str = "Menu"
@@ -688,6 +690,7 @@ class PublicRestaurantOut(ORMModel):
     minimum_order_paise: int = 0
     delivery_radius_km: float = 10.0
     free_delivery_radius_km: float = 3.0
+    free_delivery_threshold_paise: int = 0
     delivery_fee_per_km_paise: int = 0
     charge_from_zero_beyond_free_radius: bool = False
     accepting_orders: bool = True

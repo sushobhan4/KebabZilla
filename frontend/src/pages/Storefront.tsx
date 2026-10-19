@@ -113,6 +113,8 @@ export default function Storefront() {
   const [serverDown, setServerDown] = useState(false)
   const [success, setSuccess] = useState<Order | null>(null)
   const cartSync = useRef<Promise<void>>(Promise.resolve())
+  const cartDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const latestPendingCart = useRef<CartLine[] | null>(null)
   const cartRetractTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const totalItems = useMemo(() => cart.reduce((total, line) => total + line.quantity, 0), [cart])
 
@@ -215,7 +217,7 @@ export default function Storefront() {
     if (!isRestaurantOpen) return 'Sorry, we are closed'
     if (!effectiveDeliveryOpen) {
       const customReason = (restaurant.delivery_paused_reason || (restaurant.weekly_schedule?.delivery_paused_reason) || restaurant.delivery_status_heading || '').trim()
-      return customReason || 'Currently not delivering'
+      return customReason || 'Delivery is currently unavailable'
     }
     if (isApproachingClosing) return 'Hurry up closing soon'
     return restaurant.delivery_status_heading || 'Menu'
@@ -315,19 +317,19 @@ export default function Storefront() {
 
   const priceFor = (item: MenuItem) => getItemDiscountedLowestPrice(item)
 
-  const persistCart = useCallback((nextCart: CartLine[]) => {
-    try {
-      if (nextCart.length > 0) {
-        localStorage.setItem('kz_active_cart', JSON.stringify(nextCart))
-      } else {
-        localStorage.removeItem('kz_active_cart')
-      }
-    } catch {}
+  const flushCartToBackend = useCallback((cartToSync?: CartLine[]) => {
+    if (cartDebounceTimer.current) {
+      clearTimeout(cartDebounceTimer.current)
+      cartDebounceTimer.current = null
+    }
+
+    const targetCart = cartToSync !== undefined ? cartToSync : latestPendingCart.current
+    latestPendingCart.current = null
 
     if (!account) return
 
     cartSync.current = cartSync.current.catch(() => undefined).then(async () => {
-      const payload = nextCart.map((line) => ({
+      const payload = (targetCart || []).map((line) => ({
         menu_id: line.item.id,
         variation_name: line.variation_name || null,
         quantity: line.quantity,
@@ -340,6 +342,59 @@ export default function Storefront() {
       })
     }).catch((err) => setError(err instanceof Error ? err.message : 'Could not save your cart.'))
   }, [account?.id])
+
+  const persistCart = useCallback((nextCart: CartLine[], immediate = false) => {
+    try {
+      if (nextCart.length > 0) {
+        localStorage.setItem('kz_active_cart', JSON.stringify(nextCart))
+      } else {
+        localStorage.removeItem('kz_active_cart')
+      }
+    } catch {}
+
+    if (!account) return
+
+    latestPendingCart.current = nextCart
+
+    if (cartDebounceTimer.current) {
+      clearTimeout(cartDebounceTimer.current)
+      cartDebounceTimer.current = null
+    }
+
+    if (immediate || nextCart.length === 0) {
+      flushCartToBackend(nextCart)
+    } else {
+      cartDebounceTimer.current = setTimeout(() => {
+        flushCartToBackend()
+      }, 3000)
+    }
+  }, [account?.id, flushCartToBackend])
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden' && latestPendingCart.current) {
+        flushCartToBackend()
+      }
+    }
+    const handleBeforeUnload = () => {
+      if (latestPendingCart.current) {
+        flushCartToBackend()
+      }
+    }
+
+    window.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => {
+      window.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      if (cartDebounceTimer.current) {
+        clearTimeout(cartDebounceTimer.current)
+      }
+      if (latestPendingCart.current) {
+        flushCartToBackend()
+      }
+    }
+  }, [flushCartToBackend])
 
   const cartLinesFromSaved = useCallback((saved: SavedCartItem[], availableMenu: MenuItem[]): CartLine[] => {
     if (!availableMenu.length) return []
@@ -506,6 +561,34 @@ export default function Storefront() {
       .sort((a, b) => menuSort === 'popular_desc' ? b.popularity_count - a.popularity_count : menuSort === 'popular_asc' ? a.popularity_count - b.popularity_count : menuSort === 'price_asc' ? priceFor(a) - priceFor(b) : priceFor(b) - priceFor(a))
   }, [category, menu, menuSearch, menuSort])
 
+  const isLineUnavailable = useCallback((line: CartLine): boolean => {
+    if (loading || menu.length === 0) return false
+    const current = menu.find((m) => m.id === line.item.id && Boolean(m.is_custom) === Boolean(line.item.is_custom))
+    if (!current) return true
+    if (!current.is_available) return true
+    if (current.is_paused) return true
+    if (line.variation_name && current.variations && current.variations.length > 0) {
+      const vMatch = current.variations.find((v) => v.name.toLowerCase() === line.variation_name?.toLowerCase())
+      if (!vMatch) return true
+    }
+    return false
+  }, [menu, loading])
+
+  const validCartLines = useMemo(() => cart.filter((line) => !isLineUnavailable(line)), [cart, isLineUnavailable])
+  const validItemsCount = useMemo(() => validCartLines.reduce((sum, line) => sum + line.quantity, 0), [validCartLines])
+  const hasUnavailableItems = useMemo(() => cart.some((line) => isLineUnavailable(line)), [cart, isLineUnavailable])
+
+  const rawSubtotal = useMemo(() => validCartLines.reduce((total, line) => {
+    const unitPrice = line.unit_price_paise ?? priceFor(line.item)
+    return total + unitPrice * line.quantity
+  }, 0), [validCartLines])
+
+  const isFreeDeliveryByThreshold = Boolean(
+    restaurant?.free_delivery_threshold_paise &&
+    restaurant.free_delivery_threshold_paise > 0 &&
+    rawSubtotal >= restaurant.free_delivery_threshold_paise
+  )
+
   const selectedLocation = useMemo(() => {
     if (!account?.addresses || !selectedAddress) return null
     return account.addresses.find((item) => item.id === selectedAddress) || null
@@ -523,7 +606,15 @@ export default function Storefront() {
       let feePaise = 0
       let rawFeePaise = 0
       let roundOffPaise = 0
-      if (distKm > restaurant.free_delivery_radius_km) {
+      if (
+        restaurant.free_delivery_threshold_paise &&
+        restaurant.free_delivery_threshold_paise > 0 &&
+        rawSubtotal >= restaurant.free_delivery_threshold_paise
+      ) {
+        feePaise = 0
+        rawFeePaise = 0
+        roundOffPaise = 0
+      } else if (distKm > restaurant.free_delivery_radius_km) {
         const billableKm = restaurant.charge_from_zero_beyond_free_radius
           ? distKm
           : distKm - restaurant.free_delivery_radius_km
@@ -564,7 +655,8 @@ export default function Storefront() {
       max_radius_km: number
       free_radius_km: number
       fee_per_km_paise: number
-    }>(`/restaurant/delivery-estimate?latitude=${selectedLocation.latitude}&longitude=${selectedLocation.longitude}`)
+      is_free_by_threshold?: boolean
+    }>(`/restaurant/delivery-estimate?latitude=${selectedLocation.latitude}&longitude=${selectedLocation.longitude}&subtotal=${rawSubtotal}`)
       .then((data) => {
         if (!cancelled) setDeliveryEstimate(data)
       })
@@ -592,7 +684,15 @@ export default function Storefront() {
           let feePaise = 0
           let rawFeePaise = 0
           let roundOffPaise = 0
-          if (distKm > restaurant.free_delivery_radius_km) {
+          if (
+            restaurant.free_delivery_threshold_paise &&
+            restaurant.free_delivery_threshold_paise > 0 &&
+            rawSubtotal >= restaurant.free_delivery_threshold_paise
+          ) {
+            feePaise = 0
+            rawFeePaise = 0
+            roundOffPaise = 0
+          } else if (distKm > restaurant.free_delivery_radius_km) {
             const billableKm = restaurant.charge_from_zero_beyond_free_radius
               ? distKm
               : distKm - restaurant.free_delivery_radius_km
@@ -623,15 +723,10 @@ export default function Storefront() {
     return () => {
       cancelled = true
     }
-  }, [selectedLocation, restaurant])
-
-  const rawSubtotal = useMemo(() => cart.reduce((total, line) => {
-    const unitPrice = line.unit_price_paise ?? priceFor(line.item)
-    return total + unitPrice * line.quantity
-  }, 0), [cart])
+  }, [selectedLocation, restaurant, rawSubtotal])
 
   const deliveryFee = deliveryEstimate
-    ? (deliveryEstimate.raw_delivery_fee_paise ?? deliveryEstimate.delivery_fee_paise)
+    ? (isFreeDeliveryByThreshold ? 0 : (deliveryEstimate.raw_delivery_fee_paise ?? deliveryEstimate.delivery_fee_paise))
     : 0
 
   const rawPayable = rawSubtotal + deliveryFee
@@ -1130,7 +1225,7 @@ export default function Storefront() {
       const order = await api<Order>('/orders', {
         method: 'POST',
         body: JSON.stringify({
-          items: cart.map((line) => ({
+          items: validCartLines.map((line) => ({
             menu_item_id: line.custom_menu_item_id || line.item.is_custom ? null : line.item.id,
             custom_menu_item_id: line.custom_menu_item_id || (line.item.is_custom ? line.item.id : null),
             variation_name: line.variation_name || null,
@@ -1149,7 +1244,7 @@ export default function Storefront() {
               await verifyRazorpayPayment(payment)
               setSuccess({ ...order, payment_status: 'PAID' })
               setCart([])
-              localStorage.removeItem('kz_active_cart')
+              persistCart([], true)
             } catch (err) {
               setError(err instanceof Error ? err.message : 'Payment verification could not be confirmed.')
             }
@@ -1201,7 +1296,7 @@ export default function Storefront() {
       }
       setSuccess(order)
       setCart([])
-      localStorage.removeItem('kz_active_cart')
+      persistCart([], true)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'We could not place your order. Please try again.')
     } finally {
@@ -1242,6 +1337,41 @@ export default function Storefront() {
         eyebrow: 'EMPTY BASKET',
         title: 'Your cart is empty',
         description: 'Add something delicious from the menu before placing an order.',
+        primaryAction: {
+          label: 'Browse the menu',
+          onClick: () => {
+            setCheckoutWarning(null)
+            setCartOpen(false)
+            goToMenu()
+          },
+        },
+        secondaryAction: {
+          label: 'Close',
+          variant: 'secondary',
+          onClick: () => setCheckoutWarning(null),
+        },
+      })
+      return
+    }
+    if (hasUnavailableItems) {
+      setCheckoutWarning({
+        tone: 'danger',
+        eyebrow: 'UNAVAILABLE ITEMS',
+        title: 'Unavailable items in cart',
+        description: 'Please remove the unavailable items marked in red before placing your order.',
+        primaryAction: {
+          label: 'Review cart',
+          onClick: () => setCheckoutWarning(null),
+        },
+      })
+      return
+    }
+    if (validItemsCount === 0) {
+      setCheckoutWarning({
+        tone: 'warning',
+        eyebrow: 'EMPTY BASKET',
+        title: 'Select items to order',
+        description: 'Please add at least one available item from the menu to place an order.',
         primaryAction: {
           label: 'Browse the menu',
           onClick: () => {
@@ -1543,7 +1673,63 @@ export default function Storefront() {
     <section className="story-banner"><div className="story-mark"><Flame size={25} /></div><div><div className="eyebrow light-eyebrow">THE ZILLA WAY</div><h2>Good food is meant<br />to bring people <em>closer.</em></h2><p>From our charcoal grill to your table, every bite starts with the good stuff.</p></div><div className="story-seal"><span>100%</span><small>GOOD<br />TASTE</small><span>✦</span></div><div className="story-pattern">✳ &nbsp;· &nbsp;✦ &nbsp;· &nbsp;✳</div></section>
     <section className="store-bottom"><div><div className="eyebrow">COME BY, SAY HI</div><h2>Or let us bring it <em>to your table.</em></h2><div className="store-bottom-details">{restaurant?.address ? (<a href={restaurant.latitude != null && restaurant.longitude != null ? `https://www.google.com/maps/search/?api=1&query=${restaurant.latitude},${restaurant.longitude}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(restaurant.address)}`} target="_blank" rel="noreferrer" className="store-address-link" title="Open exact location in Google Maps" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: 'inherit', textDecoration: 'none', cursor: 'pointer' }}><MapPin size={15} /> <span>{restaurant.address}</span></a>) : (<span>Restaurant location has not been added yet.</span>)}{restaurant?.email && (<span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><Mail size={15} /> <a href={`mailto:${restaurant.email}`} style={{ color: 'inherit', textDecoration: 'none' }}>{restaurant.email}</a></span>)}{((restaurant?.phones && restaurant.phones.length > 0) ? restaurant.phones : (restaurant?.phone ? restaurant.phone.split(',').map((p) => p.trim()).filter(Boolean) : [])).map((phoneNum, idx) => (<span key={idx} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><Phone size={15} /> <a href={`tel:${phoneNum}`} style={{ color: 'inherit', textDecoration: 'none' }}>{phoneNum}</a></span>))}</div></div>{restaurant?.latitude != null && restaurant.longitude != null ? <a className="store-bottom-map" href={`https://www.google.com/maps/search/?api=1&query=${restaurant.latitude},${restaurant.longitude}`} target="_blank" rel="noreferrer"><span className="map-mini"><MapPin size={26} /></span><span><strong>Find KebabZilla</strong><small>Open directions in Maps</small></span><ArrowRight size={17} /></a> : <div className="store-bottom-map"><span className="map-mini"><MapPin size={26} /></span><span><strong>Location details</strong><small>Pin location coming soon</small></span></div>}</section>
 
-    {cartOpen && <div className="cart-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setCartOpen(false) }}><aside className="cart-panel" aria-label="Your basket" onMouseDown={(event) => event.stopPropagation()}><div className="cart-header"><div><span className="cart-icon"><ShoppingBag size={17} /></span><span><strong>Your order</strong><small>{totalItems} delicious thing{totalItems === 1 ? '' : 's'}</small></span></div><button className="cart-close" aria-label="Close cart" onClick={() => setCartOpen(false)}><X size={17} /></button></div><div className="cart-panel-scroll">{cart.length ? <><div className="cart-items">{cart.map((line) => { const unitPrice = line.unit_price_paise ?? priceFor(line.item); const customSummary = (line.customizations || []).map((o) => o.name).join(', '); const hasVariations = (line.item.variations?.length || 0) > 0; return <div className="cart-line" key={line.lineKey}><span className="cart-line-name">{line.item.name}{line.variation_name && <small className="cart-custom-desc">Portion: {line.variation_name}</small>}{customSummary && <small className="cart-custom-desc">{customSummary}</small>}{(line.item.is_custom || hasVariations) && <button type="button" className="cart-edit-link" onClick={() => { if (line.item.is_custom) { openCustomizationModal(line.item, line) } else { openVariationModal(line.item, line) } }} aria-label={`Edit ${line.item.name}`}><Edit3 size={11} /> {line.item.is_custom ? 'Edit customization' : 'Change portion'}</button>}<small>{formatINR(unitPrice)} each</small></span><QuantityPicker small quantity={line.quantity} onChange={(next) => setLineQuantity(line.lineKey, next)} /><strong>{formatINR(unitPrice * line.quantity)}</strong></div> })}</div>
+    {cartOpen && <div className="cart-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setCartOpen(false) }}><aside className="cart-panel" aria-label="Your basket" onMouseDown={(event) => event.stopPropagation()}><div className="cart-header"><div><span className="cart-icon"><ShoppingBag size={17} /></span><span><strong>Your order</strong><small>{totalItems} delicious thing{totalItems === 1 ? '' : 's'}</small></span></div><button className="cart-close" aria-label="Close cart" onClick={() => setCartOpen(false)}><X size={17} /></button></div><div className="cart-panel-scroll">{cart.length ? <><div className="cart-items">{cart.map((line) => {
+        const unavailable = isLineUnavailable(line)
+        const unitPrice = line.unit_price_paise ?? priceFor(line.item)
+        const customSummary = (line.customizations || []).map((o) => o.name).join(', ')
+        const hasVariations = (line.item.variations?.length || 0) > 0
+
+        if (unavailable) {
+          return (
+            <div className="cart-line cart-line-unavailable" key={line.lineKey}>
+              <span className="cart-line-name">
+                <strong className="cart-unavailable-item-name">{line.item.name}</strong>
+                {line.variation_name && <small className="cart-custom-desc">Portion: {line.variation_name}</small>}
+                {customSummary && <small className="cart-custom-desc">{customSummary}</small>}
+                <small className="cart-unavailable-badge">Currently unavailable</small>
+              </span>
+              <button
+                type="button"
+                className="cart-remove-item-btn"
+                onClick={() => setLineQuantity(line.lineKey, 0)}
+                aria-label={`Remove unavailable item ${line.item.name}`}
+                title="Remove unavailable item"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          )
+        }
+
+        return (
+          <div className="cart-line" key={line.lineKey}>
+            <span className="cart-line-name">
+              {line.item.name}
+              {line.variation_name && <small className="cart-custom-desc">Portion: {line.variation_name}</small>}
+              {customSummary && <small className="cart-custom-desc">{customSummary}</small>}
+              {(line.item.is_custom || hasVariations) && (
+                <button
+                  type="button"
+                  className="cart-edit-link"
+                  onClick={() => {
+                    if (line.item.is_custom) {
+                      openCustomizationModal(line.item, line)
+                    } else {
+                      openVariationModal(line.item, line)
+                    }
+                  }}
+                  aria-label={`Edit ${line.item.name}`}
+                >
+                  <Edit3 size={11} /> {line.item.is_custom ? 'Edit customization' : 'Change portion'}
+                </button>
+              )}
+              <small>{formatINR(unitPrice)} each</small>
+            </span>
+            <QuantityPicker small quantity={line.quantity} onChange={(next) => setLineQuantity(line.lineKey, next)} />
+            <strong>{formatINR(unitPrice * line.quantity)}</strong>
+          </div>
+        )
+      })}</div>
       <div className="cart-totals">
         <div>
           <span>Subtotal</span>
@@ -1558,7 +1744,9 @@ export default function Storefront() {
               deliveryEstimate ? (
                 deliveryEstimate.within_radius ? (
                   deliveryFee === 0 ? (
-                    <span style={{ color: '#2b7a4b', fontWeight: 800 }}>Free</span>
+                    <span style={{ color: '#2b7a4b', fontWeight: 800 }}>
+                      Free{isFreeDeliveryByThreshold && restaurant?.free_delivery_threshold_paise ? ` (Order over ${formatINR(restaurant.free_delivery_threshold_paise)})` : ''}
+                    </span>
                   ) : (
                     formatINR(deliveryFee)
                   )
@@ -1619,10 +1807,6 @@ export default function Storefront() {
             <Link to="/profile" className="button button-secondary">Add delivery address <ArrowRight size={14} /></Link>
           </div>
         )}
-        <label className="field-label">
-          Anything we should know? <span className="field-optional">optional</span>
-          <input maxLength={500} placeholder="No onions, extra chutney…" value={notes} onChange={(event) => setNotes(event.target.value)} />
-        </label>
         <div className={`checkout-timing-row ${scheduledFor ? 'two-col' : 'single-col'}`}>
           <label className="field-label">
             Order timing
@@ -1661,6 +1845,10 @@ export default function Storefront() {
             </label>
           )}
         </div>
+        <label className="field-label">
+          Anything we should know? <span className="field-optional">optional</span>
+          <input maxLength={500} placeholder="No onions, extra chutney…" value={notes} onChange={(event) => setNotes(event.target.value)} />
+        </label>
       </div> : <div className="cart-signin"><p>One tiny step before the first bite.</p><Link className="button button-dark" to="/login">Sign in to check out <ArrowRight size={16} /></Link><span>New here? <Link to="/register">Create an account</Link></span></div>}
       {subtotal < (restaurant?.minimum_order_paise || 0) && <div className="minimum-note">Add {formatINR((restaurant?.minimum_order_paise || 0) - subtotal)} to meet our minimum.</div>}
       </> : <div className="cart-empty"><p>Your cart is empty.</p><button className="text-button" onClick={() => { setCartOpen(false); document.querySelector('.menu-section')?.scrollIntoView({ behavior: 'smooth' }) }}>Browse the menu</button></div>}</div>
@@ -1668,7 +1856,7 @@ export default function Storefront() {
         <div className="cart-sticky-bottom">
           {account ? (
             <>
-              {error && <Notice>{error}</Notice>}
+              {error && error !== 'One or more menu items are unavailable' && <Notice>{error}</Notice>}
               <div className="cart-action-row">
                 <div className="cart-payment-select-wrap">
                   <RoundedSelect
@@ -1684,7 +1872,7 @@ export default function Storefront() {
                 </div>
                 <Button
                   className={`checkout-button ${cancelCountdownActive ? 'cancelling-mode' : ''}`}
-                  disabled={busy || orderingClosed}
+                  disabled={busy || orderingClosed || hasUnavailableItems || validItemsCount === 0}
                   onClick={placeOrder}
                 >
                   {cancelCountdownActive && <span className="checkout-loading-bar" />}
@@ -1697,7 +1885,11 @@ export default function Storefront() {
                     ) : busy ? (
                       'Just a second…'
                     ) : orderingClosed ? (
-                      !isRestaurantOpen ? 'Sorry, we are closed' : 'Currently not delivering (Walk-in only)'
+                      !isRestaurantOpen ? 'Sorry, we are closed' : 'Delivery is currently unavailable (Walk-in only)'
+                    ) : hasUnavailableItems ? (
+                      'Remove unavailable items to order'
+                    ) : validItemsCount === 0 ? (
+                      'Select items to order'
                     ) : isApproachingClosing ? (
                       <>Place order · {formatINR(payable)} (Closing soon) <ArrowRight size={16} /></>
                     ) : (

@@ -51,17 +51,33 @@ def sync_cart(items: list[CartItemInput], account: CurrentAccount, db: DbSession
 
     db.query(CartItem).filter(CartItem.customer_id == account.id).delete(synchronize_session=False)
 
+    if not items:
+        db.commit()
+        return []
+
+    # Batch load all menu items in a single query
+    item_ids = [
+        (item_data.menu_id or item_data.menu_item_id or item_data.custom_menu_item_id)
+        for item_data in items
+        if (item_data.menu_id or item_data.menu_item_id or item_data.custom_menu_item_id) and item_data.quantity > 0
+    ]
+    menu_items_map = {}
+    if item_ids:
+        rows = db.scalars(select(MenuItem).where(MenuItem.id.in_(item_ids))).all()
+        menu_items_map = {m.id: m for m in rows}
+
     seen_fingerprints: set[str] = set()
+    to_add = []
     for item_data in items:
         if item_data.quantity <= 0:
             continue
 
         item_id = item_data.menu_id or item_data.menu_item_id or item_data.custom_menu_item_id
-        if not item_id:
+        if not item_id or item_id not in menu_items_map:
             continue
 
-        menu_item = db.get(MenuItem, item_id)
-        if not menu_item or not menu_item.is_available or menu_item.paused_by_id is not None:
+        menu_item = menu_items_map[item_id]
+        if not menu_item.is_available or menu_item.paused_by_id is not None:
             continue
 
         fp = f"{item_id}:{item_data.variation_name or ''}:{_customizations_key(item_data.customizations)}"
@@ -77,7 +93,7 @@ def sync_cart(items: list[CartItemInput], account: CurrentAccount, db: DbSession
             c.model_dump() if hasattr(c, "model_dump") else c
             for c in (item_data.customizations or [])
         ]
-        db.add(
+        to_add.append(
             CartItem(
                 customer_id=account.id,
                 menu_id=item_id,
@@ -86,6 +102,9 @@ def sync_cart(items: list[CartItemInput], account: CurrentAccount, db: DbSession
                 customizations=raw_customs,
             )
         )
+
+    if to_add:
+        db.add_all(to_add)
 
     db.commit()
     return db.scalars(

@@ -3,13 +3,13 @@
 import hashlib
 import hmac
 import json
-import smtplib
 from email.message import EmailMessage
 
 import httpx
 from fastapi import HTTPException
 
 from app.config import settings
+from app.email_sender import email_sender
 
 
 class PaymentGateway:
@@ -115,8 +115,8 @@ class CustomerNotifier:
         email: str | None = None,
         customer_name: str | None = None,
     ) -> None:
-        # If email is provided and SMTP is configured, send the fancy HTML delivery OTP email
-        if email and settings.smtp_password:
+        # If email is provided and email sender is configured, send the fancy HTML delivery OTP email
+        if email and email_sender.is_configured():
             try:
                 message = EmailMessage()
                 message["Subject"] = f"Your KebabZilla Delivery Code for Order #{order_number}"
@@ -137,10 +137,7 @@ class CustomerNotifier:
                 )
                 message.set_content(plain_text)
                 message.add_alternative(html_content, subtype="html")
-                with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as client:
-                    client.starttls()
-                    client.login(settings.smtp_username, settings.smtp_password)
-                    client.send_message(message)
+                email_sender.send_message(message)
             except Exception as exc:
                 print(f"[CustomerNotifier] Delivery OTP email failed: {exc}")
 
@@ -170,7 +167,7 @@ class StaffAccountNotifier:
     """Sends first-login credentials, OTPs, invites and marketing offers with rich HTML/CSS/JS emails."""
 
     def send_account_created_notice(self, *, name: str, email: str, role: str) -> str:
-        if not settings.smtp_password:
+        if not email_sender.is_configured():
             return "NOT_CONFIGURED"
         message = EmailMessage()
         message["Subject"] = "Your KebabZilla account has been created"
@@ -192,20 +189,13 @@ class StaffAccountNotifier:
         )
         message.set_content(plain_text)
         message.add_alternative(html_content, subtype="html")
-        try:
-            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as client:
-                client.starttls()
-                client.login(settings.smtp_username, settings.smtp_password)
-                client.send_message(message)
-        except (OSError, smtplib.SMTPException):
-            return "EMAIL_FAILED"
-        return "EMAIL_SENT"
+        return "EMAIL_SENT" if email_sender.send_message(message) else "EMAIL_FAILED"
 
     def send_staff_invite(self, *, name: str, email: str, role: str, invite_url: str = "", duration_str: str = "30 minutes") -> str:
         return self.send_account_created_notice(name=name, email=email, role=role)
 
     def send_temporary_password(self, *, name: str, email: str, role: str, temporary_password: str) -> str:
-        if not settings.smtp_password:
+        if not email_sender.is_configured():
             return "NOT_CONFIGURED"
         message = EmailMessage()
         message["Subject"] = "Your KebabZilla account is ready"
@@ -227,14 +217,7 @@ class StaffAccountNotifier:
         )
         message.set_content(plain_text)
         message.add_alternative(html_content, subtype="html")
-        try:
-            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as client:
-                client.starttls()
-                client.login(settings.smtp_username, settings.smtp_password)
-                client.send_message(message)
-        except (OSError, smtplib.SMTPException):
-            return "EMAIL_FAILED"
-        return "EMAIL_SENT"
+        return "EMAIL_SENT" if email_sender.send_message(message) else "EMAIL_FAILED"
 
     def send_offer(
         self,
@@ -252,7 +235,7 @@ class StaffAccountNotifier:
         theme_color: str | None = None,
     ) -> bool:
         """Send one customer offer with customizable rich HTML/CSS template."""
-        if not settings.smtp_password:
+        if not email_sender.is_configured():
             return False
         message = EmailMessage()
         message["Subject"] = subject
@@ -277,17 +260,10 @@ class StaffAccountNotifier:
         )
         message.set_content(plain_text)
         message.add_alternative(html_content, subtype="html")
-        try:
-            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as client:
-                client.starttls()
-                client.login(settings.smtp_username, settings.smtp_password)
-                client.send_message(message)
-        except (OSError, smtplib.SMTPException):
-            return False
-        return True
+        return email_sender.send_message(message)
 
     def send_password_reset_otp(self, *, name: str, email: str, otp: str) -> bool:
-        if not settings.smtp_password:
+        if not email_sender.is_configured():
             print(f"[SECURITY PASSWORD RESET OTP] Code for {email}: {otp}")
             return False
         message = EmailMessage()
@@ -311,18 +287,11 @@ class StaffAccountNotifier:
         )
         message.set_content(plain_text)
         message.add_alternative(html_content, subtype="html")
-        try:
-            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as client:
-                client.starttls()
-                client.login(settings.smtp_username, settings.smtp_password)
-                client.send_message(message)
-        except (OSError, smtplib.SMTPException):
-            return False
-        return True
+        return email_sender.send_message(message)
 
     def send_2fa_code(self, *, name: str, email: str, code: str) -> bool:
-        if not settings.smtp_password:
-            # In local development without SMTP, print code to server logs for convenience
+        if not email_sender.is_configured():
+            # In local development without configured email, print code to server logs for convenience
             print(f"[SECURITY 2FA CODE] Staff 2-Step verification code for {email}: {code}")
             return False
         message = EmailMessage()
@@ -346,17 +315,10 @@ class StaffAccountNotifier:
         )
         message.set_content(plain_text)
         message.add_alternative(html_content, subtype="html")
-        try:
-            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as client:
-                client.starttls()
-                client.login(settings.smtp_username, settings.smtp_password)
-                client.send_message(message)
-        except (OSError, smtplib.SMTPException):
-            return False
-        return True
+        return email_sender.send_message(message)
 
     def send_email_verification_otp(self, *, email: str, otp: str, purpose: str = "register") -> bool:
-        if not settings.smtp_password:
+        if not email_sender.is_configured():
             print(f"[EMAIL VERIFICATION OTP] Verification code for {email} ({purpose}): {otp}")
             return False
         message = EmailMessage()
@@ -380,14 +342,7 @@ class StaffAccountNotifier:
         )
         message.set_content(plain_text)
         message.add_alternative(html_content, subtype="html")
-        try:
-            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as client:
-                client.starttls()
-                client.login(settings.smtp_username, settings.smtp_password)
-                client.send_message(message)
-        except (OSError, smtplib.SMTPException):
-            return False
-        return True
+        return email_sender.send_message(message)
 
 
 razorpay = RazorpayGateway()

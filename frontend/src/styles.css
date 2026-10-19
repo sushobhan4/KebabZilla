@@ -11418,7 +11418,14 @@ input[type="radio"]:focus-visible {
 
 /* Search bar and sorting select: search bar fills available space, select sized to widest option */
 @media (min-width: 641px) {
-  .team-filter-row,
+  .team-filter-row {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto auto !important;
+    gap: 12px !important;
+    align-items: center !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
   .activity-filter-bar,
   .admin-search-sort-controls {
     display: grid !important;
@@ -11442,6 +11449,7 @@ input[type="radio"]:focus-visible {
   }
   .team-filter-row .role-filter,
   .team-filter-row .role-filter-select,
+  .team-filter-row .team-sort-select,
   .activity-filter-bar > .rounded-select,
   .activity-filter-bar .activity-sort-select,
   .admin-search-sort-controls .orders-period-select {
@@ -11453,6 +11461,7 @@ input[type="radio"]:focus-visible {
     flex: 0 0 auto !important;
   }
   .team-filter-row .role-filter-select .rounded-select-trigger,
+  .team-filter-row .team-sort-select .rounded-select-trigger,
   .activity-filter-bar .rounded-select-trigger,
   .admin-search-sort-controls .rounded-select-trigger {
     width: auto !important;
@@ -11467,6 +11476,7 @@ input[type="radio"]:focus-visible {
     box-sizing: border-box !important;
   }
   .team-filter-row .role-filter-select .rounded-select-label,
+  .team-filter-row .team-sort-select .rounded-select-label,
   .activity-filter-bar .rounded-select-label,
   .admin-search-sort-controls .rounded-select-label {
     text-align: left !important;
@@ -11475,6 +11485,7 @@ input[type="radio"]:focus-visible {
     text-overflow: ellipsis !important;
   }
   .team-filter-row .role-filter-select .rounded-select-chevron,
+  .team-filter-row .team-sort-select .rounded-select-chevron,
   .activity-filter-bar .rounded-select-chevron,
   .admin-search-sort-controls .rounded-select-chevron {
     margin-left: 8px !important;
@@ -11490,9 +11501,11 @@ input[type="radio"]:focus-visible {
   .admin-search-sort-controls {
     display: flex !important;
     flex-direction: row !important;
+    flex-wrap: nowrap !important;
     align-items: center !important;
     gap: 8px !important;
     width: 100% !important;
+    box-sizing: border-box !important;
   }
   .team-filter-row .search-field,
   .activity-filter-bar .admin-search,
@@ -11501,9 +11514,15 @@ input[type="radio"]:focus-visible {
     min-width: 0 !important;
     width: auto !important;
     max-width: none !important;
+    height: 38px !important;
+    min-height: 38px !important;
+    border-radius: 999px !important;
+    box-sizing: border-box !important;
+    margin: 0 !important;
   }
   .team-filter-row .role-filter,
   .role-filter-select,
+  .team-sort-select,
   .activity-sort-select,
   .orders-period-select {
     flex-shrink: 0 !important;
@@ -11513,6 +11532,7 @@ input[type="radio"]:focus-visible {
     max-width: none !important;
   }
   .role-filter-select .rounded-select-trigger,
+  .team-sort-select .rounded-select-trigger,
   .activity-sort-select .rounded-select-trigger,
   .orders-period-select .rounded-select-trigger {
     width: 38px !important;
@@ -11531,10 +11551,13 @@ input[type="radio"]:focus-visible {
     box-sizing: border-box !important;
   }
   .role-filter-select .rounded-select-content-wrapper,
+  .team-sort-select .rounded-select-content-wrapper,
   .activity-sort-select .rounded-select-content-wrapper,
   .orders-period-select .rounded-select-content-wrapper,
   .role-filter-select .rounded-select-label,
   .role-filter-select .rounded-select-chevron,
+  .team-sort-select .rounded-select-label,
+  .team-sort-select .rounded-select-chevron,
   .activity-sort-select .rounded-select-label,
   .activity-sort-select .rounded-select-chevron,
   .orders-period-select .rounded-select-label,
@@ -11542,6 +11565,7 @@ input[type="radio"]:focus-visible {
     display: none !important;
   }
   .role-filter-select .rounded-select-icon,
+  .team-sort-select .rounded-select-icon,
   .activity-sort-select .rounded-select-icon,
   .orders-period-select .rounded-select-icon {
     margin: 0 !important;
@@ -11552,6 +11576,7 @@ input[type="radio"]:focus-visible {
     height: 16px !important;
   }
   .role-filter-select .rounded-select-icon svg,
+  .team-sort-select .rounded-select-icon svg,
   .activity-sort-select .rounded-select-icon svg,
   .orders-period-select .rounded-select-icon svg {
     margin: 0 !important;
@@ -12827,7 +12852,6 @@ input[type="radio"]:focus-visible {
 /* Custom rounded dropdowns in form fields, settings, checkout, and modals */
 .field-label .rounded-select,
 .modal-two-col .rounded-select,
-.checkout-fields .rounded-select,
 .settings-fields .rounded-select {
   width: max-content;
   max-width: 100%;
@@ -12892,32 +12916,143 @@ input[type="radio"]:focus-visible {
   transform: rotate(180deg);
 }
 
+/* Delivery address & checkout selects taking 100% full width */
+.checkout-fields .rounded-select,
+.checkout-fields .field-label > .rounded-select,
+.checkout-timing-row .rounded-select,
+.checkout-timing-row .rounded-time-picker-root {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  align-self: stretch !important;
+  display: flex !important;
+  box-sizing: border-box !important;
+}
+
+.checkout-fields .rounded-select .rounded-select-trigger,
+.checkout-timing-row .rounded-select-trigger {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  box-sizing: border-box !important;
+}
+
+.checkout-fields .rounded-select-content-wrapper,
+.checkout-timing-row .rounded-select-content-wrapper {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  max-width: calc(100% - 24px) !important;
+  display: inline-grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+.checkout-fields .rounded-select-label,
+.checkout-timing-row .rounded-select-label {
+  display: block !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  text-align: left !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
 /* Side-by-side Order Timing and Schedule Time in Cart Checkout */
 .checkout-timing-row {
-  display: grid;
-  gap: 12px;
-  width: 100%;
+  display: grid !important;
+  gap: 12px !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
 }
 
 .checkout-timing-row.two-col {
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr !important;
 }
 
 .checkout-timing-row.single-col {
-  grid-template-columns: 1fr;
+  grid-template-columns: 1fr !important;
 }
 
 .checkout-timing-row .field-label {
-  width: 100%;
-  margin-bottom: 0;
+  width: 100% !important;
+  margin-bottom: 0 !important;
 }
 
-.checkout-timing-row .rounded-select-root,
-.checkout-timing-row .rounded-select-trigger,
-.checkout-timing-row .rounded-time-picker {
-  width: 100% !important;
-  max-width: 100% !important;
-  box-sizing: border-box !important;
+/* Unavailable cart line styling */
+.cart-line.cart-line-unavailable {
+  background: #fff5f5 !important;
+  border: 1.5px solid #fed7d7 !important;
+  border-radius: 14px !important;
+  padding: 10px 14px !important;
+  margin-bottom: 8px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 12px !important;
+  transition: all 0.2s ease !important;
+}
+
+.cart-line.cart-line-unavailable .cart-line-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.cart-unavailable-item-name {
+  color: #9b2c2c;
+  font-size: 0.92rem;
+  font-weight: 700;
+  display: block;
+}
+
+.cart-unavailable-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #fed7d7;
+  color: #9b2c2c;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  margin-top: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.cart-remove-item-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: 8px;
+  border: 1px solid #feb2b2;
+  background: #ffffff;
+  color: #e53e3e;
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.16s ease;
+  flex-shrink: 0;
+}
+
+.cart-remove-item-btn:hover {
+  background: #e53e3e;
+  color: #ffffff;
+  border-color: #e53e3e;
+  transform: scale(1.05);
+}
+
+.cart-remove-item-btn:active {
+  transform: scale(0.96);
+}
+
+.cart-panel-scroll {
+  padding-bottom: 32px !important;
 }
 
 .field-badge-today {

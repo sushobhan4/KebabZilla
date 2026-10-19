@@ -13,6 +13,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.cache import invalidate_auth_cache
 from app.config import settings
 from app.dependencies import CurrentAccount, DbSession, PasswordChangeAccount, bearer_scheme
 from app.integrations import staff_account_notifier
@@ -663,6 +664,7 @@ def logout(
     token = bearer_token or cookie_token
     if token:
         token_hash = hash_session_token(token)
+        invalidate_auth_cache(token_hash)
         db.query(UserSession).filter(UserSession.token_hash == token_hash).update(
             {UserSession.is_revoked: True},
             synchronize_session=False,
@@ -754,6 +756,7 @@ def revoke_session(
 
     session.is_revoked = True
     db.commit()
+    invalidate_auth_cache(session.token_hash)
 
     bearer_token = credentials.credentials if credentials and credentials.scheme.casefold() == "bearer" else None
     cookie_token = request.cookies.get(SESSION_COOKIE_NAME)

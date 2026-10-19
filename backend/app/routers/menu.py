@@ -30,7 +30,7 @@ from app.storage import (
     is_gcs_image_referenced,
     upload_menu_image,
 )
-from app.cache import PREFIX_MENU, cache, invalidate_menu_cache
+from app.cache import KEY_MENU_CATEGORIES, PREFIX_MENU, cache, image_cache, invalidate_menu_cache
 
 router = APIRouter(prefix="/menu", tags=["menu"])
 
@@ -80,8 +80,23 @@ def drive_menu_image(file_id: str):
 @router.get("/images/gcs/{filename:path}", response_class=Response)
 def serve_gcs_menu_image(filename: str):
     """Serve a menu image stored in Google Cloud Storage."""
+    clean_file = os.path.basename(filename)
+    cache_key = f"img:{clean_file}"
+    cached = image_cache.get(cache_key)
+    if cached is not None:
+        data, content_type = cached
+        return Response(
+            content=data,
+            media_type=content_type,
+            headers={
+                "Cache-Control": "public, max-age=86400, immutable",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
     try:
         data, content_type = get_menu_image_blob(filename)
+        image_cache.set(cache_key, (data, content_type), ttl_seconds=3600.0)
         return Response(
             content=data,
             media_type=content_type,
@@ -133,13 +148,22 @@ def delete_gcs_menu_image_endpoint(filename: str, db: DbSession):
     deleted = delete_menu_image(clean_file)
     if not deleted:
         raise HTTPException(status_code=404, detail="Image not found in Cloud Storage.")
+    image_cache.delete(f"img:{clean_file}")
     return {"deleted": True, "filename": clean_file}
 
 
 
 @router.get("/categories", response_model=list[MenuCategoryOut])
-def list_categories(db: DbSession):
-    return db.scalars(select(MenuCategory).order_by(MenuCategory.name)).all()
+def list_categories(db: DbSession, response: Response):
+    cached = cache.get(KEY_MENU_CATEGORIES)
+    if cached is not None:
+        response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=300"
+        return cached
+
+    items = db.scalars(select(MenuCategory).order_by(MenuCategory.name)).all()
+    cache.set(KEY_MENU_CATEGORIES, items, ttl_seconds=60.0)
+    response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=300"
+    return items
 
 
 @router.post("/categories", response_model=MenuCategoryOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_roles(Role.ADMIN))])
@@ -215,7 +239,14 @@ def list_menu(db: DbSession, response: Response):
 
 @router.get("/manage", response_model=list[MenuItemOut], dependencies=[Depends(require_roles(Role.ADMIN))])
 def list_all_menu(db: DbSession):
-    return db.scalars(select(MenuItem).where(MenuItem.is_customizable.is_(False)).order_by(MenuItem.name)).all()
+    cache_key = f"{PREFIX_MENU}manage_list"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    items = db.scalars(select(MenuItem).where(MenuItem.is_customizable.is_(False)).order_by(MenuItem.name)).all()
+    cache.set(cache_key, items, ttl_seconds=30.0)
+    return items
 
 
 @router.post("", response_model=MenuItemOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_roles(Role.ADMIN))])

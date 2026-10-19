@@ -2,7 +2,6 @@ import email.utils
 import json
 import logging
 import queue
-import smtplib
 import threading
 import time
 from email.message import EmailMessage
@@ -10,6 +9,7 @@ from typing import Any, Callable
 
 from app.config import settings
 from app.db import SessionLocal
+from app.email_sender import email_sender
 from app.email_templates import render_offer_email
 from app.models import AdminEvent, OfferLog
 
@@ -144,19 +144,6 @@ class CampaignDispatcher:
                 logger.exception("Unexpected error in campaign dispatcher loop: %s", exc)
                 time.sleep(1.0)
 
-    def _create_smtp_connection(self) -> smtplib.SMTP | None:
-        """Open and authenticate an SMTP connection."""
-        if not settings.smtp_password:
-            return None
-        try:
-            client = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=25)
-            client.starttls()
-            client.login(settings.smtp_username, settings.smtp_password)
-            return client
-        except Exception as exc:
-            logger.error("Failed to connect to SMTP server: %s", exc)
-            return None
-
     def _update_progress(self, log_id: int, channel: str, sent_count: int, total_recipients: int, final_status: str | None = None) -> None:
         """Persist current campaign progress into database."""
         try:
@@ -225,8 +212,8 @@ class CampaignDispatcher:
             for i in range(0, total, self.bcc_batch_size)
         ]
 
-        # In local dev without SMTP configured, simulate paced batch sending
-        if not settings.smtp_password:
+        # In local dev without email configured, simulate paced batch sending
+        if not email_sender.is_configured():
             logger.info(
                 "[DEV OFFER SIMULATION] Simulating campaign %s for %d recipients in %d BCC batch(es) of %d",
                 log_id,
@@ -242,9 +229,7 @@ class CampaignDispatcher:
             self._update_progress(log_id, "EMAIL", sent, total, final_status="SENT")
             return
 
-        client: smtplib.SMTP | None = self._create_smtp_connection()
         sent = 0
-
         try:
             for batch in batches:
                 # Build BCC EmailMessage
@@ -258,31 +243,7 @@ class CampaignDispatcher:
                 msg.set_content(plain_text)
                 msg.add_alternative(html_content, subtype="html")
 
-                send_success = False
-                try:
-                    if client is not None:
-                        client.send_message(msg, to_addrs=batch)
-                        send_success = True
-                    else:
-                        client = self._create_smtp_connection()
-                        if client is not None:
-                            client.send_message(msg, to_addrs=batch)
-                            send_success = True
-                except (smtplib.SMTPException, OSError) as exc:
-                    logger.warning("SMTP BCC batch send error (%d recipients): %s; reconnecting...", len(batch), exc)
-                    try:
-                        if client is not None:
-                            client.close()
-                    except Exception:
-                        pass
-                    client = self._create_smtp_connection()
-                    if client is not None:
-                        try:
-                            client.send_message(msg, to_addrs=batch)
-                            send_success = True
-                        except Exception as retry_exc:
-                            logger.error("Failed retry for BCC batch (%d recipients): %s", len(batch), retry_exc)
-
+                send_success = email_sender.send_bcc_batch(msg, batch)
                 if send_success:
                     sent += len(batch)
 

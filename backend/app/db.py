@@ -29,7 +29,7 @@ if not is_sqlite:
 
 engine = create_engine(
     settings.database_url,
-    pool_pre_ping=True,
+    pool_pre_ping=is_sqlite,
     connect_args=connect_args,
     **pool_kwargs,
 )
@@ -66,6 +66,8 @@ if settings.database_url.startswith("sqlite"):
                     cursor.execute("ALTER TABLE restaurant_settings ADD COLUMN delivery_paused_until DATETIME")
                 if "email" not in cols:
                     cursor.execute("ALTER TABLE restaurant_settings ADD COLUMN email VARCHAR(255) DEFAULT 'support@kebabzilla.in'")
+                if "free_delivery_threshold_paise" not in cols:
+                    cursor.execute("ALTER TABLE restaurant_settings ADD COLUMN free_delivery_threshold_paise INTEGER DEFAULT 0")
                 if "distance_calculation_mode" in cols:
                     try:
                         cursor.execute("ALTER TABLE restaurant_settings DROP COLUMN distance_calculation_mode")
@@ -129,6 +131,7 @@ else:
                         ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS is_delivery_open BOOLEAN DEFAULT TRUE;
                         ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS order_cutoff_minutes_before_closing INTEGER DEFAULT 30;
                         ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS delivery_paused_until TIMESTAMPTZ;
+                        ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS free_delivery_threshold_paise INTEGER DEFAULT 0;
                         ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS email VARCHAR(255) DEFAULT 'support@kebabzilla.in';
                         ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS enforce_driver_geofence BOOLEAN DEFAULT FALSE;
                         ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS driver_geofence_meters INTEGER DEFAULT 500;
