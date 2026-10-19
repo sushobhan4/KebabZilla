@@ -10,15 +10,33 @@ import { getPreference, setPreference, usePreference } from './cookies'
 import { CookieConsentBanner, CookiePolicyModal, CookiePreferencesModal, PrivacyPolicyModal, DataPolicyModal } from './components/CookieConsent'
 import { liquidGlassManager } from './vendor/liquidGlassManager'
 
-const OrdersPage = lazy(() => import('./pages/Orders'))
-const Operations = lazy(() => import('./pages/Operations'))
-const Delivery = lazy(() => import('./pages/Delivery'))
-const Admin = lazy(() => import('./pages/Admin'))
-const AuthPage = lazy(() => import('./pages/AuthPage'))
-const Profile = lazy(() => import('./pages/Profile'))
-const Security = lazy(() => import('./pages/Security'))
+const loadOrders = () => import('./pages/Orders')
+const loadOperations = () => import('./pages/Operations')
+const loadDelivery = () => import('./pages/Delivery')
+const loadAdmin = () => import('./pages/Admin')
+const loadAuthPage = () => import('./pages/AuthPage')
+const loadProfile = () => import('./pages/Profile')
+const loadSecurity = () => import('./pages/Security')
+
+const OrdersPage = lazy(loadOrders)
+const Operations = lazy(loadOperations)
+const Delivery = lazy(loadDelivery)
+const Admin = lazy(loadAdmin)
+const AuthPage = lazy(loadAuthPage)
+const Profile = lazy(loadProfile)
+const Security = lazy(loadSecurity)
 const ForcedPasswordChange = lazy(() => import('./pages/ForcedPasswordChange'))
 const CopyOtpPage = lazy(() => import('./pages/CopyOtpPage'))
+
+function preloadRoute(to: string) {
+  if (to.startsWith('/admin')) void loadAdmin()
+  else if (to.startsWith('/ops')) void loadOperations()
+  else if (to.startsWith('/delivery')) void loadDelivery()
+  else if (to.startsWith('/orders')) void loadOrders()
+  else if (to.startsWith('/login') || to.startsWith('/register')) void loadAuthPage()
+  else if (to.startsWith('/profile')) void loadProfile()
+  else if (to.startsWith('/security')) void loadSecurity()
+}
 
 type NavItem = { to: string; label: string; icon: ReactNode; end?: boolean; tone?: 'employee' | 'delivery' }
 
@@ -269,6 +287,8 @@ function AppHeader() {
                   key={item.to}
                   end={item.end}
                   to={item.to}
+                  onMouseEnter={() => preloadRoute(item.to)}
+                  onFocus={() => preloadRoute(item.to)}
                   className={({ isActive }) => `${isActive ? 'top-nav-link active' : 'top-nav-link'}${item.tone ? ` staff-nav-${item.tone}` : ''}`}
                 >
                   {item.label}
@@ -387,6 +407,8 @@ function AppHeader() {
               key={item.to}
               end={item.end}
               to={item.to}
+              onMouseEnter={() => preloadRoute(item.to)}
+              onFocus={() => preloadRoute(item.to)}
               onClick={() => setMobileOpen(false)}
               className={({ isActive }) => `${isActive ? 'sidebar-link active' : 'sidebar-link'}${item.tone ? ` staff-nav-${item.tone}` : ''}`}
             >
@@ -435,10 +457,29 @@ export default function App() {
 
   useEffect(() => {
     liquidGlassManager.start()
+    const idle = (typeof window !== 'undefined' && 'requestIdleCallback' in window)
+      ? (window as Window & { requestIdleCallback: (cb: () => void) => number }).requestIdleCallback
+      : (cb: () => void) => setTimeout(cb, 1200)
+
+    idle(() => {
+      if (account?.role === 'ADMIN') {
+        void loadAdmin()
+        void loadOperations()
+        void loadDelivery()
+      } else if (account?.role === 'EMPLOYEE') {
+        void loadOperations()
+      } else if (account?.role === 'DELIVERY') {
+        void loadDelivery()
+      } else if (account) {
+        void loadOrders()
+        void loadProfile()
+      }
+    })
+
     return () => {
       liquidGlassManager.stop()
     }
-  }, [])
+  }, [account?.role])
 
   const phoneList = (restaurant?.phones && restaurant.phones.length > 0)
     ? restaurant.phones

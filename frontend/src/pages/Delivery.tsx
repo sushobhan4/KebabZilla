@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { importLibrary, setOptions } from "@googlemaps/js-api-loader";
 import {
+  ArrowLeft,
   ArrowRight,
   Check,
   ExternalLink,
@@ -470,6 +471,13 @@ export default function Delivery() {
   const [error, setError] = useState("");
   const [previewClusterId, setPreviewClusterId] = useState<string | null>(null);
   const [previewSingleOrder, setPreviewSingleOrder] = useState(false);
+  const [selectedStopOrder, setSelectedStopOrder] = useState<Order | null>(null);
+
+  useEffect(() => {
+    if (selectedStopOrder && !orders.some((o) => o.order_id === selectedStopOrder.order_id)) {
+      setSelectedStopOrder(null);
+    }
+  }, [orders, selectedStopOrder]);
 
   const refresh = useCallback(
     () =>
@@ -849,8 +857,8 @@ export default function Delivery() {
                 />
               </label>
 
-              <div className="delivery-order-list">
-                {visibleActiveOrders.map((order, index) => (
+              {(() => {
+                const renderOrderCard = (order: Order, index: number) => (
                   <article className="delivery-order-card" key={order.order_id}>
                     <div className="delivery-order-index">
                       <span>Stop {String(index + 1).padStart(2, "0")}</span>
@@ -994,8 +1002,141 @@ export default function Delivery() {
                       </div>
                     </div>
                   </article>
-                ))}
-              </div>
+                );
+
+                if (orders.length <= 1) {
+                  return (
+                    <div className="delivery-order-list">
+                      {visibleActiveOrders.map((order, index) => renderOrderCard(order, index))}
+                    </div>
+                  );
+                }
+
+                if (selectedStopOrder) {
+                  const stopIdx = orders.findIndex((o) => o.order_id === selectedStopOrder.order_id);
+                  return (
+                    <div className="delivery-selected-stop-view">
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        style={{ marginBottom: "1.25rem", display: "inline-flex", alignItems: "center", gap: "6px" }}
+                        onClick={() => setSelectedStopOrder(null)}
+                      >
+                        <ArrowLeft size={16} /> Back to all stops
+                      </button>
+                      <div className="delivery-order-list">
+                        {renderOrderCard(selectedStopOrder, stopIdx >= 0 ? stopIdx : 0)}
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div
+                    className="delivery-stops-grid"
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+                      gap: "14px",
+                      marginTop: "0.5rem",
+                      marginBottom: "1.5rem",
+                    }}
+                  >
+                    {visibleActiveOrders.map((order) => {
+                      const stopIndex = orders.findIndex((o) => o.order_id === order.order_id);
+                      const isCash = order.payment_method === "CASH";
+                      return (
+                        <button
+                          key={order.order_id}
+                          type="button"
+                          className="delivery-stop-square"
+                          onClick={() => setSelectedStopOrder(order)}
+                          style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            justifyContent: "space-between",
+                            alignItems: "flex-start",
+                            textAlign: "left",
+                            padding: "16px",
+                            background: "#ffffff",
+                            border: "2px solid #e5e7eb",
+                            borderRadius: "14px",
+                            cursor: "pointer",
+                            transition: "all 0.18s ease",
+                            boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+                            aspectRatio: "1 / 1",
+                            minHeight: "180px",
+                            position: "relative",
+                          }}
+                        >
+                          <div style={{ width: "100%" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                              <span
+                                style={{
+                                  display: "inline-block",
+                                  padding: "4px 10px",
+                                  background: "#f3f4f6",
+                                  borderRadius: "20px",
+                                  fontSize: "0.75rem",
+                                  fontWeight: 800,
+                                  color: "#374151",
+                                  letterSpacing: "0.5px",
+                                }}
+                              >
+                                Stop #{stopIndex + 1}
+                              </span>
+                              <span
+                                style={{
+                                  fontSize: "0.75rem",
+                                  fontWeight: 700,
+                                  color: isCash ? "#b45309" : "#15803d",
+                                  background: isCash ? "#fef3c7" : "#dcfce7",
+                                  padding: "2px 8px",
+                                  borderRadius: "6px",
+                                }}
+                              >
+                                {isCash ? "Cash" : "Paid"}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: "1.05rem", fontWeight: 800, color: "#111827", lineHeight: 1.3, marginBottom: "4px" }}>
+                              {order.customer_name}
+                            </div>
+                            <div style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--primary, #c34226)", letterSpacing: "0.5px" }}>
+                              #{order.order_id}
+                            </div>
+                            {order.address && (
+                              <div
+                                style={{
+                                  fontSize: "0.78rem",
+                                  color: "#6b7280",
+                                  marginTop: "6px",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  display: "-webkit-box",
+                                  WebkitLineClamp: 2,
+                                  WebkitBoxOrient: "vertical",
+                                  lineHeight: 1.3,
+                                }}
+                              >
+                                {order.address}
+                              </div>
+                            )}
+                          </div>
+
+                          <div style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: "8px", borderTop: "1px solid #f3f4f6", marginTop: "8px" }}>
+                            <span style={{ fontSize: "0.85rem", fontWeight: 800, color: "#1f2937" }}>
+                              {formatINR(order.total_paise)}
+                            </span>
+                            <span style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--primary, #c34226)", display: "flex", alignItems: "center", gap: "2px" }}>
+                              Open details →
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
             </section>
           ) : (
             /* NO ACTIVE DELIVERIES -> SHOW AVAILABLE ORDERS / CLUSTERS */

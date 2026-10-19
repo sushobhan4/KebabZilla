@@ -16,20 +16,23 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.dependencies import CurrentAccount, DbSession, PasswordChangeAccount, bearer_scheme
 from app.integrations import staff_account_notifier
-from app.models import Account, AccountAddress, PasswordResetCode, Role, TwoFactorChallenge, UserSession, utcnow
+from app.models import Account, AccountAddress, EmailVerificationCode, PasswordResetCode, Role, TwoFactorChallenge, UserSession, utcnow
 from app.schemas import (
     AccountCreate,
     AccountOut,
     AccountProfileUpdate,
+    EmailCheckOut,
     GoogleLoginRequest,
     LoginRequest,
     PasswordResetConfirm,
     PasswordResetRequest,
     PasswordUpdate,
     PromotionalConsentUpdate,
+    SendEmailOtpInput,
     TokenOut,
     TwoFactorVerifyRequest,
     UserSessionOut,
+    VerifyEmailOtpInput,
 )
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
@@ -101,6 +104,83 @@ def issue_session(account: Account, request: Request, response: Response, db: Se
         account=AccountOut.model_validate(account),
         csrf_token=csrf_token,
     )
+
+
+@router.get("/check-email", response_model=EmailCheckOut)
+def check_email(email: str, exclude_id: int | None = None, db: DbSession = None):
+    email_clean = email.lower().strip()
+    query = select(Account.id).where(Account.email == email_clean)
+    if exclude_id is not None:
+        query = query.where(Account.id != exclude_id)
+    exists = bool(db.scalar(query))
+    return EmailCheckOut(exists=exists, available=not exists)
+
+
+@router.post("/send-verification-otp")
+def send_verification_otp(data: SendEmailOtpInput, background_tasks: BackgroundTasks, db: DbSession):
+    email_clean = data.email.lower().strip()
+    if data.purpose in ("register", "staff_create"):
+        if db.scalar(select(Account.id).where(Account.email == email_clean)):
+            raise HTTPException(status_code=409, detail="An account with this email already exists")
+
+    recent = db.scalar(
+        select(EmailVerificationCode).where(
+            EmailVerificationCode.email == email_clean,
+            EmailVerificationCode.created_at >= utcnow() - timedelta(seconds=30),
+        )
+    )
+    if recent:
+        raise HTTPException(status_code=429, detail="Please wait before requesting another verification code")
+
+    db.query(EmailVerificationCode).filter(
+        (EmailVerificationCode.email == email_clean) | (EmailVerificationCode.expires_at <= utcnow())
+    ).delete(synchronize_session=False)
+
+    otp = f"{secrets.randbelow(1_000_000):06d}"
+    code_entry = EmailVerificationCode(
+        email=email_clean,
+        otp_hash=hash_password(otp),
+        purpose=data.purpose,
+        expires_at=utcnow() + timedelta(minutes=10),
+        attempts=0,
+    )
+    db.add(code_entry)
+    db.commit()
+
+    background_tasks.add_task(
+        staff_account_notifier.send_email_verification_otp,
+        email=email_clean,
+        otp=otp,
+        purpose=data.purpose,
+    )
+    return {"status": "OTP_SENT", "message": f"Verification code sent to {email_clean}"}
+
+
+@router.post("/verify-email-otp")
+def verify_email_otp(data: VerifyEmailOtpInput, db: DbSession):
+    email_clean = data.email.lower().strip()
+    record = db.scalar(
+        select(EmailVerificationCode)
+        .where(EmailVerificationCode.email == email_clean, EmailVerificationCode.used_at.is_(None))
+        .order_by(EmailVerificationCode.created_at.desc())
+    )
+    if not record or record.attempts >= 5:
+        raise HTTPException(status_code=400, detail="Verification code has expired or is invalid")
+
+    expires_at = record.expires_at
+    if expires_at and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=utcnow().tzinfo)
+    if not expires_at or expires_at <= utcnow():
+        raise HTTPException(status_code=400, detail="Verification code has expired")
+
+    record.attempts += 1
+    if not verify_password(data.otp.strip(), record.otp_hash):
+        db.commit()
+        raise HTTPException(status_code=400, detail="Incorrect verification code")
+
+    record.used_at = utcnow()
+    db.commit()
+    return {"verified": True, "email": email_clean}
 
 
 @router.post("/register", response_model=TokenOut, status_code=status.HTTP_201_CREATED)
@@ -494,6 +574,18 @@ def update_profile(data: AccountProfileUpdate, account: CurrentAccount, db: DbSe
         for item in addresses:
             addr_id = item.pop("id")
             incoming_ids.add(addr_id)
+            if item.get("distance_meters") is not None:
+                item["distance_meters"] = int(round(item["distance_meters"]))
+            elif item.get("latitude") is not None and item.get("longitude") is not None:
+                try:
+                    from app.services import restaurant_settings, _distance_km
+                    settings_obj = restaurant_settings(db)
+                    if settings_obj.latitude is not None and settings_obj.longitude is not None:
+                        factor = getattr(settings_obj, "haversine_routing_factor", 1.3627) or 1.3627
+                        dist_m = int(round(_distance_km(settings_obj.latitude, settings_obj.longitude, item["latitude"], item["longitude"]) * factor * 1000.0))
+                        item["distance_meters"] = dist_m
+                except Exception:
+                    pass
             if addr_id in existing_by_id:
                 existing = existing_by_id[addr_id]
                 for key, val in item.items():

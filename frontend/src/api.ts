@@ -11,8 +11,37 @@ try {
   memoryCsrfToken = localStorage.getItem('kz_csrf_token')
 } catch {}
 
+type CacheEntry = {
+  data: unknown
+  timestamp: number
+}
+
+const apiGetCache = new Map<string, CacheEntry>()
+const apiInFlight = new Map<string, Promise<unknown>>()
+
+const CACHE_FRESH_MS = 25_000
+
+export function clearApiCache(prefix?: string) {
+  if (!prefix) {
+    apiGetCache.clear()
+    apiInFlight.clear()
+  } else {
+    for (const key of apiGetCache.keys()) {
+      if (key.includes(prefix)) {
+        apiGetCache.delete(key)
+      }
+    }
+    for (const key of apiInFlight.keys()) {
+      if (key.includes(prefix)) {
+        apiInFlight.delete(key)
+      }
+    }
+  }
+}
+
 export function setAccessToken(token: string | null) {
   accessToken = token
+  clearApiCache()
   try {
     if (token) localStorage.setItem('kz_access_token', token)
     else localStorage.removeItem('kz_access_token')
@@ -35,47 +64,83 @@ function getCsrfToken(): string | null {
   return memoryCsrfToken
 }
 
-export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers)
-  if (init.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
-  if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
+export type ApiInit = RequestInit & {
+  skipCache?: boolean
+}
+
+export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
   const method = (init.method || 'GET').toUpperCase()
-  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
-    const csrf = getCsrfToken()
-    if (csrf) headers.set('X-CSRF-Token', csrf)
+  const isGet = method === 'GET'
+
+  if (!isGet) {
+    clearApiCache()
+  } else if (!init.skipCache) {
+    const cached = apiGetCache.get(path)
+    if (cached && (Date.now() - cached.timestamp < CACHE_FRESH_MS)) {
+      return cached.data as T
+    }
+    const inFlight = apiInFlight.get(path)
+    if (inFlight) {
+      return inFlight as Promise<T>
+    }
   }
-  let response: Response
-  try {
-    response = await fetch(`${API_BASE}${path}`, {
-      ...init,
-      headers,
-      credentials: 'include',
-    })
-  } catch {
-    throw new Error('Our servers are currently down. Please check back in a few minutes.')
-  }
-  const responseCsrf = response.headers.get('x-csrf-token')
-  if (responseCsrf) {
-    setCsrfToken(responseCsrf)
-  }
-  if (!response.ok) {
-    if (response.status >= 500) {
+
+  const executeRequest = async (): Promise<T> => {
+    const headers = new Headers(init.headers)
+    if (init.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
+    if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+      const csrf = getCsrfToken()
+      if (csrf) headers.set('X-CSRF-Token', csrf)
+    }
+    let response: Response
+    try {
+      response = await fetch(`${API_BASE}${path}`, {
+        ...init,
+        headers,
+        credentials: 'include',
+      })
+    } catch {
       throw new Error('Our servers are currently down. Please check back in a few minutes.')
     }
-    const problem = await response.json().catch(() => null) as { detail?: unknown; message?: unknown } | null
-    const detail = problem?.detail
-    const validationMessages = Array.isArray(detail)
-      ? detail.map((item) => item && typeof item === 'object' && 'msg' in item && typeof item.msg === 'string' ? item.msg : '').filter(Boolean).join('; ')
-      : ''
-    const message = typeof detail === 'string'
-      ? detail
-      : detail && typeof detail === 'object' && 'message' in detail && typeof detail.message === 'string'
-        ? detail.message
-        : validationMessages || (typeof problem?.message === 'string' ? problem.message : '')
-    throw new Error(message || `The request failed (${response.status}). Please try again.`)
+    const responseCsrf = response.headers.get('x-csrf-token')
+    if (responseCsrf) {
+      setCsrfToken(responseCsrf)
+    }
+    if (!response.ok) {
+      if (response.status >= 500) {
+        throw new Error('Our servers are currently down. Please check back in a few minutes.')
+      }
+      const problem = await response.json().catch(() => null) as { detail?: unknown; message?: unknown } | null
+      const detail = problem?.detail
+      const validationMessages = Array.isArray(detail)
+        ? detail.map((item) => item && typeof item === 'object' && 'msg' in item && typeof item.msg === 'string' ? item.msg : '').filter(Boolean).join('; ')
+        : ''
+      const message = typeof detail === 'string'
+        ? detail
+        : detail && typeof detail === 'object' && 'message' in detail && typeof detail.message === 'string'
+          ? detail.message
+          : validationMessages || (typeof problem?.message === 'string' ? problem.message : '')
+      throw new Error(message || `The request failed (${response.status}). Please try again.`)
+    }
+    if (response.status === 204) return undefined as T
+    const result = await response.json() as T
+    if (isGet && !init.skipCache) {
+      apiGetCache.set(path, { data: result, timestamp: Date.now() })
+    }
+    return result
   }
-  if (response.status === 204) return undefined as T
-  return response.json() as Promise<T>
+
+  if (isGet && !init.skipCache) {
+    const p = executeRequest()
+    apiInFlight.set(path, p)
+    p.finally(() => {
+      apiInFlight.delete(path)
+    })
+    return p
+  }
+
+  return executeRequest()
 }
 
 export type Role = 'ADMIN' | 'EMPLOYEE' | 'DELIVERY' | 'USER'
@@ -114,6 +179,7 @@ export type UserSession = {
 export type SavedAddress = {
   id: string; label: string; house_number?: string; area?: string; road?: string
   landmark?: string; city?: string; pincode?: string; postal_code?: string; latitude?: number | null; longitude?: number | null; is_default?: boolean
+  distance_meters?: number | null
 }
 export type MenuItemVariation = {
   name: string

@@ -355,6 +355,40 @@ class StaffAccountNotifier:
             return False
         return True
 
+    def send_email_verification_otp(self, *, email: str, otp: str, purpose: str = "register") -> bool:
+        if not settings.smtp_password:
+            print(f"[EMAIL VERIFICATION OTP] Verification code for {email} ({purpose}): {otp}")
+            return False
+        message = EmailMessage()
+        message["Subject"] = "Your KebabZilla Email Verification Code"
+        message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
+        message["To"] = email
+
+        plain_text = (
+            f"Hi,\n\n"
+            f"Your KebabZilla email verification code is: {otp}\n\n"
+            "This code expires in 10 minutes and is required to verify your email address. "
+            "Do not share this code with anyone.\n\n"
+            "Warm regards,\nThe KebabZilla Team"
+        )
+        html_content = render_otp_email(
+            otp=otp,
+            name="there",
+            purpose="email_verification",
+            expiry_minutes=10,
+            email=email,
+        )
+        message.set_content(plain_text)
+        message.add_alternative(html_content, subtype="html")
+        try:
+            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as client:
+                client.starttls()
+                client.login(settings.smtp_username, settings.smtp_password)
+                client.send_message(message)
+        except (OSError, smtplib.SMTPException):
+            return False
+        return True
+
 
 razorpay = RazorpayGateway()
 customer_notifier = CustomerNotifier()

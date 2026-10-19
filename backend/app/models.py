@@ -127,6 +127,7 @@ class AccountAddress(Base):
     latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    distance_meters: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     __table_args__ = (UniqueConstraint("account_id", "address_id"),)
 
@@ -143,6 +144,19 @@ class PasswordResetCode(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
     account: Mapped[Account] = relationship()
+
+
+class EmailVerificationCode(Base):
+    __tablename__ = "email_verification_codes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), index=True)
+    otp_hash: Mapped[str] = mapped_column(String(255))
+    purpose: Mapped[str] = mapped_column(String(32), default="register")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 
 class TwoFactorChallenge(Base):
@@ -382,10 +396,18 @@ class Order(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
-    customer: Mapped[Account | None] = relationship(foreign_keys=[customer_id])
-    delivery: Mapped[Account | None] = relationship(foreign_keys=[assigned_delivery_id])
+    customer: Mapped[Account | None] = relationship(foreign_keys=[customer_id], lazy="selectin")
+    delivery: Mapped[Account | None] = relationship(foreign_keys=[assigned_delivery_id], lazy="selectin")
     items: Mapped[list["OrderItem"]] = relationship(cascade="all, delete-orphan", lazy="selectin")
-    payment: Mapped["Payment | None"] = relationship(back_populates="order", uselist=False, cascade="all, delete-orphan")
+    payment: Mapped["Payment | None"] = relationship(back_populates="order", uselist=False, cascade="all, delete-orphan", lazy="selectin")
+
+    @property
+    def payment_method(self) -> "PaymentMethod | None":
+        return self.payment.method if self.payment else None
+
+    @property
+    def payment_status(self) -> "PaymentStatus | None":
+        return self.payment.status if self.payment else None
 
 
 class OrderItem(Base):
@@ -407,6 +429,11 @@ class OrderItem(Base):
     @property
     def custom_menu_item(self) -> MenuItem | None:
         return self.menu_item
+
+    @property
+    def line_total_paise(self) -> int:
+        unit = self.unit_price_paise or (self.menu_item.price_paise if self.menu_item else 0)
+        return unit * (self.quantity or 1)
 
 
 class CartItem(Base):

@@ -5,6 +5,7 @@ import { importLibrary, setOptions } from '@googlemaps/js-api-loader'
 import { api, formatSavedAddress, type Account, type SavedAddress } from '../api'
 import { useAuth, useRestaurant } from '../state'
 import { Button, CenterDialog, Loading, PageTitle, PhoneInput, formatPhoneWithPrefix, isValidIndianMobile } from '../components'
+import { EmailVerificationField } from '../components/EmailVerificationField'
 import { validatePasswordComplexity } from './AuthPage'
 
 const defaults = (): SavedAddress[] => [
@@ -27,7 +28,7 @@ function loadGoogleMaps(apiKey: string) {
   return googleLibrariesPromise
 }
 
-function AddressMap({ address, onSave, onClose }: { address: SavedAddress; onSave: (lat: number, lng: number, parts: Partial<SavedAddress>) => void; onClose: () => void }) {
+function AddressMap({ address, onSave, onClose }: { address: SavedAddress; onSave: (lat: number, lng: number, parts: Partial<SavedAddress>, distanceMeters: number | null) => void; onClose: () => void }) {
   const { restaurant } = useRestaurant()
   const mapElement = useRef<HTMLDivElement>(null)
   const choosePoint = useRef<(location: google.maps.LatLngLiteral) => void>(() => undefined)
@@ -149,13 +150,14 @@ function AddressMap({ address, onSave, onClose }: { address: SavedAddress; onSav
         <span>Distance: {distanceInfo.distKm} km (Within our {distanceInfo.maxRadiusKm} km delivery limit)</span>
       </div>
     )}
-    <div className="address-map-actions"><Button type="button" variant="secondary" onClick={onClose}>Cancel</Button><Button type="button" disabled={!selected || looking || mapLoading || !mapReady || !distanceInfo.isWithinRadius} onClick={() => { onSave(point.lat, point.lng, parts); onClose() }}><Check size={15} /> Use this pin</Button></div>
+    <div className="address-map-actions"><Button type="button" variant="secondary" onClick={onClose}>Cancel</Button><Button type="button" disabled={!selected || looking || mapLoading || !mapReady || !distanceInfo.isWithinRadius} onClick={() => { const meters = distanceInfo.distKm != null ? Math.round(distanceInfo.distKm * 1000) : null; onSave(point.lat, point.lng, parts, meters); onClose() }}><Check size={15} /> Use this pin</Button></div>
   </section></div>
 }
 
 export default function Profile() {
   const { account, loading, updateAccount } = useAuth()
   const [form, setForm] = useState({ name: account?.name || '', email: account?.email || '', phone: formatPhoneWithPrefix(account?.phone) })
+  const [emailVerified, setEmailVerified] = useState(true)
   const [addresses, setAddresses] = useState<SavedAddress[]>(account?.addresses?.length ? account.addresses : defaults())
   const [activeAddress, setActiveAddress] = useState('home')
   const [mapAddress, setMapAddress] = useState<string | null>(null)
@@ -174,6 +176,7 @@ export default function Profile() {
     if (loading || !account) return
     const formattedPhone = formatPhoneWithPrefix(account.phone)
     setForm({ name: account.name, email: account.email, phone: formattedPhone })
+    setEmailVerified(true)
     const saved = account.addresses?.length ? account.addresses : defaults()
     setAddresses(saved.some((item) => item.is_default) ? saved : saved.map((item, index) => ({ ...item, is_default: index === 0 })))
     savedProfile.current = JSON.stringify({ form: { name: account.name, email: account.email, phone: formattedPhone }, addresses: saved.some((item) => item.is_default) ? saved : saved.map((item, index) => ({ ...item, is_default: index === 0 })) })
@@ -182,11 +185,16 @@ export default function Profile() {
 
   const selectedAddress = useMemo(() => addresses.find((item) => item.id === activeAddress) || addresses[0], [addresses, activeAddress])
   const profileChanged = JSON.stringify({ form, addresses }) !== savedProfile.current
+  const emailNeedsVerification = form.email.trim().toLowerCase() !== (account?.email || '').toLowerCase() && !emailVerified
 
   async function saveProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setError(''); setNotice('')
     if (!isValidIndianMobile(form.phone)) {
       setError('Please enter a valid 10-digit mobile number.')
+      return
+    }
+    if (emailNeedsVerification) {
+      setError('Please verify your new email address before saving.')
       return
     }
     const savedAddressId = activeAddress
@@ -252,7 +260,19 @@ export default function Profile() {
       <div className="profile-card-heading"><h2>Personal details</h2></div>
       <div className="profile-form-grid">
         <label className="field-label"><span>Name <sup className="field-required">*</sup></span><input required minLength={2} maxLength={120} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
-        <label className="field-label"><span>Email address <sup className="field-required">*</sup></span><input required type="email" maxLength={255} value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} /></label>
+        <div className="field-label" style={{ display: 'flex', flexDirection: 'column' }}>
+          <span style={{ marginBottom: '6px' }}>Email address <sup className="field-required">*</sup></span>
+          <EmailVerificationField
+            email={form.email}
+            onChangeEmail={(val) => setForm((prev) => ({ ...prev, email: val }))}
+            isVerified={emailVerified}
+            onVerifiedChange={setEmailVerified}
+            purpose="UPDATE_PROFILE"
+            excludeId={account?.id}
+            initialVerifiedEmail={account?.email}
+            disabled={busy}
+          />
+        </div>
         <label className="field-label"><span>Mobile number <sup className="field-required">*</sup></span><PhoneInput required value={form.phone} onChange={(val) => setForm({ ...form, phone: val })} /></label>
       </div>
       <div className="profile-card-heading profile-address-heading"><span><h2>Saved addresses</h2><small>Select a tab to edit that address. Home is included by default.</small></span></div>
@@ -314,7 +334,17 @@ export default function Profile() {
         </div>
         </> : <div className="address-pin-first"><span><MapPin size={18} /></span><div><strong>Set the exact location first</strong><small>House or flat, road, area, city, PIN code, and landmark fields appear after you save a map pin.</small></div><Button type="button" onClick={() => setMapAddress(selectedAddress.id)}><MapPin size={15} /> Set location on map</Button></div>}
       </article>}
-      {profileChanged && <div className="profile-save-row"><Button type="submit" disabled={busy}><Save size={15} /> {busy ? 'Saving…' : 'Save profile & address'}</Button></div>}
+      {profileChanged && (
+        <div className="profile-save-row">
+          <Button
+            type="submit"
+            className="profile-save-button"
+            disabled={busy || emailNeedsVerification}
+          >
+            <Save size={18} /> {busy ? 'Saving…' : 'Save profile & address'}
+          </Button>
+        </div>
+      )}
     </form>
     <form ref={passwordFormRef} className="profile-card password-card" onSubmit={(event) => void changePassword(event)}>
       <div className="profile-card-heading"><h2>Change password</h2><span>At least 8 characters (a-z, A-Z, 0-9, special).</span></div>
@@ -352,7 +382,7 @@ export default function Profile() {
           <Button
             type="button"
             className="profile-save-button"
-            disabled={busy}
+            disabled={busy || emailNeedsVerification}
             onClick={() => profileFormRef.current?.requestSubmit()}
           >
             <Save size={18} /> {busy ? 'Saving…' : 'Save profile & address'}
@@ -360,7 +390,7 @@ export default function Profile() {
         )}
       </div>
     </div>
-    {mapAddress && addresses.find((item) => item.id === mapAddress) && <AddressMap address={addresses.find((item) => item.id === mapAddress)!} onClose={() => setMapAddress(null)} onSave={(latitude, longitude, parts) => { editAddress(mapAddress, { ...parts, latitude, longitude }); setEditingAddress(mapAddress) }} />}
+    {mapAddress && addresses.find((item) => item.id === mapAddress) && <AddressMap address={addresses.find((item) => item.id === mapAddress)!} onClose={() => setMapAddress(null)} onSave={(latitude, longitude, parts, distanceMeters) => { editAddress(mapAddress, { ...parts, latitude, longitude, distance_meters: distanceMeters }); setEditingAddress(mapAddress) }} />}
     {addressToDelete && (
       <CenterDialog
         isOpen={Boolean(addressToDelete)}

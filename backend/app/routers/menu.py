@@ -268,6 +268,8 @@ def update_menu_item(item_id: int, data: MenuItemInput, db: DbSession):
     values["image_urls"] = new_urls
     for key, value in values.items():
         setattr(item, key, value)
+    if data.is_available:
+        item.paused_by_id = None
     item.categories = resolved_cats
     db.commit()
     db.refresh(item)

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ShieldCheck, Cookie, Settings, Check, X } from 'lucide-react';
+import { ShieldCheck, Cookie, Settings, Check, X, Save } from 'lucide-react';
 import { getCookieConsent, saveCookieConsent, type CookieConsentState } from '../cookies';
 import { Button } from '../components';
 
@@ -150,7 +150,7 @@ export function CookiePreferencesModal({
           </div>
         </div>
 
-        <div className="policy-modal-footer" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
+        <div className="policy-modal-footer is-transparent" style={{ justifyContent: 'space-between', flexWrap: 'wrap', background: 'transparent', borderTop: 'none', boxShadow: 'none' }}>
           <div style={{ display: 'flex', gap: '8px' }}>
             <Button type="button" variant="ghost" onClick={handleRejectAll} style={{ fontSize: '0.85rem' }}>
               Reject Optional
@@ -159,12 +159,12 @@ export function CookiePreferencesModal({
               Accept All
             </Button>
           </div>
-          <div style={{ display: 'flex', gap: '10px' }}>
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
             <Button type="button" variant="secondary" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="button" onClick={handleSave}>
-              Save My Preferences
+            <Button type="button" className="kz-pill-save-button" onClick={handleSave}>
+              <Save size={16} /> Save My Preferences
             </Button>
           </div>
         </div>

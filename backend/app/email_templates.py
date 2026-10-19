@@ -336,22 +336,14 @@ def render_offer_email(
     promo_box_html = ""
     if promo_code and promo_code.strip():
         clean_code = html.escape(promo_code.strip().upper())
-        promo_copy_url = f"https://kebabzilla.in/#menu?promo={clean_code}"
         promo_box_html = f"""
         <div style="background-color: rgba(20, 24, 32, 0.75); border: 2px dashed {theme}; border-radius: 12px; padding: 20px 24px; margin: 24px auto; max-width: 400px; text-align: center;">
           <div style="font-size: 11px; font-weight: 800; color: #9ca3af; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 6px;">
             USE PROMO CODE AT CHECKOUT
           </div>
-          <div style="font-family: 'Courier New', Consolas, monospace; font-size: 30px; font-weight: 900; letter-spacing: 4px; color: #fbbf24; margin-bottom: 14px; user-select: all; -webkit-user-select: all;">
+          <div style="font-family: 'Courier New', Consolas, monospace; font-size: 30px; font-weight: 900; letter-spacing: 4px; color: #fbbf24; margin-bottom: 4px; user-select: all; -webkit-user-select: all;">
             {clean_code}
           </div>
-          <a
-            href="{promo_copy_url}"
-            target="_blank"
-            style="display: inline-block; background-color: {theme}; color: #ffffff; text-decoration: none; padding: 9px 24px; font-size: 13px; font-weight: 700; border-radius: 6px;"
-          >
-            📋 Apply &amp; Order
-          </a>
         </div>
         """
 

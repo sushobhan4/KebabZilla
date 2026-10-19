@@ -17,6 +17,7 @@ import {
   BarChart3,
   Check,
   CircleDollarSign,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -44,7 +45,6 @@ import {
   ZoomOut,
   Crop,
   Star,
-  Copy,
   Monitor,
   Smartphone,
   Sparkles,
@@ -96,6 +96,7 @@ import {
   formatPhoneWithPrefix,
   isValidIndianMobile,
 } from "../components";
+import { EmailVerificationField } from "../components/EmailVerificationField";
 
 type Report = {
   period: string;
@@ -106,6 +107,20 @@ type Report = {
   statuses: Record<string, number>;
   series: { label: string; revenue_paise: number; orders: number }[];
   top_items: { name: string; quantity: number }[];
+  order_types?: {
+    dine_in: { orders: number; revenue_paise: number };
+    delivery: { orders: number; revenue_paise: number };
+    pickup: { orders: number; revenue_paise: number };
+  };
+  payment_methods?: {
+    cash: { orders: number; revenue_paise: number };
+    online: { orders: number; revenue_paise: number };
+  };
+  peak_hour?: string | null;
+  categories?: { name: string; quantity: number; revenue_paise: number }[];
+  repeat_customers?: number;
+  new_customers?: number;
+  avg_fulfillment_minutes?: number | null;
 };
 type PageData<T> = {
   items: T[];
@@ -118,7 +133,6 @@ type PageData<T> = {
 };
 const roles: Role[] = ["ADMIN", "EMPLOYEE", "DELIVERY", "USER"];
 const provisionableRoles: Role[] = ["ADMIN", "EMPLOYEE", "DELIVERY"];
-const adminPageSize = 25;
 const adminOrdersPageSize = 10;
 const amtalaMapCenter: google.maps.LatLngLiteral = { lat: 22.365278, lng: 88.269444 };
 let restaurantMapsPromise: Promise<google.maps.MapsLibrary> | null = null;
@@ -387,9 +401,9 @@ function Overview() {
               <Flame size={16} />
             </span>
           </div>
-          {report?.top_items.length ? (
+          {(report?.top_items || []).length ? (
             <div className="top-items-list">
-              {report.top_items.map((item, index) => (
+              {(report?.top_items || []).map((item, index) => (
                 <div className="top-item-row" key={item.name}>
                   <span className={`top-item-n top-item-n-${index}`}>
                     {String(index + 1).padStart(2, "0")}
@@ -530,10 +544,11 @@ function AdminOrders() {
   const [filter, setFilter] = usePreference<string>("admin_orders_filter", "ALL");
   const [period, setPeriod] = usePreference<string>("admin_orders_period", "all");
   const [q, setQ] = useState("");
-  const refresh = useCallback(() => {
+  const refresh = useCallback((skipCache = false) => {
     const statusQuery = filter === "ALL" ? "" : `&status_filter=${filter}`;
     return api<PageData<Order>>(
       `/admin/orders?limit=${adminOrdersPageSize}&offset=${page * adminOrdersPageSize}${statusQuery}&period=${period}&q=${encodeURIComponent(q)}`,
+      { skipCache }
     )
       .then((result) => {
         setPageData(result);
@@ -653,7 +668,7 @@ function AdminOrders() {
             variant="secondary"
             onClick={() => {
               setLoading(true);
-              void refresh();
+              void refresh(true);
             }}
           >
             <RefreshCw size={15} /> <span>Refresh</span>
@@ -1122,6 +1137,8 @@ function Team() {
   const [people, setPeople] = useState<Account[]>([]);
   const [q, setQ] = useState("");
   const [role, setRole] = usePreference<string>("admin_team_role", "ALL");
+  const [sort, setSort] = usePreference<string>("admin_team_sort", "newest");
+  const [emailVerified, setEmailVerified] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
@@ -1131,6 +1148,7 @@ function Team() {
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const [roleCounts, setRoleCounts] = useState<Record<string, number>>({});
+  const teamPageSize = 15;
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -1142,7 +1160,7 @@ function Team() {
   const refresh = useCallback(
     () =>
       api<PageData<Account>>(
-        `/admin/accounts?limit=${adminPageSize}&offset=${page * adminPageSize}&q=${encodeURIComponent(q)}${role !== "ALL" ? `&role=${role}` : ""}&exclude_users=${role === "ALL" && !q.trim()}`,
+        `/admin/accounts?limit=${teamPageSize}&offset=${page * teamPageSize}&q=${encodeURIComponent(q)}${role !== "ALL" ? `&role=${role}` : ""}&sort=${sort}&exclude_users=${role === "ALL" && !q.trim()}`,
       )
         .then((result) => {
           setPeople(result.items);
@@ -1155,7 +1173,7 @@ function Team() {
           ),
         )
         .finally(() => setLoading(false)),
-    [page, q, role],
+    [page, q, role, sort],
   );
   useEffect(() => {
     const timer = window.setTimeout(() => void refresh(), q ? 220 : 0);
@@ -1195,6 +1213,10 @@ function Team() {
       setError("Mobile number must be a valid 10-digit number.");
       return;
     }
+    if (!emailVerified) {
+      setError("Please verify the email address before creating the account.");
+      return;
+    }
     setBusyId(-1);
     try {
       const created = await api<ProvisionedAccount>("/admin/accounts", {
@@ -1202,6 +1224,7 @@ function Team() {
         body: JSON.stringify(form),
       });
       setCreating(false);
+      setEmailVerified(false);
       setProvisioned(created);
       setForm({
         name: "",
@@ -1212,7 +1235,7 @@ function Team() {
       setQ("");
       setRole("ALL");
       setPage(0);
-      setPeople((old) => [created, ...old].slice(0, adminPageSize));
+      setPeople((old) => [created, ...old].slice(0, teamPageSize));
       setTotal((old) => old + 1);
       setRoleCounts((old) => ({
         ...old,
@@ -1246,7 +1269,7 @@ function Team() {
         title="People & permissions"
         description="Create and manage restaurant admins, employees, and delivery partners. Customer accounts are created through customer sign-up."
         action={
-          <Button className="team-create-btn" onClick={() => setCreating(true)}>
+          <Button className="team-create-btn" onClick={() => { setCreating(true); setEmailVerified(false); }}>
             <Plus size={16} /> <span>Create account</span>
           </Button>
         }
@@ -1317,7 +1340,25 @@ function Team() {
               placeholder="Search name, email or phone…"
             />
           </label>
-          <RoundedSelect className="role-filter-select activity-sort-select" icon={<Users size={15} />} ariaLabel="Sort people by role" value={role} onChange={(next) => { setRole(next); setPage(0); setLoading(true); }} options={[{ value: "ALL", label: "All roles" }, ...roles.map((r) => ({ value: r, label: formatStatus(r) }))]} />
+          <RoundedSelect className="role-filter-select activity-sort-select" icon={<Users size={15} />} ariaLabel="Filter people by role" value={role} onChange={(next) => { setRole(next); setPage(0); setLoading(true); }} options={[{ value: "ALL", label: "All roles" }, ...roles.map((r) => ({ value: r, label: formatStatus(r) }))]} />
+          <RoundedSelect
+            className="team-sort-select activity-sort-select"
+            icon={<ArrowUpDown size={15} />}
+            ariaLabel="Sort people"
+            value={sort}
+            onChange={(next) => {
+              setSort(next);
+              setPage(0);
+              setLoading(true);
+            }}
+            options={[
+              { value: "newest", label: "Newest first" },
+              { value: "oldest", label: "Oldest first" },
+              { value: "name_asc", label: "Name (A–Z)" },
+              { value: "name_desc", label: "Name (Z–A)" },
+              { value: "role", label: "Role" },
+            ]}
+          />
         </div>
         {loading ? (
           <Loading label="Finding people…" />
@@ -1438,11 +1479,12 @@ function Team() {
           />
         )}
         <PageControls
-          limit={adminPageSize}
-          offset={page * adminPageSize}
+          limit={teamPageSize}
+          offset={page * teamPageSize}
           total={total}
+          label="people"
           onChange={(next) => {
-            setPage(Math.floor(next / adminPageSize));
+            setPage(Math.floor(next / teamPageSize));
             setLoading(true);
           }}
         />
@@ -1485,18 +1527,17 @@ function Team() {
                   placeholder="e.g. Asha Kumar"
                 />
               </label>
-              <label className="field-label">
-                Email address
-                <input
-                  required
-                  type="email"
-                  value={form.email}
-                  onChange={(event) =>
-                    setForm({ ...form, email: event.target.value })
-                  }
-                  placeholder="asha@example.com"
+              <div className="field-label" style={{ display: "flex", flexDirection: "column" }}>
+                <span style={{ marginBottom: "6px" }}>Email address <sup className="field-required">*</sup></span>
+                <EmailVerificationField
+                  email={form.email}
+                  onChangeEmail={(val) => setForm((prev) => ({ ...prev, email: val }))}
+                  isVerified={emailVerified}
+                  onVerifiedChange={setEmailVerified}
+                  purpose="STAFF_PROVISION"
+                  disabled={busyId === -1}
                 />
-              </label>
+              </div>
               <label className="field-label">
                 Mobile number
                 <PhoneInput
@@ -1518,7 +1559,7 @@ function Team() {
                 <Button variant="secondary" onClick={() => setCreating(false)}>
                   Cancel
                 </Button>
-                <Button type="submit" disabled={busyId === -1}>
+                <Button type="submit" disabled={busyId === -1 || !emailVerified}>
                   {busyId === -1 ? "Creating…" : "Create account"}{" "}
                   <ArrowRight size={15} />
                 </Button>
@@ -3166,6 +3207,7 @@ function MenuManagement() {
         </div>
         <form
           className="category-add-form"
+          style={{ marginBottom: "1.25rem" }}
           onSubmit={(event) => void addCategory(event)}
         >
           <input
@@ -3784,9 +3826,18 @@ function MenuManagement() {
                 >
                   Cancel
                 </Button>
-                <Button type="submit" disabled={busy}>
-                  {busy ? "Saving…" : editing ? "Save changes" : "Add to menu"}{" "}
-                  <ArrowRight size={15} />
+                <Button
+                  type="submit"
+                  disabled={busy}
+                  className={editing ? "kz-pill-save-button" : ""}
+                >
+                  {busy ? (
+                    editing ? <><Save size={16} /> Saving…</> : "Saving…"
+                  ) : editing ? (
+                    <><Save size={16} /> Save changes</>
+                  ) : (
+                    <>Add to menu <ArrowRight size={15} /></>
+                  )}
                 </Button>
               </div>
             </form>
@@ -4194,13 +4245,18 @@ function MenuManagement() {
                 >
                   Cancel
                 </Button>
-                <Button type="submit" disabled={busy}>
-                  {busy
-                    ? "Saving…"
-                    : editingCustom
-                      ? "Save changes"
-                      : "Create custom item"}{" "}
-                  <ArrowRight size={15} />
+                <Button
+                  type="submit"
+                  disabled={busy}
+                  className={editingCustom ? "kz-pill-save-button" : ""}
+                >
+                  {busy ? (
+                    editingCustom ? <><Save size={16} /> Saving…</> : "Saving…"
+                  ) : editingCustom ? (
+                    <><Save size={16} /> Save changes</>
+                  ) : (
+                    <>Create custom item <ArrowRight size={15} /></>
+                  )}
                 </Button>
               </div>
             </form>
@@ -4416,15 +4472,15 @@ function Reports() {
             <div className="report-stat-grid">
               <div className="report-stat-card report-stat-primary">
                 <span>PAID REVENUE</span>
-                <strong>{formatINR(report.revenue_paise)}</strong>
+                <strong>{formatINR(report.revenue_paise || 0)}</strong>
                 <small>For this {period}</small>
                 <span className="report-decoration">↗</span>
               </div>
               <div className="report-stat-card">
                 <span>PAID ORDERS</span>
-                <strong>{report.paid_orders}</strong>
+                <strong>{report.paid_orders ?? 0}</strong>
                 <small>
-                  {report.total_orders} placed in this {period}
+                  {report.total_orders ?? 0} placed in this {period}
                 </small>
                 <span className="report-stat-icon">
                   <ShoppingBag size={17} />
@@ -4432,7 +4488,7 @@ function Reports() {
               </div>
               <div className="report-stat-card">
                 <span>AVERAGE ORDER</span>
-                <strong>{formatINR(report.average_order_paise)}</strong>
+                <strong>{formatINR(report.average_order_paise || 0)}</strong>
                 <small>Paid orders, all payment types</small>
                 <span className="report-stat-icon">
                   <CreditCard size={17} />
@@ -4462,7 +4518,7 @@ function Reports() {
                   </div>
                   <span className="report-total">
                     <small>Total</small>
-                    <strong>{formatINR(report.revenue_paise)}</strong>
+                    <strong>{formatINR(report.revenue_paise || 0)}</strong>
                   </span>
                 </div>
                 <div className="report-chart">
@@ -4472,19 +4528,19 @@ function Reports() {
                     <span>₹0</span>
                   </div>
                   <div className="chart-bars">
-                    {report.series.map((point, index) => (
+                    {(report.series || []).map((point, index) => (
                       <div
                         className="chart-bar-wrap"
                         key={`${index}-${point.label}`}
                       >
                         <span className="chart-tip">
-                          {formatINR(point.revenue_paise)}
-                          <small>{point.orders} orders</small>
+                          {formatINR(point.revenue_paise || 0)}
+                          <small>{point.orders || 0} orders</small>
                         </span>
                         <div
                           className={`chart-bar ${point.revenue_paise ? "bar-highlight" : ""}`}
                           style={{
-                            height: `${Math.max(point.revenue_paise ? 7 : 2, (point.revenue_paise / maximum) * 100)}%`,
+                            height: `${Math.max(point.revenue_paise ? 7 : 2, ((point.revenue_paise || 0) / maximum) * 100)}%`,
                           }}
                         />
                         <span className="chart-label">{point.label}</span>
@@ -4497,7 +4553,7 @@ function Reports() {
                     <i className="legend-dot" /> Paid revenue
                   </span>
                   <span>
-                    Orders placed {formatStatus(period)}: {report.total_orders}
+                    Orders placed {formatStatus(period)}: {report.total_orders ?? 0}
                   </span>
                 </div>
               </section>
@@ -4510,9 +4566,9 @@ function Reports() {
                     </div>
                     <Activity size={16} />
                   </div>
-                  {Object.entries(report.statuses).filter(([, count]) => count)
+                  {Object.entries(report.statuses || {}).filter(([, count]) => count)
                     .length ? (
-                    Object.entries(report.statuses)
+                    Object.entries(report.statuses || {})
                       .filter(([, count]) => count)
                       .sort((a, b) => b[1] - a[1])
                       .map(([status, count]) => (
@@ -4533,8 +4589,8 @@ function Reports() {
                     </div>
                     <Flame size={16} />
                   </div>
-                  {report.top_items.length ? (
-                    report.top_items.map((item, index) => (
+                  {(report.top_items || []).length ? (
+                    (report.top_items || []).map((item, index) => (
                       <div className="best-seller-row" key={item.name}>
                         <span>{index + 1}</span>
                         <strong>{item.name}</strong>
@@ -4546,6 +4602,115 @@ function Reports() {
                   )}
                 </section>
               </div>
+            </div>
+            <div className="report-analytics-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "1.5rem", marginTop: "1.5rem" }}>
+              <section className="admin-panel">
+                <div className="panel-heading">
+                  <div>
+                    <span className="eyebrow">FULFILLMENT CHANNELS</span>
+                    <h2>Order types</h2>
+                  </div>
+                  <ShoppingBag size={16} />
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "10px" }}>
+                  <div className="status-break-row">
+                    <span>Delivery</span>
+                    <div>
+                      <strong>{report.order_types?.delivery?.orders ?? 0} orders</strong>
+                      <small style={{ marginLeft: "8px", color: "var(--muted)" }}>{formatINR(report.order_types?.delivery?.revenue_paise ?? 0)}</small>
+                    </div>
+                  </div>
+                  <div className="status-break-row">
+                    <span>Dine-in / Walk-in</span>
+                    <div>
+                      <strong>{report.order_types?.dine_in?.orders ?? 0} orders</strong>
+                      <small style={{ marginLeft: "8px", color: "var(--muted)" }}>{formatINR(report.order_types?.dine_in?.revenue_paise ?? 0)}</small>
+                    </div>
+                  </div>
+                  <div className="status-break-row">
+                    <span>Pickup</span>
+                    <div>
+                      <strong>{report.order_types?.pickup?.orders ?? 0} orders</strong>
+                      <small style={{ marginLeft: "8px", color: "var(--muted)" }}>{formatINR(report.order_types?.pickup?.revenue_paise ?? 0)}</small>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section className="admin-panel">
+                <div className="panel-heading">
+                  <div>
+                    <span className="eyebrow">COLLECTION METHODS</span>
+                    <h2>Payment methods</h2>
+                  </div>
+                  <CreditCard size={16} />
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "10px" }}>
+                  <div className="status-break-row">
+                    <span>Online (Razorpay)</span>
+                    <div>
+                      <strong>{report.payment_methods?.online?.orders ?? 0} orders</strong>
+                      <small style={{ marginLeft: "8px", color: "var(--muted)" }}>{formatINR(report.payment_methods?.online?.revenue_paise ?? 0)}</small>
+                    </div>
+                  </div>
+                  <div className="status-break-row">
+                    <span>Cash on Delivery / Counter</span>
+                    <div>
+                      <strong>{report.payment_methods?.cash?.orders ?? 0} orders</strong>
+                      <small style={{ marginLeft: "8px", color: "var(--muted)" }}>{formatINR(report.payment_methods?.cash?.revenue_paise ?? 0)}</small>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section className="admin-panel">
+                <div className="panel-heading">
+                  <div>
+                    <span className="eyebrow">EFFICIENCY & RETENTION</span>
+                    <h2>Operations & Guests</h2>
+                  </div>
+                  <Activity size={16} />
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginTop: "10px" }}>
+                  <div className="status-break-row">
+                    <span>Peak ordering hours</span>
+                    <strong>{report.peak_hour || "N/A"}</strong>
+                  </div>
+                  <div className="status-break-row">
+                    <span>Avg fulfillment speed</span>
+                    <strong>{report.avg_fulfillment_minutes != null ? `${report.avg_fulfillment_minutes} mins` : "N/A"}</strong>
+                  </div>
+                  <div className="status-break-row">
+                    <span>Customer retention</span>
+                    <span>
+                      <strong style={{ color: "#166534" }}>{report.repeat_customers ?? 0}</strong> repeat · <strong style={{ color: "var(--primary)" }}>{report.new_customers ?? 0}</strong> new
+                    </span>
+                  </div>
+                </div>
+              </section>
+
+              {report.categories && report.categories.length > 0 && (
+                <section className="admin-panel">
+                  <div className="panel-heading">
+                    <div>
+                      <span className="eyebrow">MENU POPULARITY</span>
+                      <h2>Category breakdown</h2>
+                    </div>
+                    <Flame size={16} />
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "10px" }}>
+                    {(report.categories || []).map((cat) => (
+                      <div className="status-break-row" key={cat.name}>
+                        <span>{cat.name}</span>
+                        <div>
+                          <strong>{cat.quantity || 0} sold</strong>
+                          <small style={{ marginLeft: "8px", color: "var(--muted)" }}>{formatINR(cat.revenue_paise ?? 0)}</small>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
             </div>
           </>
         )
@@ -6371,7 +6536,7 @@ function SettingsPage() {
               disabled={busy || !isDirty}
               className={`settings-save-button ${isDirty ? "is-dirty" : "is-pristine"}`}
             >
-              {busy ? "Saving…" : "Save restaurant settings"}
+              <Save size={18} /> {busy ? "Saving…" : "Save restaurant settings"}
             </Button>
           </div>
         </div>
@@ -6565,7 +6730,12 @@ function SettingsPage() {
               style={{
                 display: "flex",
                 justifyContent: "flex-end",
+                alignItems: "center",
                 gap: "0.75rem",
+                background: "transparent",
+                border: "none",
+                boxShadow: "none",
+                paddingTop: "0.5rem",
               }}
             >
               <Button
@@ -6579,8 +6749,12 @@ function SettingsPage() {
               >
                 Cancel
               </Button>
-              <Button type="button" onClick={handleSaveSchedule}>
-                <Check size={16} /> {editingScheduleId ? "Save changes" : "Add schedule"}
+              <Button
+                type="button"
+                onClick={handleSaveSchedule}
+                className="kz-pill-save-button"
+              >
+                <Save size={16} /> {editingScheduleId ? "Save changes" : "Save schedule"}
               </Button>
             </div>
           </section>
@@ -6796,8 +6970,11 @@ function SettingsPage() {
               style={{
                 display: "flex",
                 justifyContent: "flex-end",
+                alignItems: "center",
                 gap: "0.75rem",
-                borderTop: "1px solid var(--border)",
+                background: "transparent",
+                border: "none",
+                boxShadow: "none",
                 paddingTop: "1rem",
               }}
             >
@@ -6813,8 +6990,9 @@ function SettingsPage() {
                 type="button"
                 disabled={busy}
                 onClick={() => void executeSaveSettings()}
+                className="kz-pill-save-button"
               >
-                {busy ? "Saving…" : "Confirm & Save changes"} <ArrowRight size={15} />
+                <Save size={16} /> {busy ? "Saving…" : "Confirm & Save changes"}
               </Button>
             </div>
           </div>
@@ -6970,7 +7148,6 @@ function Offers() {
   const [customImageUrl, setCustomImageUrl] = useState("");
   const [previewDevice, setPreviewDevice] = usePreference<"desktop" | "mobile">("admin_offers_preview_device", "desktop");
   const [uploadingImage, setUploadingImage] = useState(false);
-  const [copiedPromo, setCopiedPromo] = useState(false);
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
   const [presetToDelete, setPresetToDelete] = useState<string | null>(null);
   const [offerToast, setOfferToast] = useState<{ title: string; message: string } | null>(null);
@@ -7103,15 +7280,6 @@ function Offers() {
     } finally {
       setUploadingImage(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
-    }
-  }
-
-  function handleTestCopyPromo(code: string) {
-    if (navigator.clipboard) {
-      void navigator.clipboard.writeText(code).then(() => {
-        setCopiedPromo(true);
-        setTimeout(() => setCopiedPromo(false), 2400);
-      });
     }
   }
 
@@ -7852,28 +8020,15 @@ function Offers() {
                   {message || <span style={{ color: "#9ca3af", fontStyle: "italic" }}>Write your offer message on the left to see it previewed here...</span>}
                 </div>
 
-                {/* Promo Code Box with Working Copy Button */}
+                {/* Promo Code Box */}
                 {promoCode ? (
                   <div className="offer-promo-voucher-box" style={{ background: "rgba(20, 24, 32, 0.75)", borderColor: themeColor, borderStyle: "dashed", borderRadius: 12, padding: "18px 22px", margin: "22px auto", textAlign: "center", maxWidth: 380 }}>
                     <div style={{ fontSize: 10, fontWeight: 800, color: "#9ca3af", letterSpacing: 2, marginBottom: 5, textTransform: "uppercase" }}>
                       USE PROMO CODE AT CHECKOUT
                     </div>
-                    <div className="offer-promo-voucher-code" style={{ color: "#fbbf24", fontFamily: "'Courier New', monospace", fontSize: 26, fontWeight: 900, letterSpacing: 4, margin: "6px 0 12px" }}>
+                    <div className="offer-promo-voucher-code" style={{ color: "#fbbf24", fontFamily: "'Courier New', monospace", fontSize: 26, fontWeight: 900, letterSpacing: 4, margin: "6px 0 0" }}>
                       {promoCode}
                     </div>
-                    <button
-                      type="button"
-                      className={`offer-promo-copy-btn ${copiedPromo ? "copied" : ""}`}
-                      style={{ backgroundColor: copiedPromo ? "#10b981" : themeColor }}
-                      onClick={() => handleTestCopyPromo(promoCode)}
-                    >
-                      {copiedPromo ? "✓ Copied to Clipboard!" : (
-                        <>
-                          <Copy size={13} style={{ display: "inline-block", verticalAlign: "middle", marginRight: 4 }} />
-                          Copy Promo Code
-                        </>
-                      )}
-                    </button>
                   </div>
                 ) : null}
 
@@ -8205,6 +8360,23 @@ function Discounts() {
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
   const [itemSearch, setItemSearch] = useState("");
   const [menuPickerOpen, setMenuPickerOpen] = useState(false);
+  const menuPickerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuPickerOpen) return;
+    function handleClickOutside(event: MouseEvent | TouchEvent) {
+      if (menuPickerRef.current && !menuPickerRef.current.contains(event.target as Node)) {
+        setMenuPickerOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("touchstart", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+    };
+  }, [menuPickerOpen]);
+
   const [campaignName, setCampaignName] = useState("");
   const [percent, setPercent] = useState("10");
   const [startsDate, setStartsDate] = useState(() => localDatePart(new Date()));
@@ -8486,7 +8658,7 @@ function Discounts() {
                   onChange={(event) => setPercent(event.target.value)}
                 />
               </label>
-              <div className="field-label discount-menu-field">
+              <div ref={menuPickerRef} className="field-label discount-menu-field">
                 <span>Menu items (Standard & Custom)</span>
                 <button
                   className="discount-menu-trigger"
@@ -8495,7 +8667,7 @@ function Discounts() {
                   onClick={() => setMenuPickerOpen((open) => !open)}
                 >
                   {selectedKeys.length ? `${selectedKeys.length} item${selectedKeys.length === 1 ? "" : "s"} selected` : "Choose menu items"}
-                  <span>⌄</span>
+                  <ChevronDown size={15} />
                 </button>
                 {menuPickerOpen && (
                   <div className="discount-menu-picker">
@@ -8606,9 +8778,15 @@ function Discounts() {
                 <Button
                   type="submit"
                   disabled={busy || !selectedKeys.length || Number(percent) < 1 || endsAt <= startsAt}
+                  className={editingCampaignId ? "kz-pill-save-button" : ""}
                 >
-                  {busy ? (editingCampaignId ? "Saving…" : "Creating…") : (editingCampaignId ? "Save changes" : "Create discount")}{" "}
-                  <ArrowRight size={15} />
+                  {busy ? (
+                    editingCampaignId ? <><Save size={16} /> Saving…</> : "Creating…"
+                  ) : editingCampaignId ? (
+                    <><Save size={16} /> Save changes</>
+                  ) : (
+                    <>Create discount <ArrowRight size={15} /></>
+                  )}
                 </Button>
               </div>
             </form>

@@ -4,6 +4,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { GoogleOAuthProvider, GoogleLogin, type CredentialResponse } from '@react-oauth/google'
 import { useAuth, useRestaurant } from '../state'
 import { Brand, EmptyState, PhoneInput } from '../components'
+import { EmailVerificationField } from '../components/EmailVerificationField'
 import { api, confirmPasswordReset, requestPasswordReset } from '../api'
 
 function destinationForRole(role?: string): string {
@@ -35,6 +36,7 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
   const googleClientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || restaurant?.google_client_id || '').trim()
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
+  const [emailVerified, setEmailVerified] = useState(false)
   const [phone, setPhone] = useState('+91')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -127,6 +129,11 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
         return
       }
       if (isRegister) {
+        if (!emailVerified) {
+          setError('Please verify your email address with the 6-digit verification code before creating your account.')
+          setBusy(false)
+          return
+        }
         const phoneDigits = phone.replace(/^\+91/, '').replace(/\D/g, '')
         if (phoneDigits.length > 0 && phoneDigits.length !== 10) {
           setError('Please enter a valid 10-digit mobile number.')
@@ -342,7 +349,21 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
 
           <form className="auth-form" onSubmit={submit}>
             {isRegister && <label className="field-label">Your name<div className="input-wrap"><UserRound size={17} /><input autoComplete="name" required minLength={2} maxLength={120} placeholder="What should we call you?" value={name} onChange={(event) => setName(event.target.value)} /></div></label>}
-            <label className="field-label">Email address<div className="input-wrap"><Mail size={17} /><input id="email" name="email" type="email" autoComplete="email" required placeholder="you@example.com" value={email} onChange={(event) => setEmail(event.target.value)} readOnly={hasInviteToken} /></div></label>
+            {isRegister ? (
+              <label className="field-label">
+                Email address
+                <EmailVerificationField
+                  email={email}
+                  onChangeEmail={setEmail}
+                  isVerified={emailVerified}
+                  onVerifiedChange={setEmailVerified}
+                  purpose="REGISTER"
+                  disabled={hasInviteToken || busy}
+                />
+              </label>
+            ) : (
+              <label className="field-label">Email address<div className="input-wrap"><Mail size={17} /><input id="email" name="email" type="email" autoComplete="email" required placeholder="you@example.com" value={email} onChange={(event) => setEmail(event.target.value)} readOnly={hasInviteToken} /></div></label>
+            )}
             {isRegister && <label className="field-label">Phone number <span className="field-optional">optional</span><div className="input-wrap"><Phone size={17} /><PhoneInput placeholder="+91" value={phone} onChange={(val) => setPhone(val)} /></div></label>}
 
             {hasInviteToken && (
@@ -354,7 +375,7 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
 
             {!isRecovery && <><label className="field-label">Password<div className="input-wrap"><LockKeyhole size={17} /><input id="password" name="password" type={showPassword ? 'text' : 'password'} autoComplete={isRegister ? 'new-password' : 'current-password'} required minLength={isRegister ? 8 : 1} maxLength={128} placeholder={isRegister ? 'At least 8 characters (a-z, A-Z, 0-9, special)' : 'Your password'} value={password} onChange={(event) => setPassword(event.target.value)} /><button className="input-trailing" type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></label>{!isRegister && <Link className="forgot-password-link" to="/forgot-password">Forgot password?</Link>}</>}
             {isRecovery && !hasInviteToken && otpSent && <><label className="field-label">One-time code<div className="input-wrap"><LockKeyhole size={17} /><input inputMode="numeric" autoComplete="one-time-code" required pattern="\d{6}" maxLength={6} placeholder="6-digit code from your email" value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, '').slice(0, 6))} /></div></label><label className="field-label">New password<div className="input-wrap"><LockKeyhole size={17} /><input type={showPassword ? 'text' : 'password'} autoComplete="new-password" required minLength={8} maxLength={128} placeholder="At least 8 characters (a-z, A-Z, 0-9, special)" value={password} onChange={(event) => setPassword(event.target.value)} /><button className="input-trailing" type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></label></>}
-            {isRecovery ? <button className="button button-dark auth-submit" type="submit" disabled={busy}>{busy ? 'One moment…' : hasInviteToken ? 'Set password & continue' : otpSent ? 'Verify code & reset password' : 'Send OTP'}<ArrowRight size={17} /></button> : <button className="button button-dark auth-submit" type="submit" disabled={busy}>{busy ? 'One moment…' : isRegister ? 'Create my account' : 'Sign in'}<ArrowRight size={17} /></button>}
+            {isRecovery ? <button className="button button-dark auth-submit" type="submit" disabled={busy}>{busy ? 'One moment…' : hasInviteToken ? 'Set password & continue' : otpSent ? 'Verify code & reset password' : 'Send OTP'}<ArrowRight size={17} /></button> : <button className="button button-dark auth-submit" type="submit" disabled={busy || (isRegister && !emailVerified)}>{busy ? 'One moment…' : isRegister ? 'Create my account' : 'Sign in'}<ArrowRight size={17} /></button>}
           </form>
           {!isRecovery && Boolean(googleClientId) && <>
             <div className="auth-divider"><span>or continue with</span></div>

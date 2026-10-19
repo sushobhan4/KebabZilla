@@ -128,6 +128,8 @@ def update_custom_menu_item(item_id: int, data: CustomMenuItemInput, actor: Curr
     item.image_urls = data.image_urls
     item.is_vegetarian = data.is_vegetarian
     item.is_available = data.is_available
+    if data.is_available:
+        item.paused_by_id = None
     item.is_featured = data.is_featured
 
     # Replace sections

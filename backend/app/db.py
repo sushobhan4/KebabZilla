@@ -11,13 +11,20 @@ class Base(DeclarativeBase):
 
 
 is_sqlite = settings.database_url.startswith("sqlite")
-connect_args = {"check_same_thread": False} if is_sqlite else {}
+connect_args = {"check_same_thread": False} if is_sqlite else {
+    "prepare_threshold": None,
+    "keepalives": 1,
+    "keepalives_idle": 30,
+    "keepalives_interval": 10,
+    "keepalives_count": 5,
+}
 pool_kwargs = {}
 if not is_sqlite:
     pool_kwargs = {
         "pool_size": 10,
-        "max_overflow": 5,
-        "pool_recycle": 1800,
+        "max_overflow": 10,
+        "pool_recycle": 300,
+        "pool_timeout": 20,
     }
 
 engine = create_engine(
@@ -86,6 +93,24 @@ if settings.database_url.startswith("sqlite"):
                     cursor.execute("ALTER TABLE user_sessions ADD COLUMN region VARCHAR(64) DEFAULT ''")
                 if "city" not in session_cols:
                     cursor.execute("ALTER TABLE user_sessions ADD COLUMN city VARCHAR(64) DEFAULT ''")
+
+            cursor.execute("PRAGMA table_info(account_addresses)")
+            addr_cols = {row[1] for row in cursor.fetchall()}
+            if addr_cols and "distance_meters" not in addr_cols:
+                cursor.execute("ALTER TABLE account_addresses ADD COLUMN distance_meters INTEGER")
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS email_verification_codes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email VARCHAR(255),
+                    otp_hash VARCHAR(255),
+                    purpose VARCHAR(32) DEFAULT 'register',
+                    expires_at DATETIME,
+                    attempts INTEGER DEFAULT 0,
+                    used_at DATETIME,
+                    created_at DATETIME
+                )
+            """)
         except Exception:
             pass
         cursor.close()
@@ -94,28 +119,39 @@ else:
         try:
             with engine.connect() as conn:
                 with conn.begin():
-                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS average_delivery_speed_kmh FLOAT DEFAULT 30.0;")
-                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS customer_sla_minutes FLOAT DEFAULT 36.0;")
-                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS alns_max_iterations_mode VARCHAR(10) DEFAULT 'AUTO';")
-                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS alns_max_iterations INTEGER DEFAULT 220;")
-                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS max_orders_per_driver INTEGER DEFAULT 5;")
-                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS charge_from_zero_beyond_free_radius BOOLEAN DEFAULT FALSE;")
-                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS is_delivery_open BOOLEAN DEFAULT TRUE;")
-                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS order_cutoff_minutes_before_closing INTEGER DEFAULT 30;")
-                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS delivery_paused_until TIMESTAMPTZ;")
-                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS email VARCHAR(255) DEFAULT 'support@kebabzilla.in';")
-                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS enforce_driver_geofence BOOLEAN DEFAULT FALSE;")
-                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS driver_geofence_meters INTEGER DEFAULT 500;")
-                    conn.exec_driver_sql("ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS haversine_routing_factor FLOAT DEFAULT 1.3627;")
-                    conn.exec_driver_sql("ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_started_at TIMESTAMPTZ;")
-                    conn.exec_driver_sql("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS promotional_consent BOOLEAN DEFAULT TRUE;")
-                    conn.exec_driver_sql("ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS device_name VARCHAR(128) DEFAULT '';")
-                    conn.exec_driver_sql("ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS country VARCHAR(64) DEFAULT '';")
-                    conn.exec_driver_sql("ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS region VARCHAR(64) DEFAULT '';")
-                    conn.exec_driver_sql("ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS city VARCHAR(64) DEFAULT '';")
-                    conn.exec_driver_sql("ALTER TABLE restaurant_settings DROP COLUMN IF EXISTS admin_override_open;")
-                    conn.exec_driver_sql("ALTER TABLE restaurant_settings DROP COLUMN IF EXISTS distance_calculation_mode;")
                     conn.exec_driver_sql("""
+                        ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS average_delivery_speed_kmh FLOAT DEFAULT 30.0;
+                        ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS customer_sla_minutes FLOAT DEFAULT 36.0;
+                        ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS alns_max_iterations_mode VARCHAR(10) DEFAULT 'AUTO';
+                        ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS alns_max_iterations INTEGER DEFAULT 220;
+                        ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS max_orders_per_driver INTEGER DEFAULT 5;
+                        ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS charge_from_zero_beyond_free_radius BOOLEAN DEFAULT FALSE;
+                        ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS is_delivery_open BOOLEAN DEFAULT TRUE;
+                        ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS order_cutoff_minutes_before_closing INTEGER DEFAULT 30;
+                        ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS delivery_paused_until TIMESTAMPTZ;
+                        ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS email VARCHAR(255) DEFAULT 'support@kebabzilla.in';
+                        ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS enforce_driver_geofence BOOLEAN DEFAULT FALSE;
+                        ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS driver_geofence_meters INTEGER DEFAULT 500;
+                        ALTER TABLE restaurant_settings ADD COLUMN IF NOT EXISTS haversine_routing_factor FLOAT DEFAULT 1.3627;
+                        ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_started_at TIMESTAMPTZ;
+                        ALTER TABLE accounts ADD COLUMN IF NOT EXISTS promotional_consent BOOLEAN DEFAULT TRUE;
+                        ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS device_name VARCHAR(128) DEFAULT '';
+                        ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS country VARCHAR(64) DEFAULT '';
+                        ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS region VARCHAR(64) DEFAULT '';
+                        ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS city VARCHAR(64) DEFAULT '';
+                        ALTER TABLE account_addresses ADD COLUMN IF NOT EXISTS distance_meters INTEGER;
+                        CREATE TABLE IF NOT EXISTS email_verification_codes (
+                            id SERIAL PRIMARY KEY,
+                            email VARCHAR(255),
+                            otp_hash VARCHAR(255),
+                            purpose VARCHAR(32) DEFAULT 'register',
+                            expires_at TIMESTAMPTZ,
+                            attempts INTEGER DEFAULT 0,
+                            used_at TIMESTAMPTZ,
+                            created_at TIMESTAMPTZ DEFAULT NOW()
+                        );
+                        ALTER TABLE restaurant_settings DROP COLUMN IF EXISTS admin_override_open;
+                        ALTER TABLE restaurant_settings DROP COLUMN IF EXISTS distance_calculation_mode;
                         DO $$
                         BEGIN
                             IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'menu_items' AND column_name = 'category_id') THEN
@@ -127,11 +163,11 @@ else:
                                 ALTER TABLE menu_items DROP COLUMN category_id;
                             END IF;
                         END $$;
+                        ALTER TABLE offer_logs DROP COLUMN IF EXISTS recipient_count;
+                        ALTER TABLE offer_logs DROP COLUMN IF EXISTS sent_count;
+                        DROP TABLE IF EXISTS custom_menu_sections CASCADE;
+                        DROP TABLE IF EXISTS custom_menu_items CASCADE;
                     """)
-                    conn.exec_driver_sql("ALTER TABLE offer_logs DROP COLUMN IF EXISTS recipient_count;")
-                    conn.exec_driver_sql("ALTER TABLE offer_logs DROP COLUMN IF EXISTS sent_count;")
-                    conn.exec_driver_sql("DROP TABLE IF EXISTS custom_menu_sections CASCADE;")
-                    conn.exec_driver_sql("DROP TABLE IF EXISTS custom_menu_items CASCADE;")
         except Exception:
             pass
 

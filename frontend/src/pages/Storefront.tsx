@@ -21,6 +21,27 @@ type CartLine = {
 const colors = ['food-red', 'food-gold', 'food-green', 'food-plum', 'food-orange', 'food-teal']
 const art = ['🥙', '🍗', '🫓', '🍢', '🥘', '🍟']
 
+const preloadedImageUrls = new Set<string>()
+
+export function preloadMenuImages(items: MenuItem[]) {
+  if (typeof window === 'undefined') return
+  items.forEach((item) => {
+    const urls: string[] = []
+    if (item.image_url) urls.push(item.image_url)
+    if (Array.isArray(item.image_urls)) {
+      urls.push(...item.image_urls)
+    }
+    urls.forEach((url) => {
+      const resolved = resolveImageUrl(url)
+      if (resolved && !preloadedImageUrls.has(resolved)) {
+        preloadedImageUrls.add(resolved)
+        const img = new Image()
+        img.src = resolved
+      }
+    })
+  })
+}
+
 export default function Storefront() {
   const { account } = useAuth()
   const navigate = useNavigate()
@@ -393,6 +414,7 @@ export default function Storefront() {
       const fullMenu = [...items, ...mappedCustom]
       setMenu(fullMenu)
       setRestaurant(config)
+      preloadMenuImages(fullMenu)
 
       if (account) {
         api<SavedCartItem[]>('/cart').then((saved) => {
@@ -494,6 +516,39 @@ export default function Storefront() {
       setDeliveryEstimate(null)
       return
     }
+
+    if (selectedLocation.distance_meters != null && restaurant) {
+      const distKm = selectedLocation.distance_meters / 1000
+      const withinRadius = distKm <= restaurant.delivery_radius_km
+      let feePaise = 0
+      let rawFeePaise = 0
+      let roundOffPaise = 0
+      if (distKm > restaurant.free_delivery_radius_km) {
+        const billableKm = restaurant.charge_from_zero_beyond_free_radius
+          ? distKm
+          : distKm - restaurant.free_delivery_radius_km
+        const rawFeeInr = Math.round(billableKm * (restaurant.delivery_fee_per_km_paise / 100) * 100) / 100
+        const roundedFeeInr = Math.ceil(rawFeeInr)
+        roundOffPaise = Math.round((roundedFeeInr - rawFeeInr) * 100)
+        rawFeePaise = Math.round(rawFeeInr * 100)
+        feePaise = roundedFeeInr * 100
+      }
+      setDeliveryEstimate({
+        distance_km: Math.round(distKm * 100) / 100,
+        method: 'STORED_DISTANCE',
+        delivery_fee_paise: feePaise,
+        delivery_fee_inr: feePaise / 100,
+        raw_delivery_fee_paise: rawFeePaise,
+        round_off_paise: roundOffPaise,
+        within_radius: withinRadius,
+        max_radius_km: restaurant.delivery_radius_km,
+        free_radius_km: restaurant.free_delivery_radius_km,
+        fee_per_km_paise: restaurant.delivery_fee_per_km_paise,
+      })
+      setEstimateLoading(false)
+      return
+    }
+
     let cancelled = false
     setEstimateLoading(true)
     api<{
@@ -1302,7 +1357,10 @@ export default function Storefront() {
     }
   }
 
-  function goToMenu() { document.getElementById('menu')?.scrollIntoView({ behavior: 'smooth' }) }
+  function goToMenu() {
+    preloadMenuImages(menu)
+    document.getElementById('menu')?.scrollIntoView({ behavior: 'smooth' })
+  }
 
   if (loading) return <div className="store-loading"><Loading label="Lighting the grill…" /></div>
   if (success) return <main className="order-success-wrap"><section className="order-success"><div className="success-check"><Check size={29} /></div><div className="eyebrow">ORDER {success.payment_method === 'RAZORPAY' && success.payment_status !== 'PAID' ? 'SAVED · PAYMENT PENDING' : 'IT’S ON THE WAY'}</div><h1>{success.payment_method === 'RAZORPAY' && success.payment_status !== 'PAID' ? 'Your ticket is saved.' : 'That’s a wrap.'}</h1><p>{success.payment_method === 'RAZORPAY' && success.payment_status !== 'PAID' ? 'We saved your order, but payment has not been confirmed. Open My orders to finish payment or check its status.' : 'Your order is with the grill team. We’ll keep you posted as it makes its way to you.'}</p><div className="success-order-number"><span>ORDER NUMBER</span><strong>{success.order_id}</strong></div><div className="success-order-meta"><span><Clock3 size={15} /> Track it as it makes its way to you</span><span><ShieldCheck size={15} /> {success.payment_status === 'PAID' ? 'Payment secured' : success.payment_method === 'CASH' ? 'Cash on delivery' : 'Payment not confirmed'}</span></div><Link className="button button-dark" to={account ? '/orders' : '/'}>{success.payment_method === 'RAZORPAY' && success.payment_status !== 'PAID' ? 'Finish payment' : 'Track your order'} <ArrowRight size={16} /></Link><button className="text-button success-back" onClick={() => setSuccess(null)}>Back to the menu</button></section><div className="success-decoration">🥙</div></main>
@@ -1338,7 +1396,7 @@ export default function Storefront() {
         </div>
       ) : (
         <>
-          <div className="menu-tabs">{categories.map((name) => <button className={`menu-tab ${category === name ? 'active' : ''}`} key={name} onClick={() => { setCategory(name); liquidGlassManager.invalidateAll(); }}>{name}</button>)}</div>
+          <div className="menu-tabs">{categories.map((name) => <button className={`menu-tab ${category === name ? 'active' : ''}`} key={name} onClick={() => { setCategory(name); preloadMenuImages(menu); liquidGlassManager.invalidateAll(); }}>{name}</button>)}</div>
       <div className="storefront-sticky-controls">
         <div className="menu-discovery-controls">
           <label className="menu-search">

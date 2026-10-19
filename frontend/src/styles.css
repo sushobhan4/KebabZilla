@@ -3092,8 +3092,13 @@ select:focus-visible {
 }
 .invoice-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 8px;
+  width: 100%;
+}
+.invoice-actions:has(> :nth-child(2)),
+.invoice-actions.has-two-actions {
+  grid-template-columns: 1fr 1fr;
 }
 .draft-list {
   display: flex;
@@ -3146,7 +3151,10 @@ select:focus-visible {
 .draft-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 .danger-icon:hover {
   background: #fbefec;
@@ -3992,6 +4000,9 @@ select:focus-visible {
 .order-filter-bar {
   padding-bottom: 13px;
 }
+.order-filter-bar .admin-search-sort-controls {
+  margin-bottom: 12px;
+}
 .order-filter-bar .filter-tabs {
   width: max-content;
   max-width: 100%;
@@ -4352,6 +4363,26 @@ select:focus-visible {
   gap: 7px;
   padding-top: 12px;
   margin-top: auto;
+  background: transparent;
+  border-top: none;
+}
+.menu-modal .modal-actions {
+  position: sticky;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 20px;
+  margin: 16px -24px -20px -24px;
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border-top: none !important;
+  box-shadow: none !important;
 }
 .menu-admin-stats {
   display: flex;
@@ -4743,11 +4774,16 @@ select:focus-visible {
   font-size: 0.95rem !important;
   font-weight: 700 !important;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
-  transition: all 0.2s ease;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   max-width: calc(100vw - 32px);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
+  cursor: pointer !important;
 }
 .settings-save-button.is-pristine {
   background-color: #6b7280 !important;
@@ -4759,11 +4795,17 @@ select:focus-visible {
   background-color: #c54d2f !important;
   color: #ffffff !important;
   border: 1px solid #a83d23 !important;
+  box-shadow: 0 6px 20px rgba(197, 77, 47, 0.28) !important;
 }
 .settings-save-button.is-dirty:hover {
   background-color: #a83d23 !important;
   transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(197, 77, 47, 0.4);
+  box-shadow: 0 8px 24px rgba(197, 77, 47, 0.42) !important;
+}
+.settings-save-button.is-dirty:active {
+  background-color: #92341d !important;
+  transform: translateY(0);
+  box-shadow: 0 3px 12px rgba(197, 77, 47, 0.3) !important;
 }
 
 /* ── Settings changes confirmation diff list ────────────────────────── */
@@ -6034,12 +6076,17 @@ select:focus-visible {
     align-items: center;
   }
   .order-actions {
-    gap: 3px;
+    gap: 6px;
+    flex-wrap: wrap;
   }
-  .order-actions .button {
-    font-size: 10px;
-    padding: 0 8px;
-    min-height: 30px;
+  .order-actions .button,
+  .order-actions button {
+    font-size: 13px;
+    padding: 0 12px;
+    min-height: 38px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
   .billing-layout {
     grid-template-columns: 1fr;
@@ -6052,6 +6099,9 @@ select:focus-visible {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 6px;
+  }
+  .billing-item-grid > .billing-item:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
   }
   .billing-item {
     padding: 8px 6px;
@@ -6072,8 +6122,17 @@ select:focus-visible {
     font-size: 10px;
   }
   .draft-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     gap: 8px;
     padding: 10px;
+  }
+  .draft-row .draft-actions {
+    order: 2;
+    margin-left: auto;
+    justify-content: flex-end;
+    flex-shrink: 0;
   }
   .draft-main strong {
     font-size: 10px;
@@ -6169,6 +6228,10 @@ select:focus-visible {
   .report-stat-grid {
     grid-template-columns: repeat(2, 1fr);
     gap: 8px;
+  }
+  .admin-stat-grid > .admin-stat-card:last-child:nth-child(odd),
+  .report-stat-grid > .report-stat-card:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
   }
   .admin-stat-card {
     min-height: 106px;
@@ -6373,6 +6436,15 @@ select:focus-visible {
   }
   .modal-form {
     padding: 14px 18px 18px 18px;
+  }
+  .menu-modal .modal-actions {
+    margin: 14px -18px -18px -18px;
+    padding: 12px 16px;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border-top: none !important;
+    box-shadow: none !important;
   }
   .modal-heading h2 {
     font-size: 16px;
@@ -7177,8 +7249,12 @@ select:focus-visible {
 }
 .profile-save-row {
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
+  align-items: center;
   margin-top: 17px;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
 }
 .profile-page > .notice {
   margin-bottom: 14px;
@@ -10986,12 +11062,17 @@ input[type="radio"]:focus-visible {
     overflow-wrap: break-word !important;
   }
   .draft-row {
-    flex-direction: column !important;
-    align-items: stretch !important;
-    gap: 10px !important;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 8px !important;
   }
   .draft-actions {
+    order: 2 !important;
+    margin-left: auto !important;
     justify-content: flex-end !important;
+    flex-shrink: 0 !important;
   }
 }
 
@@ -11006,10 +11087,13 @@ input[type="radio"]:focus-visible {
     width: 100% !important;
     display: flex !important;
     flex-wrap: wrap !important;
-    gap: 7px !important;
+    gap: 8px !important;
   }
-  .ops-order-bottom .order-actions .button {
+  .ops-order-bottom .order-actions .button,
+  .ops-order-bottom .order-actions button {
     flex: 1 1 auto !important;
+    min-height: 38px !important;
+    font-size: 13px !important;
   }
 }
 
@@ -14179,21 +14263,23 @@ input[type="radio"]:focus-visible {
 /* Profile Sticky Bottom Bar */
 .profile-sticky-bottom-bar {
   position: sticky;
-  bottom: 0;
+  bottom: 1rem;
   left: 0;
   right: 0;
   z-index: 50;
-  background: var(--surface, #ffffff);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border-top: 1px solid var(--border);
-  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.08);
-  padding: 16px 24px;
-  margin-top: 2rem;
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: none !important;
+  border-top: none !important;
+  box-shadow: none !important;
+  padding: 12px 24px;
+  margin-top: 1.5rem;
   display: flex;
   justify-content: center;
   align-items: center;
-  border-radius: 0 0 12px 12px;
+  border-radius: 0;
+  pointer-events: none;
 }
 
 .profile-sticky-inner {
@@ -14204,44 +14290,108 @@ input[type="radio"]:focus-visible {
   width: 100%;
   max-width: 900px;
   margin: 0 auto;
+  pointer-events: none;
 }
 
 .profile-save-button {
+  pointer-events: auto;
   border-radius: 9999px !important;
   padding: 13px 56px !important;
-  font-size: 1.05rem !important;
+  font-size: 1.02rem !important;
   font-weight: 700 !important;
   min-width: 280px;
   background-color: #c54d2f !important;
   color: #ffffff !important;
   border: 1px solid #a83d23 !important;
-  box-shadow: 0 6px 20px rgba(197, 77, 47, 0.25);
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 6px 20px rgba(197, 77, 47, 0.28) !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
   letter-spacing: 0.02em;
   white-space: nowrap;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  cursor: pointer;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 10px !important;
+  cursor: pointer !important;
 }
 
 .profile-save-button:hover:not(:disabled) {
   background-color: #a83d23 !important;
   transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(197, 77, 47, 0.4);
+  box-shadow: 0 8px 24px rgba(197, 77, 47, 0.42) !important;
+}
+
+.profile-save-button:active:not(:disabled) {
+  background-color: #92341d !important;
+  transform: translateY(0);
+  box-shadow: 0 3px 12px rgba(197, 77, 47, 0.3) !important;
 }
 
 .profile-save-button:disabled {
-  opacity: 0.65;
-  cursor: not-allowed;
+  opacity: 0.65 !important;
+  cursor: not-allowed !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+/* Universal Capsule/Pill Save Button Matching Target Screenshot */
+.kz-pill-save-button {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
+  border-radius: 9999px !important;
+  padding: 12px 36px !important;
+  font-size: 0.96rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.02em !important;
+  min-width: 180px;
+  background-color: #c54d2f !important;
+  color: #ffffff !important;
+  border: 1px solid #a83d23 !important;
+  box-shadow: 0 6px 20px rgba(197, 77, 47, 0.28) !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  cursor: pointer !important;
+  text-align: center !important;
+  white-space: nowrap !important;
+}
+
+.kz-pill-save-button:hover:not(:disabled) {
+  background-color: #a83d23 !important;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(197, 77, 47, 0.42) !important;
+}
+
+.kz-pill-save-button:active:not(:disabled) {
+  background-color: #92341d !important;
+  transform: translateY(0);
+  box-shadow: 0 3px 12px rgba(197, 77, 47, 0.3) !important;
+}
+
+.kz-pill-save-button:disabled {
+  opacity: 0.65 !important;
+  cursor: not-allowed !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+/* Ensure any container holding save buttons has completely transparent background */
+.policy-modal-footer:has(.kz-pill-save-button),
+.policy-modal-footer.is-transparent {
+  background: transparent !important;
+  border-top: none !important;
+  box-shadow: none !important;
 }
 
 @media (max-width: 600px) {
   .profile-sticky-bottom-bar {
-    padding: 12px 16px;
+    padding: 8px 16px;
+    bottom: 0.5rem;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
   }
-  .profile-save-button {
+  .profile-save-button,
+  .kz-pill-save-button {
     width: 100%;
     max-width: 400px;
     min-width: 0 !important;

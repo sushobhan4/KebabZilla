@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 import math
 from sqlalchemy import select
@@ -68,6 +69,7 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "X-Razorpay-Signature", "X-CSRF-Token"],
     expose_headers=["X-CSRF-Token"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 for route_module in (auth, menu, cart, orders, staff, delivery, admin, payments, custom_menu):
     app.include_router(route_module.router, prefix=settings.api_prefix)

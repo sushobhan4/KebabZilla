@@ -156,7 +156,7 @@ class AccountOut(ORMModel):
             data["addresses"] = [
                 {**{key: getattr(address, key) for key in (
                     "address_id", "label", "house_number", "road", "area", "city",
-                    "pincode", "landmark", "latitude", "longitude", "is_default",
+                    "pincode", "landmark", "latitude", "longitude", "is_default", "distance_meters",
                 )}, "id": address.address_id}
                 for address in (value.addresses or [])
             ]
@@ -185,6 +185,8 @@ class SavedAddressInput(BaseModel):
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
     is_default: bool = False
+    distance_meters: int | None = Field(default=None)
+
 
     @field_validator("house_number", "road", "area", "city", "pincode", "landmark")
     @classmethod
@@ -200,6 +202,21 @@ class SavedAddressInput(BaseModel):
         if has_latitude and any(not getattr(self, field) for field in ("house_number", "road", "area", "city", "pincode")):
             raise ValueError("Complete the house or flat, road, area, city, and PIN code for a pinned address")
         return self
+
+
+class EmailCheckOut(BaseModel):
+    exists: bool
+    available: bool
+
+
+class SendEmailOtpInput(BaseModel):
+    email: EmailStr
+    purpose: str = "register"  # register, profile, staff_create
+
+
+class VerifyEmailOtpInput(BaseModel):
+    email: EmailStr
+    otp: str
 
 
 AddressInput = SavedAddressInput

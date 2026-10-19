@@ -69,7 +69,8 @@ def accounts(
     q: str = "",
     role: Role | None = None,
     exclude_users: bool = False,
-    limit: int = Query(default=100, ge=1, le=250),
+    sort: str = "newest",
+    limit: int = Query(default=15, ge=1, le=250),
     offset: int = Query(default=0, ge=0),
 ):
     filters = []
@@ -81,7 +82,18 @@ def accounts(
     elif exclude_users:
         filters.append(Account.role != Role.USER)
     total = db.scalar(select(func.count(Account.id)).where(*filters)) or 0
-    rows = db.scalars(select(Account).where(*filters).order_by(Account.created_at.desc()).offset(offset).limit(limit)).all()
+
+    order_clause = Account.created_at.desc()
+    if sort == "oldest":
+        order_clause = Account.created_at.asc()
+    elif sort == "name_asc":
+        order_clause = Account.name.asc()
+    elif sort == "name_desc":
+        order_clause = Account.name.desc()
+    elif sort == "role":
+        order_clause = Account.role.asc()
+
+    rows = db.scalars(select(Account).where(*filters).order_by(order_clause).offset(offset).limit(limit)).all()
     role_counts = {item.value: 0 for item in Role}
     for role_value, count in db.execute(select(Account.role, func.count(Account.id)).group_by(Account.role)):
         role_counts[role_value.value] = int(count)
@@ -928,6 +940,82 @@ def sales_report(db: DbSession, period: str = "week", at: datetime | None = None
             name = item.menu_item.name if item.menu_item else "Unavailable item"
             item_totals[name] = item_totals.get(name, 0) + item.quantity
     item_rows = sorted(item_totals.items(), key=lambda row: row[1], reverse=True)[:5]
+
+    # Order type breakdown
+    dine_in_orders = [o for o in paid if o.order_type == "DINE_IN" or o.address == "Restaurant counter"]
+    delivery_orders = [o for o in paid if o.order_type == "DELIVERY"]
+    pickup_orders = [o for o in paid if o.order_type == "PICKUP"]
+    order_types = {
+        "dine_in": {"orders": len(dine_in_orders), "revenue_paise": sum(order_total_paise(o) for o in dine_in_orders)},
+        "delivery": {"orders": len(delivery_orders), "revenue_paise": sum(order_total_paise(o) for o in delivery_orders)},
+        "pickup": {"orders": len(pickup_orders), "revenue_paise": sum(order_total_paise(o) for o in pickup_orders)},
+    }
+
+    # Payment method breakdown
+    cash_orders = [o for o in paid if o.payment and o.payment.method == PaymentMethod.CASH]
+    online_orders = [o for o in paid if o.payment and o.payment.method == PaymentMethod.RAZORPAY]
+    payment_methods = {
+        "cash": {"orders": len(cash_orders), "revenue_paise": sum(order_total_paise(o) for o in cash_orders)},
+        "online": {"orders": len(online_orders), "revenue_paise": sum(order_total_paise(o) for o in online_orders)},
+    }
+
+    # Peak ordering hour
+    hour_counts: dict[int, int] = {}
+    for order in orders:
+        c_at = order.created_at
+        if c_at.tzinfo is None:
+            c_at = c_at.replace(tzinfo=timezone.utc)
+        h = c_at.astimezone(business_tz).hour
+        hour_counts[h] = hour_counts.get(h, 0) + 1
+    peak_hour = None
+    if hour_counts:
+        busiest_h = max(hour_counts.items(), key=lambda x: x[1])[0]
+        start_fmt = f"{busiest_h % 12 or 12}:00 {'AM' if busiest_h < 12 else 'PM'}"
+        next_h = (busiest_h + 1) % 24
+        end_fmt = f"{next_h % 12 or 12}:00 {'AM' if next_h < 12 else 'PM'}"
+        peak_hour = f"{start_fmt} – {end_fmt}"
+
+    # Category breakdown
+    category_totals: dict[str, dict] = {}
+    for order in paid:
+        for item in order.items:
+            cat_name = "Specialty"
+            if item.menu_item and item.menu_item.category:
+                cat = item.menu_item.category
+                cat_name = cat.name if hasattr(cat, "name") else str(cat)
+            entry = category_totals.setdefault(cat_name, {"name": cat_name, "quantity": 0, "revenue_paise": 0})
+            entry["quantity"] += item.quantity
+            item_price = item.unit_price_paise or (item.menu_item.price_paise if item.menu_item else 0)
+            entry["revenue_paise"] += item_price * (item.quantity or 1)
+    category_rows = sorted(category_totals.values(), key=lambda x: x["revenue_paise"], reverse=True)[:6]
+
+    # Customer retention (Returning vs New guests in this period)
+    customer_ids = [o.customer_id for o in orders if o.customer_id is not None]
+    repeat_customers = 0
+    new_customers = 0
+    if customer_ids:
+        prior_order_counts = dict(
+            db.execute(
+                select(Order.customer_id, func.count(Order.order_id))
+                .where(Order.customer_id.in_(customer_ids), Order.created_at < start)
+                .group_by(Order.customer_id)
+            ).all()
+        )
+        unique_cids = set(customer_ids)
+        repeat_customers = sum(1 for cid in unique_cids if prior_order_counts.get(cid, 0) > 0)
+        new_customers = len(unique_cids) - repeat_customers
+
+    # Average fulfillment time in minutes (creation to delivery/ready)
+    fulfillment_durations = []
+    for o in orders:
+        if o.delivered_at and o.created_at:
+            d_at = o.delivered_at if o.delivered_at.tzinfo is not None else o.delivered_at.replace(tzinfo=timezone.utc)
+            c_at = o.created_at if o.created_at.tzinfo is not None else o.created_at.replace(tzinfo=timezone.utc)
+            dur = (d_at - c_at).total_seconds() / 60.0
+            if 1.0 <= dur <= 240.0:
+                fulfillment_durations.append(dur)
+    avg_fulfillment_minutes = round(sum(fulfillment_durations) / len(fulfillment_durations), 1) if fulfillment_durations else None
+
     return {
         "period": period,
         "from": start,
@@ -939,4 +1027,11 @@ def sales_report(db: DbSession, period: str = "week", at: datetime | None = None
         "statuses": statuses,
         "series": list(buckets.values()),
         "top_items": [{"name": name, "quantity": quantity} for name, quantity in item_rows],
+        "order_types": order_types,
+        "payment_methods": payment_methods,
+        "peak_hour": peak_hour,
+        "categories": category_rows,
+        "repeat_customers": repeat_customers,
+        "new_customers": new_customers,
+        "avg_fulfillment_minutes": avg_fulfillment_minutes,
     }

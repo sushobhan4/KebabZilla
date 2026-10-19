@@ -21,12 +21,20 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
           <p style={{ color: '#666', maxWidth: '500px', margin: '0 auto 20px' }}>
             {(this.state.error as Error).message || 'An unexpected error occurred while loading the application.'}
           </p>
-          <button
-            onClick={() => { localStorage.clear(); sessionStorage.clear(); window.location.reload() }}
-            style={{ padding: '10px 20px', borderRadius: '8px', background: '#222', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}
-          >
-            Clear Cache & Reload
-          </button>
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
+            <button
+              onClick={() => this.setState({ error: null })}
+              style={{ padding: '10px 20px', borderRadius: '8px', background: '#c93b2b', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+            >
+              Try Again
+            </button>
+            <button
+              onClick={() => window.location.reload()}
+              style={{ padding: '10px 20px', borderRadius: '8px', background: '#222', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+            >
+              Reload Page
+            </button>
+          </div>
         </div>
       )
     }
