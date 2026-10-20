@@ -44,7 +44,29 @@ export function EmailVerificationField({
   const [verifyingOtp, setVerifyingOtp] = useState(false)
   const [otpError, setOtpError] = useState('')
   const [otpNotice, setOtpNotice] = useState('')
+  const [countdown, setCountdown] = useState(0)
+  const expiryRef = useRef<number | null>(null)
   const verifiedEmailRef = useRef<string | null>(initialVerifiedEmail || null)
+
+  const startCountdown = () => {
+    expiryRef.current = Date.now() + 30000
+    setCountdown(30)
+  }
+
+  useEffect(() => {
+    if (countdown <= 0) return
+
+    const interval = setInterval(() => {
+      if (!expiryRef.current) {
+        setCountdown(0)
+        return
+      }
+      const remaining = Math.max(0, Math.ceil((expiryRef.current - Date.now()) / 1000))
+      setCountdown(remaining)
+    }, 100)
+
+    return () => clearInterval(interval)
+  }, [countdown > 0])
 
   const trimmedEmail = email.trim().toLowerCase()
   const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)
@@ -57,6 +79,8 @@ export function EmailVerificationField({
       setAvailabilityMessage('')
       setOtpSent(false)
       setOtp('')
+      setCountdown(0)
+      expiryRef.current = null
       return
     }
 
@@ -66,12 +90,17 @@ export function EmailVerificationField({
       setAvailabilityMessage('')
       setOtpSent(false)
       setOtp('')
+      setCountdown(0)
+      expiryRef.current = null
       return
     }
 
     // Email changed from verified state
     if (isVerified) {
       onVerifiedChange(false)
+      setOtpSent(false)
+      setCountdown(0)
+      expiryRef.current = null
     }
 
     if (!isValidEmail) {
@@ -113,7 +142,7 @@ export function EmailVerificationField({
   }, [trimmedEmail, isValidEmail, excludeId, initialVerifiedEmail])
 
   async function handleSendOtp() {
-    if (!isValidEmail || !isAvailable || sendingOtp || isVerified) return
+    if (!isValidEmail || !isAvailable || sendingOtp || isVerified || countdown > 0) return
     setSendingOtp(true)
     setOtpError('')
     setOtpNotice('')
@@ -125,6 +154,7 @@ export function EmailVerificationField({
       setOtpSent(true)
       setOtp('')
       setOtpNotice(res.message || `Verification code sent to ${trimmedEmail}`)
+      startCountdown()
     } catch (err) {
       setOtpError(err instanceof Error ? err.message : 'Could not send verification code.')
     } finally {
@@ -148,6 +178,8 @@ export function EmailVerificationField({
         setOtpSent(false)
         setOtp('')
         setOtpNotice('')
+        setCountdown(0)
+        expiryRef.current = null
       } else {
         setOtpError(res.message || 'Invalid or expired verification code.')
       }
@@ -265,19 +297,86 @@ export function EmailVerificationField({
             gap: '8px',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--foreground)' }}>
               Enter 6-digit verification code sent to your email:
             </span>
-            <button
-              type="button"
-              className="text-button"
-              onClick={handleSendOtp}
-              disabled={sendingOtp}
-              style={{ fontSize: '0.78rem', color: 'var(--primary, #c34226)', textDecoration: 'underline' }}
-            >
-              Resend OTP
-            </button>
+            {countdown > 0 ? (
+              <div
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '2px 8px 2px 5px',
+                  background: 'rgba(195, 66, 38, 0.08)',
+                  border: '1px solid rgba(195, 66, 38, 0.22)',
+                  borderRadius: '999px',
+                  userSelect: 'none',
+                }}
+                aria-live="polite"
+                aria-label={`Resend code available in ${countdown} seconds`}
+              >
+                <div style={{ position: 'relative', width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <svg width="24" height="24" viewBox="0 0 28 28" style={{ transform: 'rotate(-90deg)', display: 'block' }}>
+                    <circle
+                      cx="14"
+                      cy="14"
+                      r="11"
+                      fill="none"
+                      stroke="rgba(195, 66, 38, 0.2)"
+                      strokeWidth="2.5"
+                    />
+                    <circle
+                      cx="14"
+                      cy="14"
+                      r="11"
+                      fill="none"
+                      stroke="var(--primary, #c34226)"
+                      strokeWidth="2.5"
+                      strokeDasharray={2 * Math.PI * 11}
+                      strokeDashoffset={2 * Math.PI * 11 * (1 - countdown / 30)}
+                      strokeLinecap="round"
+                      style={{ transition: 'stroke-dashoffset 0.2s linear' }}
+                    />
+                  </svg>
+                  <span
+                    style={{
+                      position: 'absolute',
+                      fontSize: countdown >= 10 ? '0.62rem' : '0.68rem',
+                      fontWeight: 800,
+                      fontFamily: 'Manrope, system-ui, -apple-system, sans-serif',
+                      color: 'var(--primary, #c34226)',
+                      lineHeight: 1,
+                      pointerEvents: 'none',
+                    }}
+                  >
+                    {countdown}
+                  </span>
+                </div>
+                <span style={{ fontSize: '0.74rem', color: '#6b7280', fontWeight: 600 }}>
+                  Resend in <span style={{ color: 'var(--primary, #c34226)', fontWeight: 700 }}>{countdown}s</span>
+                </span>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="text-button"
+                onClick={handleSendOtp}
+                disabled={sendingOtp}
+                style={{
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  color: sendingOtp ? '#9ca3af' : 'var(--primary, #c34226)',
+                  textDecoration: 'underline',
+                  cursor: sendingOtp ? 'not-allowed' : 'pointer',
+                  background: 'none',
+                  border: 'none',
+                  padding: '2px 0',
+                }}
+              >
+                {sendingOtp ? 'Sending…' : 'Resend OTP'}
+              </button>
+            )}
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

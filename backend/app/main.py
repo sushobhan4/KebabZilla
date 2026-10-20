@@ -8,7 +8,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.routers import admin, auth, cart, custom_menu, delivery, menu, orders, payments, staff
 from app.schemas import PublicRestaurantOut
-from app.services import calculate_delivery_distance, evaluate_restaurant_and_delivery_status, is_restaurant_open, restaurant_settings
+from app.services import calculate_delivery_distance, evaluate_restaurant_and_delivery_status, is_restaurant_open, is_scheduled_open, restaurant_settings
 from app.dependencies import CurrentAccount, DbSession
 from app.models import Account, Role
 
@@ -89,50 +89,57 @@ async def global_exception_handler(request: Request, exc: Exception):
         headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
     return JSONResponse(
         status_code=500,
-        content={"detail": "Our servers are currently down. Please check back in a few minutes.", "error": str(exc)},
+        content={
+            "detail": "An internal server error occurred. Please try again shortly." if not is_dev else f"Server error: {exc}",
+            "error": str(exc) if is_dev else "InternalServerError",
+        },
         headers=headers,
     )
 
 
 
-def format_public_weekly_schedule(raw_schedule: dict | None) -> dict:
+def format_public_today_schedule(raw_schedule: dict | None) -> dict | None:
     if not isinstance(raw_schedule, dict):
-        return {}
-    all_days = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
-    clean = {}
+        return None
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+    tz = ZoneInfo(settings.business_timezone)
+    now_local = datetime.now(timezone.utc).astimezone(tz)
+    today_name = now_local.strftime("%A").lower()
+
     custom_schedules = raw_schedule.get("custom_schedules")
     if isinstance(custom_schedules, list):
-        clean["custom_schedules"] = custom_schedules
-        for day in all_days:
-            matching = [s for s in custom_schedules if isinstance(s, dict) and day in (s.get("days") or [])]
-            if matching:
-                clean[day] = {
-                    "open": True,
-                    "opens": str(matching[0].get("start_time", "10:00")),
-                    "closes": str(matching[0].get("end_time", "22:00")),
-                }
-            else:
-                clean[day] = {
-                    "open": False,
-                    "opens": "10:00",
-                    "closes": "22:00",
-                }
+        matching = [s for s in custom_schedules if isinstance(s, dict) and today_name in (s.get("days") or [])]
+        if matching:
+            return {
+                "day": today_name,
+                "open": True,
+                "opens": str(matching[0].get("start_time", "10:00")),
+                "closes": str(matching[0].get("end_time", "22:00")),
+            }
+        else:
+            return {
+                "day": today_name,
+                "open": False,
+                "opens": "10:00",
+                "closes": "22:00",
+            }
     else:
-        for day in all_days:
-            day_data = raw_schedule.get(day)
-            if isinstance(day_data, dict) and "open" in day_data:
-                clean[day] = {
-                    "open": bool(day_data.get("open", False)),
-                    "opens": str(day_data.get("opens", "10:00")),
-                    "closes": str(day_data.get("closes", "22:00")),
-                }
-            else:
-                clean[day] = {
-                    "open": False,
-                    "opens": "10:00",
-                    "closes": "22:00",
-                }
-    return clean
+        day_data = raw_schedule.get(today_name)
+        if isinstance(day_data, dict) and "open" in day_data:
+            return {
+                "day": today_name,
+                "open": bool(day_data.get("open", False)),
+                "opens": str(day_data.get("opens", "10:00")),
+                "closes": str(day_data.get("closes", "22:00")),
+            }
+        else:
+            return {
+                "day": today_name,
+                "open": False,
+                "opens": "10:00",
+                "closes": "22:00",
+            }
 
 
 from app.cache import KEY_PUBLIC_RESTAURANT, cache
@@ -219,6 +226,120 @@ def serve_proxy_email_image(url: str, blur: int = 0):
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Proxy error: {exc}")
 
+
+
+SITEMAP_XML_CONTENT = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+  <url>
+    <loc>https://kebabzilla.in/</loc>
+    <lastmod>2026-10-21</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+    <image:image>
+      <image:loc>https://kebabzilla.in/og-image.jpg</image:loc>
+      <image:title>KebabZilla Flame-Grilled Kebabs</image:title>
+      <image:caption>Authentic flame-grilled seekh kebabs and tandoori kebabs in Amtala</image:caption>
+    </image:image>
+    <image:image>
+      <image:loc>https://kebabzilla.in/kebab-thumbnail.jpg</image:loc>
+      <image:title>KebabZilla Kebab Platter</image:title>
+      <image:caption>Delicious seekh kebabs served fresh from the grill</image:caption>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://kebabzilla.in/login</loc>
+    <lastmod>2026-10-21</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://kebabzilla.in/register</loc>
+    <lastmod>2026-10-21</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+</urlset>
+"""
+
+ROBOTS_TXT_CONTENT = """User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /ops
+Disallow: /delivery
+Disallow: /orders
+Disallow: /profile
+Disallow: /security
+Disallow: /api/
+
+Sitemap: https://kebabzilla.in/sitemap.xml
+"""
+
+
+@app.get("/sitemap.xml", tags=["seo"], response_class=Response)
+@app.get(f"{settings.api_prefix}/sitemap.xml", tags=["seo"], response_class=Response)
+def serve_sitemap_xml():
+    """Serve the public sitemap for Google Search Console and SEO indexing."""
+    return Response(
+        content=SITEMAP_XML_CONTENT.strip(),
+        media_type="application/xml; charset=utf-8",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "Access-Control-Allow-Origin": "*",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@app.get("/robots.txt", tags=["seo"], response_class=Response)
+@app.get(f"{settings.api_prefix}/robots.txt", tags=["seo"], response_class=Response)
+def serve_robots_txt():
+    """Serve robots.txt guiding search engines to allowed paths and the sitemap."""
+    return Response(
+        content=ROBOTS_TXT_CONTENT.strip(),
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "Access-Control-Allow-Origin": "*",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@app.get("/favicon.ico", tags=["seo"], response_class=Response)
+@app.get(f"{settings.api_prefix}/favicon.ico", tags=["seo"], response_class=Response)
+def serve_favicon():
+    """Serve favicon.ico for search bots and browsers."""
+    from pathlib import Path
+    for base in [Path(__file__).resolve().parents[2] / "frontend" / "public", Path(__file__).resolve().parents[2] / "firebase-public"]:
+        f = base / "favicon.ico"
+        if f.is_file():
+            return Response(content=f.read_bytes(), media_type="image/x-icon", headers={"Cache-Control": "public, max-age=86400", "Access-Control-Allow-Origin": "*"})
+    raise HTTPException(status_code=404, detail="Favicon not found")
+
+
+@app.get("/og-image.jpg", tags=["seo"], response_class=Response)
+@app.get(f"{settings.api_prefix}/og-image.jpg", tags=["seo"], response_class=Response)
+def serve_og_image():
+    """Serve og-image.jpg for social media crawlers and search rich snippet bots."""
+    from pathlib import Path
+    for base in [Path(__file__).resolve().parents[2] / "frontend" / "public", Path(__file__).resolve().parents[2] / "firebase-public"]:
+        f = base / "og-image.jpg"
+        if f.is_file():
+            return Response(content=f.read_bytes(), media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400", "Access-Control-Allow-Origin": "*"})
+    raise HTTPException(status_code=404, detail="Image not found")
+
+
+@app.get("/kebab-thumbnail.jpg", tags=["seo"], response_class=Response)
+@app.get(f"{settings.api_prefix}/kebab-thumbnail.jpg", tags=["seo"], response_class=Response)
+def serve_kebab_thumbnail():
+    """Serve kebab-thumbnail.jpg for Google Search snippet thumbnail rendering."""
+    from pathlib import Path
+    for base in [Path(__file__).resolve().parents[2] / "frontend" / "public", Path(__file__).resolve().parents[2] / "firebase-public"]:
+        f = base / "kebab-thumbnail.jpg"
+        if f.is_file():
+            return Response(content=f.read_bytes(), media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400", "Access-Control-Allow-Origin": "*"})
+    raise HTTPException(status_code=404, detail="Thumbnail not found")
 
 
 @app.get("/fonts/{filename:path}", tags=["fonts"])
@@ -512,6 +633,10 @@ def public_restaurant(db: DbSession, response: Response):
 
     config = restaurant_settings(db)
     status_info = evaluate_restaurant_and_delivery_status(config)
+    sched_open, _ = is_scheduled_open(config)
+    has_active_override = bool(getattr(config, "admin_override_state", None) is not None and status_info["is_restaurant_open"] != sched_open)
+    can_schedule = bool(status_info["is_restaurant_open"] and status_info["is_delivery_open"] and not has_active_override)
+
     data = {
         "restaurant_name": config.restaurant_name,
         "tagline": config.tagline,
@@ -522,22 +647,21 @@ def public_restaurant(db: DbSession, response: Response):
         "longitude": config.longitude,
         "is_restaurant_open": status_info["is_restaurant_open"],
         "is_delivery_open": status_info["is_delivery_open"],
-        "weekly_schedule": format_public_weekly_schedule(config.weekly_schedule),
+        "today_schedule": format_public_today_schedule(config.weekly_schedule),
         "minimum_order_paise": getattr(config, "minimum_order_paise", 0) or 0,
         "delivery_radius_km": getattr(config, "delivery_radius_km", 10.0) or 10.0,
         "free_delivery_radius_km": getattr(config, "free_delivery_radius_km", 3.0) or 3.0,
         "free_delivery_threshold_paise": getattr(config, "free_delivery_threshold_paise", 0) or 0,
         "delivery_fee_per_km_paise": getattr(config, "delivery_fee_per_km_paise", 0) or 0,
         "charge_from_zero_beyond_free_radius": getattr(config, "charge_from_zero_beyond_free_radius", False) or False,
-        "accepting_orders": status_info.get("accepting_orders", status_info["is_restaurant_open"]),
         "order_cutoff_minutes_before_closing": status_info.get("order_cutoff_minutes_before_closing", 30),
-        "delivery_status": status_info["delivery_status"],
         "delivery_status_heading": status_info["delivery_status_heading"],
         "delivery_status_message": status_info["delivery_status_message"],
         "closing_in_minutes": status_info["closing_in_minutes"],
         "cutoff_in_minutes": status_info.get("cutoff_in_minutes"),
         "closing_time": status_info["closing_time"],
-        "schedule_status": status_info.get("schedule_status", ""),
+        "can_schedule_order": can_schedule,
+        "google_client_id": settings.google_client_id or None,
     }
     cache.set(KEY_PUBLIC_RESTAURANT, data, ttl_seconds=15.0)
     response.headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"

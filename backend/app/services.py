@@ -5,6 +5,7 @@ import math
 import string
 import secrets
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -112,8 +113,8 @@ def restaurant_settings(db: Session) -> RestaurantSettings:
 def assemble_order(
     db: Session,
     *,
-    customer: Account | None,
-    created_by: Account | None,
+    customer: Any | None,
+    created_by: Any | None,
     lines: list[OrderLineInput],
     payment_method: PaymentMethod,
     address: str,
@@ -172,6 +173,16 @@ def assemble_order(
         scheduled_for = scheduled_for.astimezone(timezone.utc)
         if scheduled_for <= now:
             raise HTTPException(status_code=400, detail="Choose a future order time")
+
+        # Admin override check: people cannot schedule orders during an active admin override
+        is_shop_open, _ = is_restaurant_open(config, now)
+        sched_open, _ = is_scheduled_open(config, now)
+        if getattr(config, "admin_override_state", None) is not None and is_shop_open != sched_open:
+            raise HTTPException(
+                status_code=400,
+                detail="Scheduled orders are currently unavailable while restaurant hours are overridden. Please select 'As soon as possible'."
+            )
+
         _validate_opening_time(config, scheduled_for)
         if order_type != "DINE_IN":
             sched_status = evaluate_restaurant_and_delivery_status(config, scheduled_for)
@@ -436,7 +447,8 @@ def _distance_km(latitude_a: float, longitude_a: float, latitude_b: float, longi
         math.sin(delta_lat / 2) ** 2
         + math.cos(lat_a) * math.cos(lat_b) * math.sin(delta_long / 2) ** 2
     )
-    return earth_radius_km * 2 * math.atan2(math.sqrt(haversine), math.sqrt(1 - haversine))
+    clamped = min(1.0, max(0.0, haversine))
+    return earth_radius_km * 2 * math.atan2(math.sqrt(clamped), math.sqrt(1 - clamped))
 
 
 def get_schedule_intervals_for_range(

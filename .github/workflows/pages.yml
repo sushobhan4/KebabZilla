@@ -44,7 +44,14 @@ jobs:
           VITE_GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY || secrets.VITE_GOOGLE_MAPS_API_KEY || vars.GOOGLE_MAPS_API_KEY || vars.VITE_GOOGLE_MAPS_API_KEY }}
           BASE_PATH: ${{ steps.pages.outputs.base_path || '/' }}
       - name: Configure GitHub Pages SPA fallback
-        run: cp frontend/dist/index.html frontend/dist/404.html
+        run: |
+          cp frontend/dist/index.html frontend/dist/404.html
+          for route in orders profile security ops delivery admin login register forgot-password recovery reset-password copy-otp workspace change-password \
+                       admin/orders admin/menu admin/team admin/activity admin/offers admin/discounts admin/reports admin/settings \
+                       ops/billing ops/menu; do
+            mkdir -p "frontend/dist/$route"
+            cp frontend/dist/index.html "frontend/dist/$route/index.html"
+          done
       - uses: actions/upload-pages-artifact@v3
         with:
           path: frontend/dist

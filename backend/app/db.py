@@ -29,7 +29,7 @@ if not is_sqlite:
 
 engine = create_engine(
     settings.database_url,
-    pool_pre_ping=is_sqlite,
+    pool_pre_ping=True,
     connect_args=connect_args,
     **pool_kwargs,
 )

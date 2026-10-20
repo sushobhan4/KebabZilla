@@ -1,0 +1,11 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /ops
+Disallow: /delivery
+Disallow: /orders
+Disallow: /profile
+Disallow: /security
+Disallow: /api/
+
+Sitemap: https://kebabzilla.in/sitemap.xml

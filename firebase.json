@@ -11,7 +11,7 @@
         "source": "**",
         "run": {
           "serviceId": "kebabzilla-backend",
-          "region": "asia-south2"
+          "region": "asia-south1"
         }
       }
     ]

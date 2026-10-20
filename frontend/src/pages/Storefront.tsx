@@ -106,7 +106,7 @@ export default function Storefront() {
   const [estimateLoading, setEstimateLoading] = useState(false)
   const [notes, setNotes] = useState('')
   const [scheduledFor, setScheduledFor] = useState('')
-  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'RAZORPAY'>('RAZORPAY')
+  const [paymentMethod, setPaymentMethod] = usePreference<'CASH' | 'RAZORPAY'>('kz_payment_method', 'RAZORPAY')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -160,6 +160,15 @@ export default function Storefront() {
     if (restaurant?.closing_in_minutes !== undefined && restaurant?.closing_in_minutes !== null) {
       return restaurant.closing_in_minutes
     }
+    if (restaurant?.today_schedule?.open && restaurant.today_schedule.closes) {
+      const now = new Date(nowTimestamp)
+      const [ch, cm] = restaurant.today_schedule.closes.split(':').map(Number)
+      const closeDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), ch, cm, 0)
+      const diffMs = closeDate.getTime() - nowTimestamp
+      if (diffMs > 0) {
+        return Math.max(1, Math.round(diffMs / 60000))
+      }
+    }
     if (restaurant?.weekly_schedule) {
       const now = new Date(nowTimestamp)
       const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
@@ -182,7 +191,7 @@ export default function Storefront() {
       }
     }
     return null
-  }, [restaurant?.closing_time, restaurant?.closing_in_minutes, restaurant?.weekly_schedule, nowTimestamp])
+  }, [restaurant?.closing_time, restaurant?.closing_in_minutes, restaurant?.today_schedule, restaurant?.weekly_schedule, nowTimestamp])
 
   const cutoffMinutes = restaurant?.order_cutoff_minutes_before_closing ?? 30
 
@@ -244,33 +253,40 @@ export default function Storefront() {
 
   // Permissible opening hour slots for today only (15-min intervals)
   const permissibleTimeSlots = useMemo(() => {
-    if (!restaurant) return []
-    const schedule = restaurant.weekly_schedule || {}
-    const now = new Date()
-    const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
-    const todayName = days[now.getDay()]
-
+    if (!restaurant || restaurant.can_schedule_order === false) return []
+    const todaySched = restaurant.today_schedule
     type Window = { startMin: number; endMin: number }
     const windows: Window[] = []
 
-    const customSchedules = schedule.custom_schedules
-    if (Array.isArray(customSchedules) && customSchedules.length > 0) {
-      for (const s of customSchedules) {
-        if (s.days?.includes(todayName)) {
-          const [sh, sm] = (s.start_time || '10:00').split(':').map(Number)
-          const [eh, em] = (s.end_time || '22:00').split(':').map(Number)
-          windows.push({ startMin: sh * 60 + sm, endMin: eh * 60 + em })
-        }
-      }
-    } else if (schedule[todayName]?.open) {
-      const [sh, sm] = (schedule[todayName].opens || '10:00').split(':').map(Number)
-      const [eh, em] = (schedule[todayName].closes || '22:00').split(':').map(Number)
+    if (todaySched && todaySched.open) {
+      const [sh, sm] = (todaySched.opens || '10:00').split(':').map(Number)
+      const [eh, em] = (todaySched.closes || '22:00').split(':').map(Number)
       windows.push({ startMin: sh * 60 + sm, endMin: eh * 60 + em })
+    } else if (restaurant.weekly_schedule) {
+      const schedule = restaurant.weekly_schedule || {}
+      const now = new Date()
+      const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
+      const todayName = days[now.getDay()]
+      const customSchedules = schedule.custom_schedules
+      if (Array.isArray(customSchedules) && customSchedules.length > 0) {
+        for (const s of customSchedules) {
+          if (s.days?.includes(todayName)) {
+            const [sh, sm] = (s.start_time || '10:00').split(':').map(Number)
+            const [eh, em] = (s.end_time || '22:00').split(':').map(Number)
+            windows.push({ startMin: sh * 60 + sm, endMin: eh * 60 + em })
+          }
+        }
+      } else if (schedule[todayName]?.open) {
+        const [sh, sm] = (schedule[todayName].opens || '10:00').split(':').map(Number)
+        const [eh, em] = (schedule[todayName].closes || '22:00').split(':').map(Number)
+        windows.push({ startMin: sh * 60 + sm, endMin: eh * 60 + em })
+      }
     }
 
     if (windows.length === 0) return []
 
     // Earliest orderable time: at least 30 minutes from right now
+    const now = new Date()
     const nowMinutes = now.getHours() * 60 + now.getMinutes()
     const minLeadMinutes = nowMinutes + 30
 
@@ -308,6 +324,12 @@ export default function Storefront() {
   }, [totalItems])
 
   useEffect(() => () => { if (cartRetractTimer.current) clearTimeout(cartRetractTimer.current) }, [])
+
+  useEffect(() => {
+    if (restaurant?.can_schedule_order === false && scheduledFor) {
+      setScheduledFor("")
+    }
+  }, [restaurant?.can_schedule_order, scheduledFor])
 
   function revealCartSummary() {
     setCartExpanded(true)
@@ -568,7 +590,7 @@ export default function Storefront() {
     if (!current.is_available) return true
     if (current.is_paused) return true
     if (line.variation_name && current.variations && current.variations.length > 0) {
-      const vMatch = current.variations.find((v) => v.name.toLowerCase() === line.variation_name?.toLowerCase())
+      const vMatch = current.variations.find((v) => v?.name?.toLowerCase() === line.variation_name?.toLowerCase())
       if (!vMatch) return true
     }
     return false
@@ -937,7 +959,7 @@ export default function Storefront() {
     }
     const line = cart.slice().reverse().find((l) => l.item.id === itemId && !l.item.is_custom && l.variation_name)
     if (line && line.variation_name && line.item.variations) {
-      const v = line.item.variations.find((v) => v.name.toLowerCase() === line.variation_name?.toLowerCase())
+      const v = line.item.variations.find((v) => v?.name?.toLowerCase() === line.variation_name?.toLowerCase())
       if (v) {
         return {
           itemId,
@@ -1085,7 +1107,7 @@ export default function Storefront() {
   function openVariationModal(item: MenuItem, existingLine?: CartLine) {
     setVariationModalItem(item)
     const matched = existingLine
-      ? item.variations?.find((v) => v.name.toLowerCase() === existingLine.variation_name?.toLowerCase())
+      ? item.variations?.find((v) => v?.name?.toLowerCase() === existingLine.variation_name?.toLowerCase())
       : null
     const chosenVar = matched || item.variations?.[0] || null
     setSelectedVariation(chosenVar)
@@ -1497,7 +1519,7 @@ export default function Storefront() {
 
   return <main className="storefront">
     <section className="hero-section">
-      <div className="hero-copy"><div className="hero-kicker"><span className="hero-kicker-icon"><Flame size={15} fill="currentColor" /></span> SLOW FIRE. BIG FLAVOR.</div><h1>Big on flavor.<br />Never <em>on the fence.</em></h1><p className="hero-description">Big, bold flavors and ridiculously good kebabs, made fresh when you order.</p><div className="hero-actions"><Button onClick={goToMenu}>Explore the menu <ArrowDown size={16} /></Button><div className="hero-delivery"><span className="hero-delivery-icon"><Truck size={17} /></span><span><strong>Order updates along the way</strong><small>From our kitchen to your door</small></span></div></div><div className="hero-social-proof"><div className="social-rating"><span>✦</span><b>Made to order</b></div><div className="social-divider" /><span>Freshly prepared</span><span className="social-separator">·</span><span>Made with care</span></div></div>
+      <div className="hero-copy"><div className="hero-kicker"><span className="hero-kicker-icon"><Flame size={15} fill="currentColor" /></span> SLOW FIRE. BIG FLAVOR.</div><h1>Big on flavor.<br />Never <em>on the fence.</em></h1><p className="hero-description">KebabZilla is an online ordering platform for kebabs, located in Amtala on DH Road, South 24 Parganas, West Bengal. Browse our menu, view available items, and place your order online.</p><div className="hero-actions"><Button onClick={goToMenu}>Explore the menu <ArrowDown size={16} /></Button><div className="hero-delivery"><span className="hero-delivery-icon"><Truck size={17} /></span><span><strong>Order updates along the way</strong><small>From our kitchen to your door</small></span></div></div><div className="hero-social-proof"><div className="social-rating"><span>✦</span><b>Made to order</b></div><div className="social-divider" /><span>Freshly prepared</span><span className="social-separator">·</span><span>Made with care</span></div></div>
       <div className="hero-art"><div className="hero-art-bg" /><div className="hero-orbit hero-orbit-one" /><div className="hero-orbit hero-orbit-two" /><div className="hero-food-main"><span className="hero-food-glow" /><span className="hero-food-emoji">🥙</span><span className="hero-food-herbs">✳ &nbsp;✦ &nbsp;✳</span></div><div className="hero-note hero-note-top"><span className="hero-note-star">✦</span><span>Fire-kissed<br /><strong>to perfection</strong></span></div><div className="hero-note hero-note-bottom"><span className="mini-avatar">Z</span><span><strong>Made fresh</strong><br />Just for you</span><Sparkles className="note-spark" size={17} /></div><span className="hero-art-doodle doodle-one">✷</span><span className="hero-art-doodle doodle-two">✳</span></div>
       <div className="hero-bottomline"><span>01 <i /> GOOD FOOD, GREAT NEIGHBORS</span><span className="hero-bottom-address"><MapPin size={13} /> {restaurant?.address || 'Add your restaurant address'}</span><span>SCROLL TO TASTE <ArrowDown size={13} /></span></div>
     </section>
@@ -1824,7 +1846,7 @@ export default function Storefront() {
               }}
               options={[
                 { value: "now", label: "As soon as possible" },
-                { value: "later", label: "Schedule for later" },
+                ...(restaurant?.can_schedule_order !== false && permissibleTimeSlots.length > 0 ? [{ value: "later", label: "Schedule for later" }] : []),
               ]}
             />
           </label>

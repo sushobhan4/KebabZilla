@@ -104,6 +104,28 @@ def _clean_filename(filename: str) -> str:
     return f"{clean_name}.{clean_ext}"
 
 
+def convert_to_webp(file_bytes: bytes, quality: int = 82, max_dim: int = 1920) -> bytes:
+    """Convert arbitrary image bytes (JPEG, PNG, etc.) to optimized WebP bytes."""
+    from PIL import Image, ImageOps
+    import io
+
+    im = Image.open(io.BytesIO(file_bytes))
+    try:
+        im = ImageOps.exif_transpose(im)
+    except Exception:
+        pass
+
+    if max(im.width, im.height) > max_dim:
+        im.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+
+    if im.mode not in ("RGB", "RGBA"):
+        im = im.convert("RGBA" if "transparency" in im.info or im.mode in ("P", "LA") else "RGB")
+
+    out_buf = io.BytesIO()
+    im.save(out_buf, format="WEBP", quality=quality, method=4)
+    return out_buf.getvalue()
+
+
 def upload_menu_image(
     file_bytes: bytes,
     filename: str,
@@ -111,37 +133,35 @@ def upload_menu_image(
 ) -> dict:
     """Upload a menu image file into the configured GCS bucket under menuImages/.
 
+    Automatically converts the incoming image to high-efficiency WebP format before saving.
     Returns a dict with the backend URL, GCS URI, and filename.
-    Generates a completely random filename (32-character hex + extension).
+    Generates a completely random filename (32-character hex + .webp).
     """
     client = get_storage_client()
     bucket = client.bucket(settings.gcs_bucket_name)
 
-    # Determine file extension from filename or content_type
-    _, ext = os.path.splitext(filename or "")
-    clean_ext = re.sub(r"[^a-zA-Z0-9]", "", ext).lower()
-    if not clean_ext:
-        ext_map = {
-            "image/jpeg": "jpg",
-            "image/jpg": "jpg",
-            "image/png": "png",
-            "image/webp": "webp",
-            "image/gif": "gif",
-            "image/avif": "avif",
-        }
-        clean_ext = ext_map.get((content_type or "").lower(), "jpg")
+    # Convert to WebP for modern web performance, faster delivery, and bandwidth savings
+    try:
+        webp_bytes = convert_to_webp(file_bytes, quality=82)
+        file_bytes = webp_bytes
+        content_type = "image/webp"
+        clean_ext = "webp"
+    except Exception as exc:
+        logger.warning("WebP conversion failed for '%s', keeping original format: %s", filename, exc)
+        _, ext = os.path.splitext(filename or "")
+        clean_ext = re.sub(r"[^a-zA-Z0-9]", "", ext).lower() or "jpg"
 
     # Complete random name: 32 random hex characters + extension
     unique_name = f"{uuid.uuid4().hex}.{clean_ext}"
 
-    folder = (settings.gcs_menu_images_folder or "menuImages").strip("/\\")
+    folder = (settings.gcs_menu_images_folder or "menuImages").strip("/").strip("\\")
     blob_path = f"{folder}/{unique_name}" if folder else unique_name
 
     blob = bucket.blob(blob_path)
     blob.cache_control = "public, max-age=31536000, immutable"
     blob.upload_from_string(file_bytes, content_type=content_type)
 
-    logger.info("Successfully uploaded menu image to gs://%s/%s", settings.gcs_bucket_name, blob_path)
+    logger.info("Successfully uploaded menu image to gs://%s/%s (format: %s)", settings.gcs_bucket_name, blob_path, clean_ext)
 
     return {
         "url": f"/menu/images/gcs/{unique_name}",
@@ -158,15 +178,22 @@ def get_menu_image_blob(filename: str) -> tuple[bytes, str]:
     bucket = client.bucket(settings.gcs_bucket_name)
 
     clean_file = os.path.basename(filename)
-    folder = (settings.gcs_menu_images_folder or "menuImages").strip("/\\")
+    folder = (settings.gcs_menu_images_folder or "menuImages").strip("/").strip("\\")
     blob_path = f"{folder}/{clean_file}" if folder else clean_file
 
     blob = bucket.blob(blob_path)
     if not blob.exists():
+        # Transparent fallback: if a .jpg was requested but converted to .webp, serve the .webp blob
+        base_name, _ = os.path.splitext(clean_file)
+        webp_file = f"{base_name}.webp"
+        webp_path = f"{folder}/{webp_file}" if folder else webp_file
+        webp_blob = bucket.blob(webp_path)
+        if webp_blob.exists():
+            return webp_blob.download_as_bytes(), "image/webp"
         raise FileNotFoundError(f"Image '{clean_file}' does not exist in bucket '{settings.gcs_bucket_name}'.")
 
     blob_bytes = blob.download_as_bytes()
-    content_type = blob.content_type or "image/jpeg"
+    content_type = blob.content_type or ("image/webp" if clean_file.endswith(".webp") else "image/jpeg")
     return blob_bytes, content_type
 
 

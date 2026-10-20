@@ -53,9 +53,9 @@ def staff_menu_pauses(db: DbSession):
     custom_rows = db.scalars(select(CustomMenuItem).where(CustomMenuItem.paused_by_id.is_not(None))).all()
     all_paused_by = [r.paused_by_id for r in rows if r.paused_by_id] + [r.paused_by_id for r in custom_rows if r.paused_by_id]
     people = {person.id: person.name for person in db.scalars(select(Account).where(Account.id.in_(all_paused_by))).all()} if all_paused_by else {}
-    results = [{"menu_item_id": row.id, "employee_name": people.get(row.paused_by_id, "Staff member"), "paused_until": None} for row in rows]
+    results = [{"menu_item_id": row.id, "employee_name": people.get(row.paused_by_id, "Staff member"), "paused_until": row.paused_until.isoformat() if row.paused_until else None} for row in rows]
     for crow in custom_rows:
-        results.append({"menu_item_id": f"custom-{crow.id}", "employee_name": people.get(crow.paused_by_id, "Staff member"), "paused_until": None})
+        results.append({"menu_item_id": f"custom-{crow.id}", "employee_name": people.get(crow.paused_by_id, "Staff member"), "paused_until": crow.paused_until.isoformat() if crow.paused_until else None})
     return results
 
 
@@ -85,6 +85,7 @@ def staff_pause_menu_item(item_id: int, data: MenuPauseInput, actor: CurrentAcco
         if until is None:
             until = datetime.combine(local_now.date() + timedelta(days=1), time.min, tzinfo=ZoneInfo(settings.business_timezone)).astimezone(timezone.utc)
     item.paused_by_id = actor.id
+    item.paused_until = until
     db.add(AdminEvent(event_type="menu_paused", message=f"{item.name} paused by {actor.name} ({data.mode})", actor_id=actor.id, details={"menu_item_id": item.id, "menu_item_name": item.name, "mode": data.mode, "paused_until": until.isoformat()}))
     db.commit()
     invalidate_menu_cache()
@@ -97,6 +98,7 @@ def staff_resume_menu_item(item_id: int, actor: CurrentAccount, db: DbSession):
     if not item:
         raise HTTPException(status_code=404, detail="Menu item not found")
     item.paused_by_id = None
+    item.paused_until = None
     db.add(AdminEvent(event_type="menu_resumed", message=f"{item.name} restored to menu by {actor.name}", actor_id=actor.id, details={"menu_item_id": item.id, "menu_item_name": item.name}))
     db.commit()
     invalidate_menu_cache()
@@ -129,6 +131,7 @@ def staff_pause_custom_menu_item(item_id: int, data: MenuPauseInput, actor: Curr
         if until is None:
             until = datetime.combine(local_now.date() + timedelta(days=1), time.min, tzinfo=ZoneInfo(settings.business_timezone)).astimezone(timezone.utc)
     item.paused_by_id = actor.id
+    item.paused_until = until
     db.add(AdminEvent(event_type="custom_menu_paused", message=f"Custom item '{item.name}' paused by {actor.name} ({data.mode})", actor_id=actor.id, details={"custom_menu_item_id": item.id, "custom_menu_item_name": item.name, "mode": data.mode, "paused_until": until.isoformat()}))
     db.commit()
     invalidate_menu_cache()
@@ -141,6 +144,7 @@ def staff_resume_custom_menu_item(item_id: int, actor: CurrentAccount, db: DbSes
     if not item:
         raise HTTPException(status_code=404, detail="Custom menu item not found")
     item.paused_by_id = None
+    item.paused_until = None
     db.add(AdminEvent(event_type="custom_menu_resumed", message=f"Custom item '{item.name}' restored to menu by {actor.name}", actor_id=actor.id, details={"custom_menu_item_id": item.id, "custom_menu_item_name": item.name}))
     db.commit()
     invalidate_menu_cache()

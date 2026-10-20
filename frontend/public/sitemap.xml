@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+  <url>
+    <loc>https://kebabzilla.in/</loc>
+    <lastmod>2026-10-21</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+    <image:image>
+      <image:loc>https://kebabzilla.in/og-image.jpg</image:loc>
+      <image:title>KebabZilla Flame-Grilled Kebabs</image:title>
+      <image:caption>Authentic flame-grilled seekh kebabs and tandoori kebabs in Amtala</image:caption>
+    </image:image>
+    <image:image>
+      <image:loc>https://kebabzilla.in/kebab-thumbnail.jpg</image:loc>
+      <image:title>KebabZilla Kebab Platter</image:title>
+      <image:caption>Delicious seekh kebabs served fresh from the grill</image:caption>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://kebabzilla.in/login</loc>
+    <lastmod>2026-10-21</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://kebabzilla.in/register</loc>
+    <lastmod>2026-10-21</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+</urlset>

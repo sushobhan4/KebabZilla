@@ -12,7 +12,7 @@ function Queue() {
   const [busy, setBusy] = useState<string | null>(null)
   const [filter, setFilter] = usePreference<string>('ops_queue_filter', 'ACTIVE')
 
-  const refresh = useCallback(() => api<Order[]>('/staff/orders').then((ordersList) => {
+  const refresh = useCallback((skipCache = false) => api<Order[]>('/staff/orders', { skipCache }).then((ordersList) => {
     setOrders(ordersList)
   }).catch((err) => setError(err instanceof Error ? err.message : 'Could not load the order queue.')).finally(() => setLoading(false)), [])
   useEffect(() => {
@@ -29,12 +29,12 @@ function Queue() {
     setError('')
     try {
       await api(`/staff/orders/${order.order_id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) })
-      await refresh()
+      await refresh(true)
     } catch (err) { setError(err instanceof Error ? err.message : 'The order could not be updated.') }
     finally { setBusy(null) }
   }
 
-  function escapeReceipt(value: string) { return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;') }
+  function escapeReceipt(value?: string | null) { return String(value || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;') }
 
   async function markReadyAndPrint(order: Order) {
     const printWindow = window.open('', '_blank', 'width=420,height=720')
@@ -50,7 +50,7 @@ function Queue() {
         printWindow.focus()
         window.setTimeout(() => printWindow.print(), 300)
       }
-      await refresh()
+      await refresh(true)
     } catch (err) {
       printWindow?.close()
       setError(err instanceof Error ? err.message : 'The order could not be marked ready.')
@@ -63,7 +63,7 @@ function Queue() {
     {error && <Notice onDismiss={() => setError('')}>{error}</Notice>}
     <div className="stat-row ops-stats"><div className="stat-card"><span className="stat-icon stat-orange"><ClipboardList size={18} /></span><div><small>New orders</small><strong>{orders.filter((order) => order.status === 'PLACED').length}</strong></div><span className="stat-caption">Need a quick look</span></div><div className="stat-card"><span className="stat-icon stat-amber"><CookingPot size={18} /></span><div><small>On the grill</small><strong>{orders.filter((order) => ['ACCEPTED', 'PREPARING'].includes(order.status)).length}</strong></div><span className="stat-caption">In progress</span></div><div className="stat-card"><span className="stat-icon stat-green"><Truck size={18} /></span><div><small>Ready to go</small><strong>{orders.filter((order) => order.status === 'READY').length}</strong></div><span className="stat-caption">Awaiting dispatch</span></div><div className="stat-card"><span className="stat-icon stat-plum"><CircleCheck size={18} /></span><div><small>Orders today</small><strong>{orders.filter((order) => new Date(order.created_at).toDateString() === new Date().toDateString()).length}</strong></div><span className="stat-caption">All day so far</span></div></div>
     <div className="filter-tabs ops-filter-tabs"><button className={filter === 'ACTIVE' ? 'active' : ''} onClick={() => setFilter('ACTIVE')}>Active</button><button className={filter === 'PLACED' ? 'active' : ''} onClick={() => setFilter('PLACED')}>New <b>{orders.filter((order) => order.status === 'PLACED').length}</b></button><button className={filter === 'READY' ? 'active' : ''} onClick={() => setFilter('READY')}>Ready</button></div>
-    {!displayed.length ? <EmptyState icon={<CookingPot size={21} />} title="A quiet moment at the pass" description="New orders show up here as soon as they’re placed." /> : <div className="ops-order-grid">{displayed.map((order, index) => <article className="ops-order-card" key={order.order_id}><div className="ops-order-head"><div><span className="ops-order-time">{friendlyDate(order.created_at)}</span><h3><strong className="ops-queue-number">Order #{index + 1}</strong></h3></div><StatusBadge status={order.status} /></div><div className="ops-customer"><span className="mini-person"><UserRound size={15} /></span><span><strong>{order.customer_name}</strong><small>{order.order_type === 'DINE_IN' ? 'Walk-in · dine-in' : order.order_type === 'PICKUP' ? 'Walk-in · collection' : order.customer_phone || 'Delivery order'}</small></span>{order.customer_id !== null ? <Badge tone="amber">ONLINE ORDER</Badge> : <Badge tone="soft">WALK-IN</Badge>}</div><div className="ops-order-items">{order.items.map((line) => <div className="ops-order-item" key={`${line.menu_item_id}-${line.name}`}>{(line.image_urls?.length || line.image_url) && <span className="ops-order-item-art"><MenuImageCarousel images={line.image_urls?.length ? line.image_urls : line.image_url ? [line.image_url] : []} alt={line.name} className="menu-gallery-order" /></span>}<span><b>{line.quantity}×</b> {line.name}</span><strong>{formatINR(line.line_total_paise)}</strong></div>)}</div><div className="ops-order-address"><Truck size={14} /><span>{order.order_type === 'DINE_IN' || order.order_type === 'PICKUP' ? 'Restaurant counter pickup' : 'Delivery order'}</span></div><div className="ops-order-bottom"><span>Total <strong>{formatINR(order.total_paise)}</strong></span><div className="order-actions">
+    {!displayed.length ? <EmptyState icon={<CookingPot size={21} />} title="A quiet moment at the pass" description="New orders show up here as soon as they’re placed." /> : <div className="ops-order-grid">{displayed.map((order) => <article className="ops-order-card" key={order.order_id}><div className="ops-order-head"><div><span className="ops-order-time">{friendlyDate(order.created_at)}</span><h3><strong className="ops-queue-number">Order #{order.order_id}</strong></h3></div><StatusBadge status={order.status} /></div><div className="ops-customer"><span className="mini-person"><UserRound size={15} /></span><span><strong>{order.customer_name}</strong><small>{order.order_type === 'DINE_IN' ? 'Walk-in · dine-in' : order.order_type === 'PICKUP' ? 'Walk-in · collection' : order.customer_phone || 'Delivery order'}</small></span>{order.customer_id !== null ? <Badge tone="amber">ONLINE ORDER</Badge> : <Badge tone="soft">WALK-IN</Badge>}</div><div className="ops-order-items">{order.items.map((line) => <div className="ops-order-item" key={`${line.menu_item_id}-${line.name}`}>{(line.image_urls?.length || line.image_url) && <span className="ops-order-item-art"><MenuImageCarousel images={line.image_urls?.length ? line.image_urls : line.image_url ? [line.image_url] : []} alt={line.name} className="menu-gallery-order" /></span>}<span><b>{line.quantity}×</b> {line.name}</span><strong>{formatINR(line.line_total_paise)}</strong></div>)}</div><div className="ops-order-address"><Truck size={14} /><span>{order.order_type === 'DINE_IN' || order.order_type === 'PICKUP' ? 'Restaurant counter pickup' : 'Delivery order'}</span></div><div className="ops-order-bottom"><span>Total <strong>{formatINR(order.total_paise)}</strong></span><div className="order-actions">
       {order.status === 'PLACED' && <><Button variant="ghost" className="reject-action" disabled={busy === order.order_id} onClick={() => void update(order, 'REJECTED')}>Reject</Button><Button size="button-sm" disabled={busy === order.order_id} onClick={() => void update(order, 'ACCEPTED')}>Accept <Check size={14} /></Button></>}
       {(order.status === 'ACCEPTED' || order.status === 'PREPARING') && <Button size="button-sm" disabled={busy === order.order_id} onClick={() => void markReadyAndPrint(order)}>Print bill & ready <ReceiptText size={14} /></Button>}
       {order.status === 'READY' && <span className="queue-waiting">Waiting for delivery partner</span>}
@@ -90,11 +90,11 @@ function MenuAvailability() {
   const [search, setSearch] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState<string | number | null>(null)
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (skipCache = false) => {
     const [items, customItems, pauses] = await Promise.all([
-      api<MenuItem[]>('/staff/menu'),
-      api<CustomMenuItem[]>('/custom-menu/manage'),
-      api<{ menu_item_id: number | string; employee_name: string; paused_until: string }[]>('/staff/menu-pauses'),
+      api<MenuItem[]>('/staff/menu', { skipCache }),
+      api<CustomMenuItem[]>('/custom-menu/manage', { skipCache }),
+      api<{ menu_item_id: number | string; employee_name: string; paused_until: string }[]>('/staff/menu-pauses', { skipCache }),
     ])
     const mappedCustom: MenuItem[] = (customItems || []).map((ci) => {
       const lowestPaise = getCustomItemLowestPrice(ci)
@@ -136,7 +136,7 @@ function MenuAvailability() {
     try {
       const endpoint = item.is_custom ? `/staff/custom-menu/${item.id}/pause` : `/staff/menu/${item.id}/pause`
       await api(endpoint, { method: mode ? 'POST' : 'DELETE', ...(mode ? { body: JSON.stringify({ mode }) } : {}) })
-      await refresh()
+      await refresh(true)
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not update this menu item.') }
     finally { setBusy(null) }
   }
@@ -879,10 +879,10 @@ function Drafts() {
   const [error, setError] = useState('')
   const [draftToDelete, setDraftToDelete] = useState<{ id: number; customer_name: string } | null>(null)
   const navigate = useNavigate()
-  const refresh = useCallback(() => api<typeof drafts>('/staff/drafts').then(setDrafts).catch((err) => setError(err instanceof Error ? err.message : 'Could not load drafts.')).finally(() => setLoading(false)), [])
+  const refresh = useCallback((skipCache = false) => api<typeof drafts>('/staff/drafts', { skipCache }).then(setDrafts).catch((err) => setError(err instanceof Error ? err.message : 'Could not load drafts.')).finally(() => setLoading(false)), [])
   useEffect(() => { void refresh() }, [refresh])
   async function remove(id: number) {
-    try { await api(`/staff/drafts/${id}`, { method: 'DELETE' }); await refresh() }
+    try { await api(`/staff/drafts/${id}`, { method: 'DELETE' }); await refresh(true) }
     catch (err) { setError(err instanceof Error ? err.message : 'Could not delete this draft.') }
   }
   return <><PageTitle eyebrow="PICK UP WHERE YOU LEFT OFF" title="Saved drafts" description="Unfinished bills, saved for the next quiet moment." action={<Link className="button button-primary" to="/ops/billing"><Plus size={16} /> New bill</Link>} />

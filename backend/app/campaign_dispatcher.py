@@ -5,7 +5,7 @@ import queue
 import threading
 import time
 from email.message import EmailMessage
-from typing import Any, Callable
+from typing import Any
 
 from app.config import settings
 from app.db import SessionLocal
@@ -254,12 +254,8 @@ class CampaignDispatcher:
                 if self.batch_interval > 0:
                     time.sleep(self.batch_interval)
 
-        finally:
-            if client is not None:
-                try:
-                    client.quit()
-                except Exception:
-                    pass
+        except Exception as exc:
+            logger.error("Campaign %s encountered error during email dispatch: %s", log_id, exc)
 
         # Final status calculation
         if sent == total:

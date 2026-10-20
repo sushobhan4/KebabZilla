@@ -78,10 +78,10 @@ options:
 
 substitutions:
   REPO_NAME: kebabzilla
-  _AR_HOSTNAME: asia-south2-docker.pkg.dev
+  _AR_HOSTNAME: asia-south1-docker.pkg.dev
   _AR_PROJECT_ID: kebabzilla
   _AR_REPOSITORY: cloud-run-source-deploy
-  _DEPLOY_REGION: asia-south2
+  _DEPLOY_REGION: asia-south1
   _PLATFORM: managed
   _SERVICE_NAME: kebabzilla-backend
   _TRIGGER_ID: 1150a81a-2bd0-4eaa-b494-4844e721e103

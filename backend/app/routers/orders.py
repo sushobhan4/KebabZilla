@@ -5,7 +5,7 @@ from sqlalchemy.orm import joinedload, selectinload
 from app.config import settings
 from app.dependencies import CurrentAccount, DbSession
 from app.integrations import razorpay
-from app.models import Account, CartItem, Order, OrderStatus, Payment, PaymentMethod, PaymentStatus, Role
+from app.models import Account, CartItem, Order, OrderItem, OrderStatus, Payment, PaymentMethod, PaymentStatus, Role
 from app.schemas import OrderCreate
 from app.services import assemble_order, issue_razorpay_refund, order_payload, order_total_paise, transition_order
 
@@ -119,7 +119,11 @@ def order_details(order_id: str, account: CurrentAccount, db: DbSession):
     order = db.get(Order, order_id)
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found")
-    if order.customer_id != account.id and account.role not in (Role.ADMIN, Role.EMPLOYEE):
+    if (
+        order.customer_id != account.id
+        and order.assigned_delivery_id != account.id
+        and account.role not in (Role.ADMIN, Role.EMPLOYEE)
+    ):
         raise HTTPException(status_code=404, detail="Order not found")
     is_customer = order.customer_id == account.id
     return order_payload(order, include_delivery_otp=is_customer)

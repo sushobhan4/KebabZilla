@@ -212,6 +212,7 @@ export default function Profile() {
       updateAccount(updated); setForm({ name: updated.name, email: updated.email, phone: updatedPhone }); setAddresses(updated.addresses)
       savedProfile.current = JSON.stringify({ form: { name: updated.name, email: updated.email, phone: updatedPhone }, addresses: updated.addresses })
       if (updated.addresses.some((item) => item.id === savedAddressId)) setActiveAddress(savedAddressId)
+      setEditingAddress(null)
       setNotice('Profile and saved addresses updated.')
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not save your profile.') }
     finally { setBusy(false) }
@@ -258,22 +259,26 @@ export default function Profile() {
     <PageTitle eyebrow={`${account?.role || 'YOUR'} KEBABZILLA ACCOUNT`} title="Edit profile" description="Update your personal details and password." action={<Link className="button button-secondary" to={account && account.role !== 'USER' ? homeForProfile(account.role) : '/'}><ArrowLeft size={15} /> Back</Link>} />
     <form ref={profileFormRef} className="profile-card" onSubmit={(event) => void saveProfile(event)}>
       <div className="profile-card-heading"><h2>Personal details</h2></div>
-      <div className="profile-form-grid">
-        <label className="field-label"><span>Name <sup className="field-required">*</sup></span><input required minLength={2} maxLength={120} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
-        <div className="field-label" style={{ display: 'flex', flexDirection: 'column' }}>
-          <span style={{ marginBottom: '6px' }}>Email address <sup className="field-required">*</sup></span>
-          <EmailVerificationField
-            email={form.email}
-            onChangeEmail={(val) => setForm((prev) => ({ ...prev, email: val }))}
-            isVerified={emailVerified}
-            onVerifiedChange={setEmailVerified}
-            purpose="UPDATE_PROFILE"
-            excludeId={account?.id}
-            initialVerifiedEmail={account?.email}
-            disabled={busy}
-          />
+      <div className="profile-form-grid" style={{ alignItems: 'start' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <label className="field-label" style={{ marginBottom: 0 }}><span>Name <sup className="field-required">*</sup></span><input required minLength={2} maxLength={120} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
+          <label className="field-label" style={{ marginBottom: 0 }}><span>Mobile number <sup className="field-required">*</sup></span><PhoneInput required value={form.phone} onChange={(val) => setForm({ ...form, phone: val })} /></label>
         </div>
-        <label className="field-label"><span>Mobile number <sup className="field-required">*</sup></span><PhoneInput required value={form.phone} onChange={(val) => setForm({ ...form, phone: val })} /></label>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <div className="field-label" style={{ display: 'flex', flexDirection: 'column', marginBottom: 0 }}>
+            <span style={{ marginBottom: '6px' }}>Email address <sup className="field-required">*</sup></span>
+            <EmailVerificationField
+              email={form.email}
+              onChangeEmail={(val) => setForm((prev) => ({ ...prev, email: val }))}
+              isVerified={emailVerified}
+              onVerifiedChange={setEmailVerified}
+              purpose="UPDATE_PROFILE"
+              excludeId={account?.id}
+              initialVerifiedEmail={account?.email}
+              disabled={busy}
+            />
+          </div>
+        </div>
       </div>
       <div className="profile-card-heading profile-address-heading"><span><h2>Saved addresses</h2><small>Select a tab to edit that address. Home is included by default.</small></span></div>
       <div className="address-tabs" role="tablist" aria-label="Saved addresses">
@@ -334,17 +339,6 @@ export default function Profile() {
         </div>
         </> : <div className="address-pin-first"><span><MapPin size={18} /></span><div><strong>Set the exact location first</strong><small>House or flat, road, area, city, PIN code, and landmark fields appear after you save a map pin.</small></div><Button type="button" onClick={() => setMapAddress(selectedAddress.id)}><MapPin size={15} /> Set location on map</Button></div>}
       </article>}
-      {profileChanged && (
-        <div className="profile-save-row">
-          <Button
-            type="submit"
-            className="profile-save-button"
-            disabled={busy || emailNeedsVerification}
-          >
-            <Save size={18} /> {busy ? 'Saving…' : 'Save profile & address'}
-          </Button>
-        </div>
-      )}
     </form>
     <form ref={passwordFormRef} className="profile-card password-card" onSubmit={(event) => void changePassword(event)}>
       <div className="profile-card-heading"><h2>Change password</h2><span>At least 8 characters (a-z, A-Z, 0-9, special).</span></div>
@@ -382,7 +376,7 @@ export default function Profile() {
           <Button
             type="button"
             className="profile-save-button"
-            disabled={busy || emailNeedsVerification}
+            disabled={busy || emailNeedsVerification || !profileChanged}
             onClick={() => profileFormRef.current?.requestSubmit()}
           >
             <Save size={18} /> {busy ? 'Saving…' : 'Save profile & address'}

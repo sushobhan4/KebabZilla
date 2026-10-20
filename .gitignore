@@ -81,3 +81,9 @@ desktop.ini
 *.swp
 *.swo
 *~
+
+# Agent Context & Local Instructions
+AGENTS.md
+agents.md
+GEMINI.md
+

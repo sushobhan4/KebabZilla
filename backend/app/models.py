@@ -410,6 +410,10 @@ class Order(Base):
     def payment_status(self) -> "PaymentStatus | None":
         return self.payment.status if self.payment else None
 
+    @property
+    def customer_email(self) -> str | None:
+        return self.customer.email if self.customer else None
+
 
 class OrderItem(Base):
     __tablename__ = "order_items"

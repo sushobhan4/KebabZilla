@@ -686,22 +686,21 @@ class PublicRestaurantOut(ORMModel):
     longitude: float | None = None
     is_restaurant_open: bool
     is_delivery_open: bool = True
-    weekly_schedule: dict = Field(default_factory=dict)
+    today_schedule: dict | None = None
     minimum_order_paise: int = 0
     delivery_radius_km: float = 10.0
     free_delivery_radius_km: float = 3.0
     free_delivery_threshold_paise: int = 0
     delivery_fee_per_km_paise: int = 0
     charge_from_zero_beyond_free_radius: bool = False
-    accepting_orders: bool = True
     order_cutoff_minutes_before_closing: int = 30
-    delivery_status: str = "OPEN"
     delivery_status_heading: str = "Menu"
     delivery_status_message: str = "Choose what you’d like to order."
     closing_in_minutes: int | None = None
     cutoff_in_minutes: int | None = None
     closing_time: str | None = None
-    schedule_status: str = ""
+    can_schedule_order: bool = True
+    google_client_id: str | None = None
 
 
 class DriverDutyInput(BaseModel):

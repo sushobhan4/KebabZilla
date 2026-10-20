@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { ArrowLeft, ArrowRight, CircleAlert, Eye, EyeOff, Flame, LockKeyhole, Mail, Phone, UserRound, WifiOff } from 'lucide-react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { GoogleOAuthProvider, GoogleLogin, type CredentialResponse } from '@react-oauth/google'
+import { GoogleLogin, type CredentialResponse } from '@react-oauth/google'
 import { useAuth, useRestaurant } from '../state'
 import { Brand, EmptyState, PhoneInput } from '../components'
 import { EmailVerificationField } from '../components/EmailVerificationField'
@@ -23,6 +23,71 @@ export function validatePasswordComplexity(pwd: string): string | null {
   return null
 }
 
+
+const DEFAULT_GOOGLE_CLIENT_ID = '246180384663-jf752n3net3tf4caq3laquoneicitstu.apps.googleusercontent.com'
+
+function GoogleAuthButton({
+  isRegister,
+  onSuccess,
+  onError,
+}: {
+  isRegister: boolean
+  onSuccess: (credentialResponse: CredentialResponse) => void
+  onError: () => void
+}) {
+  return (
+    <div className="google-auth-wrap" style={{ position: 'relative', width: '100%', minHeight: '40px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+      <div
+        className="google-btn-placeholder"
+        aria-hidden="true"
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: '100%',
+          maxWidth: '360px',
+          height: '40px',
+          borderRadius: '9999px',
+          border: '1px solid #dadce0',
+          backgroundColor: '#ffffff',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '10px',
+          fontFamily: "'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+          fontSize: '14px',
+          fontWeight: 500,
+          color: '#3c4043',
+          boxSizing: 'border-box',
+          padding: '0 16px',
+          pointerEvents: 'none',
+          userSelect: 'none',
+          boxShadow: '0 1px 2px rgba(60,64,67,0.08)',
+        }}
+      >
+        <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
+          <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.616z" fill="#4285F4"/>
+          <path d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z" fill="#34A853"/>
+          <path d="M3.964 10.707c-.18-.54-.282-1.117-.282-1.707s.102-1.167.282-1.707V4.961H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.039l3.007-2.332z" fill="#FBBC05"/>
+          <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.961L3.964 7.293C4.672 5.166 6.656 3.58 9 3.58z" fill="#EA4335"/>
+        </svg>
+        <span>{isRegister ? 'Sign up with Google' : 'Sign in with Google'}</span>
+      </div>
+      <div style={{ position: 'relative', zIndex: 1, width: '100%', maxWidth: '360px', display: 'flex', justifyContent: 'center' }}>
+        <GoogleLogin
+          onSuccess={onSuccess}
+          onError={onError}
+          shape="pill"
+          size="large"
+          text={isRegister ? 'signup_with' : 'signin_with'}
+          width="360"
+        />
+      </div>
+    </div>
+  )
+}
+
 export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recovery' }) {
   const { signIn, register, googleSignIn, verify2fa } = useAuth()
   const { restaurant } = useRestaurant()
@@ -33,7 +98,7 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
   const otpParam = searchParams.get('otp') || searchParams.get('code') || ''
   const hasInviteToken = Boolean(tokenParam && mode === 'recovery')
 
-  const googleClientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || restaurant?.google_client_id || '').trim()
+  const googleClientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || restaurant?.google_client_id || DEFAULT_GOOGLE_CLIENT_ID).trim()
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [emailVerified, setEmailVerified] = useState(false)
@@ -331,18 +396,11 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
 
           {hasInviteToken && Boolean(googleClientId) && (
             <>
-              <div className="google-auth-wrap">
-                <GoogleOAuthProvider clientId={googleClientId}>
-                  <GoogleLogin
-                    onSuccess={onGoogleSuccess}
-                    onError={() => setError('Google sign-in was unsuccessful.')}
-                    shape="pill"
-                    size="large"
-                    text="signin_with"
-                    width="360"
-                  />
-                </GoogleOAuthProvider>
-              </div>
+              <GoogleAuthButton
+                isRegister={false}
+                onSuccess={onGoogleSuccess}
+                onError={() => setError('Google sign-in was unsuccessful.')}
+              />
               <div className="auth-divider"><span>or set a password</span></div>
             </>
           )}
@@ -377,21 +435,16 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
             {isRecovery && !hasInviteToken && otpSent && <><label className="field-label">One-time code<div className="input-wrap"><LockKeyhole size={17} /><input inputMode="numeric" autoComplete="one-time-code" required pattern="\d{6}" maxLength={6} placeholder="6-digit code from your email" value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, '').slice(0, 6))} /></div></label><label className="field-label">New password<div className="input-wrap"><LockKeyhole size={17} /><input type={showPassword ? 'text' : 'password'} autoComplete="new-password" required minLength={8} maxLength={128} placeholder="At least 8 characters (a-z, A-Z, 0-9, special)" value={password} onChange={(event) => setPassword(event.target.value)} /><button className="input-trailing" type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></label></>}
             {isRecovery ? <button className="button button-dark auth-submit" type="submit" disabled={busy}>{busy ? 'One moment…' : hasInviteToken ? 'Set password & continue' : otpSent ? 'Verify code & reset password' : 'Send OTP'}<ArrowRight size={17} /></button> : <button className="button button-dark auth-submit" type="submit" disabled={busy || (isRegister && !emailVerified)}>{busy ? 'One moment…' : isRegister ? 'Create my account' : 'Sign in'}<ArrowRight size={17} /></button>}
           </form>
-          {!isRecovery && Boolean(googleClientId) && <>
-            <div className="auth-divider"><span>or continue with</span></div>
-            <div className="google-auth-wrap">
-              <GoogleOAuthProvider clientId={googleClientId}>
-                <GoogleLogin
-                  onSuccess={onGoogleSuccess}
-                  onError={() => setError('Google sign-in was unsuccessful.')}
-                  shape="pill"
-                  size="large"
-                  text={isRegister ? 'signup_with' : 'signin_with'}
-                  width="360"
-                />
-              </GoogleOAuthProvider>
-            </div>
-          </>}
+          {!isRecovery && Boolean(googleClientId) && (
+            <>
+              <div className="auth-divider"><span>or continue with</span></div>
+              <GoogleAuthButton
+                isRegister={isRegister}
+                onSuccess={onGoogleSuccess}
+                onError={() => setError('Google sign-in was unsuccessful.')}
+              />
+            </>
+          )}
           <div className="auth-switch">{isRecovery ? 'Remembered it?' : isRegister ? 'Already have an account?' : 'New around here?'} <Link to={isRecovery || isRegister ? '/login' : '/register'}>{isRecovery || isRegister ? 'Sign in' : 'Create an account'}</Link></div>
           <div className="auth-secure"><LockKeyhole size={14} /> Your account is secured with encrypted sign-in.</div>
         </>

@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.cache import invalidate_auth_cache
 from app.config import settings
-from app.dependencies import CurrentAccount, DbSession, PasswordChangeAccount, bearer_scheme
+from app.dependencies import CurrentAccount, CurrentAccountModel, DbSession, PasswordChangeAccount, PasswordChangeAccountModel, bearer_scheme
 from app.integrations import staff_account_notifier
 from app.models import Account, AccountAddress, EmailVerificationCode, PasswordResetCode, Role, TwoFactorChallenge, UserSession, utcnow
 from app.schemas import (
@@ -526,10 +526,11 @@ def reset_password(data: PasswordResetConfirm, db: DbSession):
         synchronize_session=False,
     )
     db.commit()
+    invalidate_auth_cache(account_id=account.id)
 
 
 @router.get("/me", response_model=AccountOut)
-def me(account: PasswordChangeAccount, request: Request, response: Response):
+def me(account: PasswordChangeAccountModel, request: Request, response: Response):
     token = request.cookies.get(SESSION_COOKIE_NAME)
     if token:
         set_session_cookie(response, token)
@@ -548,7 +549,7 @@ def get_csrf(request: Request, response: Response):
 
 
 @router.patch("/profile", response_model=AccountOut)
-def update_profile(data: AccountProfileUpdate, account: CurrentAccount, db: DbSession):
+def update_profile(data: AccountProfileUpdate, account: CurrentAccountModel, db: DbSession):
     email = str(data.email).lower().strip()
     duplicate = db.scalar(select(Account.id).where(Account.email == email, Account.id != account.id))
     if duplicate:
@@ -603,14 +604,16 @@ def update_profile(data: AccountProfileUpdate, account: CurrentAccount, db: DbSe
             if addr.address_id not in incoming_ids:
                 account.addresses.remove(addr)
     db.commit()
+    invalidate_auth_cache(account_id=account.id)
     db.refresh(account)
     return account
 
 
 @router.patch("/promotional-consent", response_model=AccountOut)
-def update_promotional_consent(data: PromotionalConsentUpdate, account: CurrentAccount, db: DbSession):
+def update_promotional_consent(data: PromotionalConsentUpdate, account: CurrentAccountModel, db: DbSession):
     account.promotional_consent = data.promotional_consent
     db.commit()
+    invalidate_auth_cache(account_id=account.id)
     db.refresh(account)
     return account
 
@@ -618,7 +621,7 @@ def update_promotional_consent(data: PromotionalConsentUpdate, account: CurrentA
 @router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)
 def change_password(
     data: PasswordUpdate,
-    account: PasswordChangeAccount,
+    account: PasswordChangeAccountModel,
     request: Request,
     db: DbSession,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)] = None,
@@ -642,6 +645,7 @@ def change_password(
     query.update({UserSession.is_revoked: True}, synchronize_session=False)
 
     db.commit()
+    invalidate_auth_cache(account_id=account.id)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -664,12 +668,12 @@ def logout(
     token = bearer_token or cookie_token
     if token:
         token_hash = hash_session_token(token)
-        invalidate_auth_cache(token_hash)
         db.query(UserSession).filter(UserSession.token_hash == token_hash).update(
             {UserSession.is_revoked: True},
             synchronize_session=False,
         )
         db.commit()
+        invalidate_auth_cache(token_hash=token_hash)
 
     delete_session_cookie(response)
     delete_csrf_cookie(response)
@@ -789,6 +793,7 @@ def revoke_other_sessions(
         query = query.filter(UserSession.token_hash != current_hash)
     count = query.update({UserSession.is_revoked: True}, synchronize_session=False)
     db.commit()
+    invalidate_auth_cache(account_id=account.id)
 
     return {"revoked_count": count}
 

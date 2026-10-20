@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     gcs_menu_images_folder: str = "menuImages"
     gcs_email_images_folder: str = "emailImages"
     public_backend_url: str = "https://api.kebabzilla.in"
+    redis_url: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -60,6 +61,7 @@ class Settings(BaseSettings):
         import os
         alias_map = {
             "public_backend_url": ["PUBLIC_BACKEND_URL", "BACKEND_URL", "publicBackendUrl", "BACKEND_PUBLIC_URL"],
+            "redis_url": ["REDIS_URL", "redisUrl", "REDIS_URI", "redis_uri"],
             "jwt_secret": ["JWTsecret", "jwtSecret", "JWT_SECRET"],
             "database_url": ["databaseURL", "databaseUrl", "DATABASE_URL"],
             "cors_origins": ["corsOrigins", "CORS_ORIGINS"],

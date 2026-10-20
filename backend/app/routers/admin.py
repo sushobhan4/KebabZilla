@@ -10,7 +10,7 @@ import httpx
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import joinedload, selectinload
 
-from app.dependencies import CurrentAccount, DbSession, require_roles
+from app.dependencies import CurrentAccount, CurrentAccountModel, DbSession, require_roles
 from app.config import settings
 from app.campaign_dispatcher import campaign_dispatcher
 from app.email_sender import email_sender
@@ -63,6 +63,7 @@ from app.cache import (
     PREFIX_REPORTS,
     cache,
     invalidate_accounts_cache,
+    invalidate_auth_cache,
     invalidate_delivery_cache,
     invalidate_discounts_cache,
     invalidate_menu_cache,
@@ -179,7 +180,7 @@ def create_account(data: AdminAccountCreate, db: DbSession):
 
 
 @router.patch("/accounts/{account_id}/role", response_model=AccountOut)
-def change_role(account_id: int, data: RoleChangeInput, actor: CurrentAccount, db: DbSession):
+def change_role(account_id: int, data: RoleChangeInput, actor: CurrentAccountModel, db: DbSession):
     if not verify_password(data.password, actor.password_hash):
         raise HTTPException(status_code=401, detail="Incorrect admin password. Please try again.")
     account = db.get(Account, account_id)
@@ -201,6 +202,7 @@ def change_role(account_id: int, data: RoleChangeInput, actor: CurrentAccount, d
     db.add(AdminEvent(event_type="account_role_changed", message=f"{account.name}'s role changed to {data.role.value}", actor_id=actor.id, details={"account_id": account.id, "role": data.role.value}))
     db.commit()
     invalidate_accounts_cache()
+    invalidate_auth_cache(account_id=account.id)
     db.refresh(account)
     return account
 

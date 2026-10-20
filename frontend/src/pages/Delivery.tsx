@@ -480,11 +480,11 @@ export default function Delivery() {
   }, [orders, selectedStopOrder]);
 
   const refresh = useCallback(
-    () =>
+    (skipCache = false) =>
       Promise.allSettled([
-        api<Order[]>("/delivery/queue"),
-        api<DriverDutyStatus>("/delivery/duty-status"),
-        api<RecommendedBatchesResponse>("/delivery/recommended-batches"),
+        api<Order[]>("/delivery/queue", { skipCache }),
+        api<DriverDutyStatus>("/delivery/duty-status", { skipCache }),
+        api<RecommendedBatchesResponse>("/delivery/recommended-batches", { skipCache }),
       ])
         .then(([queueRes, dutyRes, recRes]) => {
           if (queueRes.status === "fulfilled") {
@@ -505,9 +505,6 @@ export default function Delivery() {
             );
           } else if (recRes.status === "rejected" && dutyRes.status === "fulfilled") {
             console.warn("Could not load recommended batches:", recRes.reason);
-            setError("");
-          } else {
-            setError("");
           }
         })
         .finally(() => setLoading(false)),
@@ -575,7 +572,7 @@ export default function Delivery() {
         });
         setDutyStatus(updated);
       }
-      await refresh();
+      await refresh(true);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Could not update accepting delivery status.",
@@ -593,7 +590,8 @@ export default function Delivery() {
         method: "POST",
         body: JSON.stringify({ order_ids: orderIds }),
       });
-      await refresh();
+      setPreviewClusterId(null);
+      await refresh(true);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Could not claim this delivery batch.",
@@ -610,7 +608,8 @@ export default function Delivery() {
       await api(`/delivery/orders/${orderId}/claim`, {
         method: "POST",
       });
-      await refresh();
+      setPreviewSingleOrder(false);
+      await refresh(true);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Could not claim this order.",
@@ -635,7 +634,7 @@ export default function Delivery() {
         body: JSON.stringify({ otp: code }),
       });
       setCodes((prev) => ({ ...prev, [order.order_id]: "" }));
-      await refresh();
+      await refresh(true);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "That delivery code could not be verified.",

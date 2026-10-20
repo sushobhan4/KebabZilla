@@ -14,14 +14,32 @@ try {
 type CacheEntry = {
   data: unknown
   timestamp: number
+  epoch: number
 }
 
 const apiGetCache = new Map<string, CacheEntry>()
 const apiInFlight = new Map<string, Promise<unknown>>()
 
-const CACHE_FRESH_MS = 25_000
+let currentMutationEpoch = 0
+
+// Patterns that MUST NOT be cached across seconds because they represent live, transactional operational state
+const DYNAMIC_REALTIME_PATTERNS = [
+  '/delivery',
+  '/staff',
+  '/admin',
+  '/orders',
+  '/cart',
+  '/auth',
+]
+
+function isDynamicPath(path: string): boolean {
+  return DYNAMIC_REALTIME_PATTERNS.some((pattern) => path.includes(pattern))
+}
+
+const STATIC_CACHE_FRESH_MS = 4_000
 
 export function clearApiCache(prefix?: string) {
+  currentMutationEpoch++
   if (!prefix) {
     apiGetCache.clear()
     apiInFlight.clear()
@@ -73,37 +91,22 @@ export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
   const isGet = method === 'GET'
 
   if (!isGet) {
-    if (path.includes('/cart')) {
-      clearApiCache('/cart')
-    } else if (path.includes('/orders')) {
-      clearApiCache('/orders')
-      clearApiCache('/delivery')
-    } else if (path.includes('/delivery')) {
-      clearApiCache('/delivery')
-      clearApiCache('/orders')
-    } else if (path.includes('/menu')) {
-      clearApiCache('/menu')
-    } else if (path.includes('/discounts')) {
-      clearApiCache('/discounts')
-      clearApiCache('/menu')
-    } else if (path.includes('/admin/settings') || path.includes('/restaurant')) {
-      clearApiCache('/restaurant')
-      clearApiCache('/admin/settings')
-    } else if (path.includes('/auth')) {
-      clearApiCache('/auth')
-    } else {
-      clearApiCache()
-    }
-  } else if (!init.skipCache) {
+    clearApiCache()
+  } else if (!init.skipCache && !isDynamicPath(path)) {
     const cached = apiGetCache.get(path)
-    if (cached && (Date.now() - cached.timestamp < CACHE_FRESH_MS)) {
+    if (cached && (Date.now() - cached.timestamp < STATIC_CACHE_FRESH_MS) && cached.epoch === currentMutationEpoch) {
       return cached.data as T
     }
+  }
+
+  if (isGet && !init.skipCache) {
     const inFlight = apiInFlight.get(path)
     if (inFlight) {
       return inFlight as Promise<T>
     }
   }
+
+  const startEpoch = currentMutationEpoch
 
   const executeRequest = async (): Promise<T> => {
     const headers = new Headers(init.headers)
@@ -128,9 +131,6 @@ export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
       setCsrfToken(responseCsrf)
     }
     if (!response.ok) {
-      if (response.status >= 500) {
-        throw new Error('Our servers are currently down. Please check back in a few minutes.')
-      }
       const problem = await response.json().catch(() => null) as { detail?: unknown; message?: unknown } | null
       const detail = problem?.detail
       const validationMessages = Array.isArray(detail)
@@ -141,12 +141,18 @@ export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
         : detail && typeof detail === 'object' && 'message' in detail && typeof detail.message === 'string'
           ? detail.message
           : validationMessages || (typeof problem?.message === 'string' ? problem.message : '')
-      throw new Error(message || `The request failed (${response.status}). Please try again.`)
+      if (message) {
+        throw new Error(message)
+      }
+      if (response.status >= 500) {
+        throw new Error('A server error occurred. Please try again.')
+      }
+      throw new Error(`The request failed (${response.status}). Please try again.`)
     }
     if (response.status === 204) return undefined as T
     const result = await response.json() as T
-    if (isGet && !init.skipCache) {
-      apiGetCache.set(path, { data: result, timestamp: Date.now() })
+    if (isGet && !init.skipCache && !isDynamicPath(path) && startEpoch === currentMutationEpoch) {
+      apiGetCache.set(path, { data: result, timestamp: Date.now(), epoch: startEpoch })
     }
     return result
   }
@@ -155,7 +161,9 @@ export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
     const p = executeRequest()
     apiInFlight.set(path, p)
     p.finally(() => {
-      apiInFlight.delete(path)
+      if (apiInFlight.get(path) === p) {
+        apiInFlight.delete(path)
+      }
     })
     return p
   }
@@ -338,6 +346,13 @@ export type Order = {
   checkout?: { gateway_order_id: string; amount: number; currency: string; key_id: string; name: string; description: string; prefill: { name: string; email: string; contact: string } }
   delivery_otp?: string | null
 }
+export type TodaySchedule = {
+  day: string
+  open: boolean
+  opens: string
+  closes: string
+}
+
 export type Restaurant = {
   restaurant_name: string
   tagline: string
@@ -347,14 +362,16 @@ export type Restaurant = {
   address: string
   latitude: number | null
   longitude: number | null
-  weekly_schedule: Record<string, any>
+  today_schedule?: TodaySchedule | null
+  weekly_schedule?: Record<string, any>
+  can_schedule_order?: boolean
   minimum_order_paise: number
   delivery_radius_km: number
   free_delivery_radius_km: number
   free_delivery_threshold_paise?: number
   delivery_fee_per_km_paise: number
   charge_from_zero_beyond_free_radius?: boolean
-  accepting_orders: boolean
+  accepting_orders?: boolean
   is_restaurant_open?: boolean
   is_delivery_open?: boolean
   delivery_paused_reason?: string | null

@@ -584,7 +584,6 @@ function AdminOrders() {
       }
     >
   >({});
-  const [unassignConfirmOrder, setUnassignConfirmOrder] = useState<Order | null>(null);
 
   function getPrevStatus(status: string): string | null {
     if (status === 'DELIVERED') return null;
@@ -621,7 +620,7 @@ function AdminOrders() {
         }
       }
       setPendingStatusChanges({});
-      await refresh();
+      await refresh(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save all status changes.");
     } finally {
@@ -629,25 +628,13 @@ function AdminOrders() {
     }
   }
 
-  async function executeUnassign(order: Order) {
-    setBusyId(order.order_id);
-    setError("");
-    try {
-      await api(`/admin/orders/${order.order_id}/unassign-delivery`, { method: "POST" });
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not unassign delivery partner.");
-    } finally {
-      setBusyId(null);
-    }
-  }
 
   async function executeRefund(order: Order) {
     setBusyId(order.order_id);
     setError("");
     try {
       await api(`/admin/orders/${order.order_id}/refund`, { method: "POST" });
-      await refresh();
+      await refresh(true);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Could not issue this refund.",
@@ -820,20 +807,9 @@ function AdminOrders() {
                     ))}
                   </div>
                   {order.assigned_delivery_id && order.status !== "DELIVERED" && (
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem", padding: "0.5rem 0.75rem", background: "rgba(16, 185, 129, 0.08)", border: "1px solid rgba(16, 185, 129, 0.2)", borderRadius: "8px", margin: "0.5rem 0", fontSize: "0.85rem" }}>
-                      <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                        <Truck size={15} style={{ color: "#10b981" }} />
-                        <span><strong>Assigned rider:</strong> {order.delivery_name || `Partner #${order.assigned_delivery_id}`}{order.delivery_phone ? ` (${order.delivery_phone})` : ""}</span>
-                      </span>
-                      <Button
-                        variant="danger"
-                        size="button-sm"
-                        disabled={busyId === order.order_id}
-                        onClick={() => setUnassignConfirmOrder(order)}
-                        style={{ padding: "3px 8px", fontSize: "0.78rem" }}
-                      >
-                        Unassign driver
-                      </Button>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px", padding: "0.5rem 0.75rem", background: "rgba(16, 185, 129, 0.08)", border: "1px solid rgba(16, 185, 129, 0.2)", borderRadius: "8px", margin: "0.5rem 0", fontSize: "0.85rem" }}>
+                      <Truck size={15} style={{ color: "#10b981", flexShrink: 0 }} />
+                      <span><strong>Assigned rider:</strong> {order.delivery_name || `Partner #${order.assigned_delivery_id}`}{order.delivery_phone ? ` (${order.delivery_phone})` : ""}</span>
                     </div>
                   )}
                   {(() => {
@@ -1063,37 +1039,6 @@ function AdminOrders() {
         />
       )}
 
-      {unassignConfirmOrder && (
-        <CenterDialog
-          open={Boolean(unassignConfirmOrder)}
-          onClose={() => setUnassignConfirmOrder(null)}
-          tone="warning"
-          eyebrow="UNASSIGN DELIVERY DRIVER"
-          title={`Unassign driver from #${unassignConfirmOrder.order_id}?`}
-          description={
-            <span>
-              Are you sure you want to unassign rider{" "}
-              <strong>{unassignConfirmOrder.delivery_name || `Driver #${unassignConfirmOrder.assigned_delivery_id}`}</strong>{" "}
-              from order <strong>#{unassignConfirmOrder.order_id}</strong>? The order will be removed from their batch and returned to the READY delivery pool so another rider can claim it.
-            </span>
-          }
-          primaryAction={{
-            label: "Confirm unassign",
-            variant: "danger",
-            disabled: busyId === unassignConfirmOrder.order_id,
-            onClick: async () => {
-              const target = unassignConfirmOrder;
-              setUnassignConfirmOrder(null);
-              if (target) await executeUnassign(target);
-            },
-          }}
-          secondaryAction={{
-            label: "Cancel",
-            variant: "secondary",
-            onClick: () => setUnassignConfirmOrder(null),
-          }}
-        />
-      )}
 
       {Object.keys(pendingStatusChanges).length > 0 && (
         <div className="settings-pinned-bar" style={{ display: "flex", justifyContent: "center", alignItems: "center", width: "100%", left: 0, right: 0 }}>

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import joinedload, selectinload
 
-from app.dependencies import CurrentAccount, DbSession, require_roles
+from app.dependencies import CurrentAccount, CurrentAccountModel, DbSession, require_roles
 from app.integrations import customer_notifier
 from app.models import (
     Account,
@@ -41,6 +41,7 @@ from app.cache import (
     KEY_ADMIN_SETTINGS,
     PREFIX_DELIVERY,
     cache,
+    invalidate_auth_cache,
     invalidate_delivery_cache,
     invalidate_orders_cache,
 )
@@ -144,19 +145,21 @@ def get_duty_status(account: CurrentAccount, db: DbSession):
     restaurant = restaurant_settings(db)
     is_open, schedule_status = is_restaurant_open(restaurant)
 
+    is_accepting = bool(account.is_accepting_deliveries)
     if not is_open:
-        if account.is_accepting_deliveries:
-            account.is_accepting_deliveries = False
-        db.execute(
-            update(StaffInfo)
-            .where(StaffInfo.is_accepting_deliveries == True)
-            .values(is_accepting_deliveries=False)
-        )
-        db.commit()
+        if is_accepting:
+            db.execute(
+                update(StaffInfo)
+                .where(StaffInfo.is_accepting_deliveries == True)
+                .values(is_accepting_deliveries=False)
+            )
+            db.commit()
+            invalidate_auth_cache(account_id=account.id)
+            is_accepting = False
 
     active_riders = _count_active_riders(db)
     return {
-        "is_accepting_deliveries": bool(account.is_accepting_deliveries),
+        "is_accepting_deliveries": is_accepting,
         "is_restaurant_open": is_open,
         "schedule_status": schedule_status,
         "enforce_geofence": bool(restaurant.enforce_driver_geofence),
@@ -168,7 +171,7 @@ def get_duty_status(account: CurrentAccount, db: DbSession):
 
 
 @router.post("/duty-status")
-def update_duty_status(data: DriverDutyInput, account: CurrentAccount, db: DbSession):
+def update_duty_status(data: DriverDutyInput, account: CurrentAccountModel, db: DbSession):
     restaurant = restaurant_settings(db)
     is_open, schedule_status = is_restaurant_open(restaurant)
 
@@ -197,6 +200,7 @@ def update_duty_status(data: DriverDutyInput, account: CurrentAccount, db: DbSes
     db.commit()
     invalidate_delivery_cache()
     cache.delete(KEY_ADMIN_SETTINGS)
+    invalidate_auth_cache(account_id=account.id)
 
     active_riders = _count_active_riders(db)
 
@@ -269,14 +273,13 @@ def recommended_batches(account: CurrentAccount, db: DbSession):
     is_open, schedule_status = is_restaurant_open(restaurant)
 
     if not is_open:
-        if account.is_accepting_deliveries:
-            account.is_accepting_deliveries = False
         db.execute(
             update(StaffInfo)
             .where(StaffInfo.is_accepting_deliveries == True)
             .values(is_accepting_deliveries=False)
         )
         db.commit()
+        invalidate_auth_cache(account_id=account.id)
         return {
             "is_accepting_deliveries": False,
             "active_riders": 0,
@@ -462,47 +465,55 @@ def recommended_batches(account: CurrentAccount, db: DbSession):
 
 @router.post("/recommended-batches/claim", status_code=status.HTTP_201_CREATED)
 async def claim_recommended_batch(data: BatchClaimInput, account: CurrentAccount, db: DbSession):
-    orders = db.scalars(
-        select(Order).where(Order.order_id.in_(data.order_ids), Order.status == OrderStatus.READY, Order.assigned_delivery_id.is_(None))
-    ).all()
-    if len(orders) != len(data.order_ids):
-        raise HTTPException(status_code=409, detail="This batch was already claimed or has changed. Refresh to see the remaining deliveries.")
-    
-    notifications_to_send = []
-    for order in orders:
-        claimed = db.execute(
-            update(Order)
-            .where(Order.order_id == order.order_id, Order.status == OrderStatus.READY, Order.assigned_delivery_id.is_(None))
-            .values(assigned_delivery_id=account.id)
-        )
-        if claimed.rowcount != 1:
-            db.rollback()
-            raise HTTPException(status_code=409, detail="This batch was just claimed by another rider. Refresh to see the remaining deliveries.")
-        transition_order(order, OrderStatus.OUT_FOR_DELIVERY)
-        otp = create_delivery_otp(order)
-        notifications_to_send.append({
-            "phone": order.customer_phone or (order.customer.phone if order.customer else None),
-            "order_number": order.order_id,
-            "otp": otp,
-            "email": order.customer_email or (order.customer.email if order.customer else None),
-            "customer_name": order.customer_name or (order.customer.name if order.customer else None),
-        })
-    batch = DeliveryBatch(delivery_id=account.id, route_label=f"Nearby delivery route · {len(orders)} stop{'s' if len(orders) != 1 else ''}")
-    batch.orders = [DeliveryBatchOrder(order_id=order.order_id) for order in orders]
-    db.add(batch)
-    db.add(AdminEvent(event_type="delivery_batch_claimed", message=f"{account.name} took a {len(orders)}-stop delivery batch", actor_id=account.id, details={"order_ids": data.order_ids, "delivery_id": account.id}))
-    db.commit()
+    try:
+        orders = db.scalars(
+            select(Order).where(Order.order_id.in_(data.order_ids), Order.status == OrderStatus.READY, Order.assigned_delivery_id.is_(None))
+        ).all()
+        if len(orders) != len(data.order_ids):
+            raise HTTPException(status_code=409, detail="This batch was already claimed or has changed. Refresh to see the remaining deliveries.")
+        
+        notifications_to_send = []
+        for order in orders:
+            claimed = db.execute(
+                update(Order)
+                .where(Order.order_id == order.order_id, Order.status == OrderStatus.READY, Order.assigned_delivery_id.is_(None))
+                .values(assigned_delivery_id=account.id)
+            )
+            if claimed.rowcount != 1:
+                db.rollback()
+                raise HTTPException(status_code=409, detail="This batch was just claimed by another rider. Refresh to see the remaining deliveries.")
+            transition_order(order, OrderStatus.OUT_FOR_DELIVERY)
+            otp = create_delivery_otp(order)
+            customer_email = order.customer.email if order.customer else None
+            notifications_to_send.append({
+                "phone": order.customer_phone or (order.customer.phone if order.customer else None),
+                "order_number": order.order_id,
+                "otp": otp,
+                "email": customer_email,
+                "customer_name": order.customer_name or (order.customer.name if order.customer else None),
+            })
+        batch = DeliveryBatch(delivery_id=account.id, route_label=f"Nearby delivery route · {len(orders)} stop{'s' if len(orders) != 1 else ''}")
+        batch.orders = [DeliveryBatchOrder(order_id=order.order_id) for order in orders]
+        db.add(batch)
+        db.add(AdminEvent(event_type="delivery_batch_claimed", message=f"{account.name} took a {len(orders)}-stop delivery batch", actor_id=account.id, details={"order_ids": data.order_ids, "delivery_id": account.id}))
+        db.commit()
 
-    # Dispatch notifications only after transaction is successfully committed
-    for notif in notifications_to_send:
-        try:
-            await customer_notifier.send_delivery_otp(**notif)
-        except Exception as exc:
-            logger.warning("[CustomerNotifier] Could not send batch delivery OTP: %s", exc)
+        # Dispatch notifications only after transaction is successfully committed
+        for notif in notifications_to_send:
+            try:
+                await customer_notifier.send_delivery_otp(**notif)
+            except Exception as exc:
+                logger.warning("[CustomerNotifier] Could not send batch delivery OTP: %s", exc)
 
-    invalidate_delivery_cache()
-    invalidate_orders_cache()
-    return {"order_ids": data.order_ids, "route_label": batch.route_label}
+        invalidate_delivery_cache()
+        invalidate_orders_cache()
+        return {"order_ids": data.order_ids, "route_label": batch.route_label}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to claim delivery batch: %s", exc)
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to claim delivery batch: {exc}")
 
 
 @router.post("/orders/{order_id}/claim")
@@ -532,12 +543,13 @@ async def claim_order(order_id: str, account: CurrentAccount, db: DbSession):
         db.commit()
 
         # Dispatch notification after successful transaction commit
+        customer_email = order.customer.email if order.customer else None
         try:
             await customer_notifier.send_delivery_otp(
                 phone=order.customer_phone or (order.customer.phone if order.customer else None),
                 order_number=order.order_id,
                 otp=otp,
-                email=order.customer_email or (order.customer.email if order.customer else None),
+                email=customer_email,
                 customer_name=order.customer_name or (order.customer.name if order.customer else None),
             )
         except Exception as exc:
