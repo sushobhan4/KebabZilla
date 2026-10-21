@@ -542,12 +542,13 @@ function AdminOrders() {
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [filter, setFilter] = usePreference<string>("admin_orders_filter", "ALL");
-  const [period, setPeriod] = usePreference<string>("admin_orders_period", "all");
+  const [period, setPeriod] = usePreference<string>("admin_orders_period", "day");
   const [q, setQ] = useState("");
+  const activePeriod = period === "all" ? "day" : period;
   const refresh = useCallback((skipCache = false) => {
     const statusQuery = filter === "ALL" ? "" : `&status_filter=${filter}`;
     return api<PageData<Order>>(
-      `/admin/orders?limit=${adminOrdersPageSize}&offset=${page * adminOrdersPageSize}${statusQuery}&period=${period}&q=${encodeURIComponent(q)}`,
+      `/admin/orders?limit=${adminOrdersPageSize}&offset=${page * adminOrdersPageSize}${statusQuery}&period=${activePeriod}&q=${encodeURIComponent(q)}`,
       { skipCache }
     )
       .then((result) => {
@@ -558,7 +559,7 @@ function AdminOrders() {
         setError(err instanceof Error ? err.message : "Could not load orders."),
       )
       .finally(() => setLoading(false));
-  }, [filter, page, period, q]);
+  }, [filter, page, activePeriod, q]);
   useEffect(() => {
     const timer = window.setTimeout(() => void refresh(), q ? 250 : 0);
     return () => window.clearTimeout(timer);
@@ -587,6 +588,7 @@ function AdminOrders() {
 
   function getPrevStatus(status: string): string | null {
     if (status === 'DELIVERED') return null;
+    if (status === 'REJECTED' || status === 'CANCELLED') return null;
     if (status === 'OUT_FOR_DELIVERY') return 'READY';
     if (status === 'READY') return 'ACCEPTED';
     if (status === 'ACCEPTED' || status === 'PREPARING') return 'REJECTED';
@@ -596,11 +598,11 @@ function AdminOrders() {
 
   function getNextStatus(status: string): string | null {
     if (status === 'DELIVERED') return null;
+    if (status === 'REJECTED' || status === 'CANCELLED') return null;
     if (status === 'OUT_FOR_DELIVERY') return 'DELIVERED';
     if (status === 'READY') return 'OUT_FOR_DELIVERY';
     if (status === 'ACCEPTED' || status === 'PREPARING') return 'READY';
     if (status === 'PLACED') return 'ACCEPTED';
-    if (status === 'REJECTED' || status === 'CANCELLED') return 'ACCEPTED';
     return null;
   }
 
@@ -697,7 +699,7 @@ function AdminOrders() {
         <div className="order-filter-bar">
           <div className="admin-search-sort-controls">
             <label className="admin-search-field"><Search size={16} /><input value={q} onChange={(event) => { setQ(event.target.value); setPage(0); }} placeholder="Search order number, name or phone" aria-label="Search orders" /></label>
-            <RoundedSelect icon={<ArrowUpDown size={15} />} ariaLabel="Filter orders by time" value={period} onChange={(next) => { setPeriod(next); setPage(0); setLoading(true); }} options={[{ value: "all", label: "All time" }, { value: "day", label: "Today" }, { value: "week", label: "This week" }, { value: "month", label: "This month" }, { value: "year", label: "This year" }]} className="orders-period-select activity-sort-select" />
+            <RoundedSelect icon={<ArrowUpDown size={15} />} ariaLabel="Filter orders by time" value={activePeriod} onChange={(next) => { setPeriod(next); setPage(0); setLoading(true); }} options={[{ value: "day", label: "Today" }, { value: "week", label: "This week" }, { value: "month", label: "This month" }, { value: "year", label: "This year" }]} className="orders-period-select activity-sort-select" />
           </div>
           <div className="filter-tabs">
             <button
@@ -714,9 +716,31 @@ function AdminOrders() {
                   : 0}
               </b>
             </button>
+            <button
+              className={filter === "REJECTED" ? "active" : ""}
+              onClick={() => selectFilter("REJECTED")}
+            >
+              Rejected{" "}
+              <b>{pageData?.status_counts?.REJECTED || 0}</b>
+            </button>
+            <button
+              className={filter === "PLACED" ? "active" : ""}
+              onClick={() => selectFilter("PLACED")}
+            >
+              Waiting{" "}
+              <b>{pageData?.status_counts?.PLACED || 0}</b>
+            </button>
+            <button
+              className={filter === "PREPARING" ? "active" : ""}
+              onClick={() => selectFilter("PREPARING")}
+            >
+              Preparing{" "}
+              <b>
+                {(pageData?.status_counts?.PREPARING || 0) +
+                  (pageData?.status_counts?.ACCEPTED || 0)}
+              </b>
+            </button>
             {[
-              "PLACED",
-              "PREPARING",
               "READY",
               "OUT_FOR_DELIVERY",
               "DELIVERED",
@@ -769,8 +793,9 @@ function AdminOrders() {
                   <div className="admin-order-price">
                     <strong>{formatINR(order.total_paise)}</strong>
                     <small>
-                      {formatStatus(order.payment_method)} ·{" "}
-                      {formatStatus(order.payment_status)}
+                      {order.payment_status
+                        ? `${formatStatus(order.payment_method || "Payment")} · ${formatStatus(order.payment_status)}`
+                        : (order.payment_method ? formatStatus(order.payment_method) : "No payment record")}
                     </small>
                   </div>
                   <StatusBadge status={order.status} />
@@ -817,6 +842,7 @@ function AdminOrders() {
                     const prevStatus = getPrevStatus(effectiveStatus);
                     const nextStatus = getNextStatus(effectiveStatus);
                     const isDelivered = effectiveStatus === "DELIVERED";
+                    const isRejected = order.status === "REJECTED" || effectiveStatus === "REJECTED";
 
                     return (
                       <div className="admin-order-tools" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.5rem" }}>
@@ -837,6 +863,10 @@ function AdminOrders() {
                         {isDelivered ? (
                           <span style={{ marginLeft: "auto", fontSize: "0.82rem", fontWeight: 600, color: "var(--muted)" }}>
                             Delivered · Status completed
+                          </span>
+                        ) : isRejected ? (
+                          <span style={{ marginLeft: "auto", fontSize: "0.82rem", fontWeight: 600, color: "#dc2626" }}>
+                            Rejected · Status finalized
                           </span>
                         ) : (
                           <div className="admin-status-stepper-wrap" style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "6px" }}>
@@ -868,7 +898,7 @@ function AdminOrders() {
                               <ChevronLeft size={16} />
                             </button>
                             <span className="admin-stepper-current-label">
-                              <strong>{effectiveStatus === "ACCEPTED" || effectiveStatus === "PREPARING" ? "Accept / Preparing" : formatStatus(effectiveStatus)}</strong>
+                              <strong>{effectiveStatus === "ACCEPTED" || effectiveStatus === "PREPARING" ? "Preparing" : formatStatus(effectiveStatus)}</strong>
                               {pendingStatusChanges[order.order_id] && (
                                 <small style={{ color: "var(--brand-accent, #c34226)", marginLeft: "4px" }}>(Unsaved)</small>
                               )}
@@ -971,8 +1001,8 @@ function AdminOrders() {
               </p>
               <div style={{ maxHeight: "300px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "10px", paddingRight: "4px" }}>
                 {Object.entries(pendingStatusChanges).map(([orderId, item]) => {
-                  const fromLabel = item.originalStatus === "ACCEPTED" || item.originalStatus === "PREPARING" ? "Accept / Preparing" : formatStatus(item.originalStatus);
-                  const toLabel = item.targetStatus === "ACCEPTED" || item.targetStatus === "PREPARING" ? "Accept / Preparing" : formatStatus(item.targetStatus);
+                  const fromLabel = item.originalStatus === "ACCEPTED" || item.originalStatus === "PREPARING" ? "Preparing" : formatStatus(item.originalStatus);
+                  const toLabel = item.targetStatus === "ACCEPTED" || item.targetStatus === "PREPARING" ? "Preparing" : formatStatus(item.targetStatus);
                   const isRejectOrCancel = ["REJECTED", "CANCELLED"].includes(item.targetStatus);
                   const isOnlinePaid = item.order.payment_status === "PAID" && item.order.payment_method === "RAZORPAY";
 
@@ -990,6 +1020,11 @@ function AdminOrders() {
                       {item.order.assigned_delivery_id && ["PLACED", "ACCEPTED", "PREPARING", "READY"].includes(item.targetStatus) && (
                         <p style={{ margin: "6px 0 0", fontSize: "0.8rem", color: "#d97706" }}>
                           ⚠️ Will unassign rider {item.order.delivery_name || `#${item.order.assigned_delivery_id}`} and return to READY delivery pool.
+                        </p>
+                      )}
+                      {isRejectOrCancel && item.order.payment_method === "CASH" && (
+                        <p style={{ margin: "6px 0 0", fontSize: "0.8rem", color: "var(--muted)" }}>
+                          Cash on delivery record will be removed from payments.
                         </p>
                       )}
                       {isRejectOrCancel && isOnlinePaid && (
@@ -1103,9 +1138,10 @@ function Team() {
 
   const [provisioned, setProvisioned] = useState<ProvisionedAccount | null>(null);
   const refresh = useCallback(
-    () =>
+    (skipCache = false) =>
       api<PageData<Account>>(
         `/admin/accounts?limit=${teamPageSize}&offset=${page * teamPageSize}&q=${encodeURIComponent(q)}${role !== "ALL" ? `&role=${role}` : ""}&sort=${sort}&exclude_users=${role === "ALL" && !q.trim()}`,
+        { skipCache },
       )
         .then((result) => {
           setPeople(result.items);
@@ -1144,7 +1180,24 @@ function Team() {
       setPasswordModalOpen(false);
       setPendingRoleChange(null);
       setAdminPasswordInput("");
-      await refresh();
+
+      // Immediately update local state so the table reflects the promotion / demotion instantly
+      setPeople((prev) => {
+        if (role === "ALL" && !q.trim() && nextRole === "USER") {
+          return prev.filter((p) => p.id !== person.id);
+        }
+        if (role !== "ALL" && role !== nextRole) {
+          return prev.filter((p) => p.id !== person.id);
+        }
+        return prev.map((p) => (p.id === person.id ? { ...p, role: nextRole } : p));
+      });
+      setRoleCounts((old) => ({
+        ...old,
+        [person.role]: Math.max(0, (old[person.role] || 1) - 1),
+        [nextRole]: (old[nextRole] || 0) + 1,
+      }));
+
+      await refresh(true);
     } catch (err) {
       setPasswordError(err instanceof Error ? err.message : "Incorrect admin password or could not change role.");
     } finally {
@@ -1186,6 +1239,7 @@ function Team() {
         ...old,
         [created.role]: (old[created.role] || 0) + 1,
       }));
+      await refresh(true);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Could not create account.",

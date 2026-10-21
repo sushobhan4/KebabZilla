@@ -127,6 +127,7 @@ def send_verification_otp(data: SendEmailOtpInput, background_tasks: BackgroundT
     recent = db.scalar(
         select(EmailVerificationCode).where(
             EmailVerificationCode.email == email_clean,
+            EmailVerificationCode.purpose == data.purpose,
             EmailVerificationCode.created_at >= utcnow() - timedelta(seconds=30),
         )
     )
@@ -134,7 +135,8 @@ def send_verification_otp(data: SendEmailOtpInput, background_tasks: BackgroundT
         raise HTTPException(status_code=429, detail="Please wait before requesting another verification code")
 
     db.query(EmailVerificationCode).filter(
-        (EmailVerificationCode.email == email_clean) | (EmailVerificationCode.expires_at <= utcnow())
+        ((EmailVerificationCode.email == email_clean) & (EmailVerificationCode.purpose == data.purpose))
+        | (EmailVerificationCode.expires_at <= utcnow())
     ).delete(synchronize_session=False)
 
     otp = f"{secrets.randbelow(1_000_000):06d}"
@@ -162,7 +164,11 @@ def verify_email_otp(data: VerifyEmailOtpInput, db: DbSession):
     email_clean = data.email.lower().strip()
     record = db.scalar(
         select(EmailVerificationCode)
-        .where(EmailVerificationCode.email == email_clean, EmailVerificationCode.used_at.is_(None))
+        .where(
+            EmailVerificationCode.email == email_clean,
+            EmailVerificationCode.purpose != "password_reset",
+            EmailVerificationCode.used_at.is_(None),
+        )
         .order_by(EmailVerificationCode.created_at.desc())
     )
     if not record or record.attempts >= 5:
@@ -461,20 +467,25 @@ def request_password_reset(
     account = db.scalar(select(Account).where(Account.email == email))
     if account:
         recent = db.scalar(
-            select(PasswordResetCode).where(
-                PasswordResetCode.account_id == account.id,
-                PasswordResetCode.created_at >= utcnow() - timedelta(seconds=60),
+            select(EmailVerificationCode).where(
+                EmailVerificationCode.email == email,
+                EmailVerificationCode.purpose == "password_reset",
+                EmailVerificationCode.created_at >= utcnow() - timedelta(seconds=60),
             )
         )
         if not recent:
-            db.query(PasswordResetCode).filter(
-                (PasswordResetCode.account_id == account.id) | (PasswordResetCode.expires_at <= utcnow())
+            db.query(EmailVerificationCode).filter(
+                ((EmailVerificationCode.email == email) & (EmailVerificationCode.purpose == "password_reset"))
+                | (EmailVerificationCode.expires_at <= utcnow())
             ).delete(synchronize_session=False)
             otp = f"{secrets.randbelow(1_000_000):06d}"
-            reset_code = PasswordResetCode(
+            reset_code = EmailVerificationCode(
+                email=email,
                 account_id=account.id,
                 otp_hash=hash_password(otp),
+                purpose="password_reset",
                 expires_at=utcnow() + timedelta(minutes=10),
+                attempts=0,
             )
             db.add(reset_code)
             db.commit()
@@ -494,11 +505,13 @@ def reset_password(data: PasswordResetConfirm, db: DbSession):
     if not account:
         raise HTTPException(status_code=400, detail="The code is invalid or has expired")
     reset_code = db.scalar(
-        select(PasswordResetCode)
+        select(EmailVerificationCode)
         .where(
-            PasswordResetCode.account_id == account.id,
+            EmailVerificationCode.email == email,
+            EmailVerificationCode.purpose == "password_reset",
+            EmailVerificationCode.used_at.is_(None),
         )
-        .order_by(PasswordResetCode.created_at.desc())
+        .order_by(EmailVerificationCode.created_at.desc())
     )
     expires_at = reset_code.expires_at if reset_code else None
     if expires_at and expires_at.tzinfo is None:

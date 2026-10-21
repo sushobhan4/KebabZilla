@@ -141,6 +141,39 @@ export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
         : detail && typeof detail === 'object' && 'message' in detail && typeof detail.message === 'string'
           ? detail.message
           : validationMessages || (typeof problem?.message === 'string' ? problem.message : '')
+
+      // Auto-cleanup stale auth tokens when rejected by server with 401 Unauthorized
+      if (
+        response.status === 401 &&
+        !path.startsWith('/auth/login') &&
+        !path.startsWith('/auth/register') &&
+        !path.startsWith('/auth/verify-2fa')
+      ) {
+        setAccessToken(null)
+        setCsrfToken(null)
+        try {
+          localStorage.removeItem('kz_access_token')
+          localStorage.removeItem('kz_csrf_token')
+          localStorage.removeItem('kz_account')
+          sessionStorage.removeItem('kz_access_token')
+          sessionStorage.removeItem('kz_account')
+        } catch {
+          // Ignore storage restrictions in private tabs
+        }
+        // Do not dispatch global kick-out event for initial background /auth/me probe
+        if (typeof window !== 'undefined' && !path.startsWith('/auth/me')) {
+          window.dispatchEvent(
+            new CustomEvent('kz_unauthorized', {
+              detail: {
+                message: message || 'Session expired or device unrecognized. Please sign in again.',
+                status: 401,
+                path,
+              },
+            })
+          )
+        }
+      }
+
       if (message) {
         throw new Error(message)
       }
@@ -328,8 +361,8 @@ export type Order = {
   customer_phone: string | null
   status: string
   order_type: string
-  payment_method: string
-  payment_status: string
+  payment_method?: string | null
+  payment_status?: string | null
   subtotal_paise: number
   delivery_fee_paise: number
   total_paise: number
@@ -453,7 +486,10 @@ export function friendlyDate(value: string) {
   return new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
 }
 
-export function formatStatus(value: string) {
+export function formatStatus(value?: string | null) {
+  if (!value) return ''
+  if (value === 'PLACED') return 'Waiting'
+  if (value === 'ACCEPTED' || value === 'PREPARING') return 'Preparing'
   return value.replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 

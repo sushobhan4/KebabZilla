@@ -101,10 +101,35 @@ if settings.database_url.startswith("sqlite"):
             if addr_cols and "distance_meters" not in addr_cols:
                 cursor.execute("ALTER TABLE account_addresses ADD COLUMN distance_meters INTEGER")
 
+            cursor.execute("PRAGMA table_info(staff_info)")
+            staff_cols = {row[1] for row in cursor.fetchall()}
+            if staff_cols:
+                if "role" not in staff_cols:
+                    cursor.execute("ALTER TABLE staff_info ADD COLUMN role VARCHAR(16)")
+                cursor.execute("DELETE FROM staff_info WHERE account_id IN (SELECT id FROM accounts WHERE role = 'USER')")
+                cursor.execute("""
+                    INSERT INTO staff_info (account_id, role, is_accepting_deliveries, must_change_password, updated_at)
+                    SELECT id, role, 0, 0, CURRENT_TIMESTAMP
+                    FROM accounts
+                    WHERE role != 'USER' AND id NOT IN (SELECT account_id FROM staff_info)
+                """)
+                cursor.execute("""
+                    UPDATE staff_info
+                    SET role = (SELECT role FROM accounts WHERE accounts.id = staff_info.account_id)
+                    WHERE role IS NULL OR role != (SELECT role FROM accounts WHERE accounts.id = staff_info.account_id)
+                """)
+                cursor.execute("""
+                    UPDATE staff_info
+                    SET is_accepting_deliveries = 0
+                    WHERE is_accepting_deliveries = 1
+                    AND account_id IN (SELECT id FROM accounts WHERE role NOT IN ('DELIVERY', 'ADMIN'))
+                """)
+
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS email_verification_codes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     email VARCHAR(255),
+                    account_id INTEGER,
                     otp_hash VARCHAR(255),
                     purpose VARCHAR(32) DEFAULT 'register',
                     expires_at DATETIME,
@@ -113,6 +138,24 @@ if settings.database_url.startswith("sqlite"):
                     created_at DATETIME
                 )
             """)
+            cursor.execute("PRAGMA table_info(email_verification_codes)")
+            ev_cols = {row[1] for row in cursor.fetchall()}
+            if ev_cols and "account_id" not in ev_cols:
+                cursor.execute("ALTER TABLE email_verification_codes ADD COLUMN account_id INTEGER")
+
+            cursor.execute("PRAGMA table_info(password_reset_codes)")
+            if cursor.fetchall():
+                try:
+                    cursor.execute("""
+                        INSERT INTO email_verification_codes (email, account_id, otp_hash, purpose, expires_at, attempts, created_at)
+                        SELECT accounts.email, prc.account_id, prc.otp_hash, 'password_reset', prc.expires_at, prc.attempts, prc.created_at
+                        FROM password_reset_codes prc
+                        JOIN accounts ON accounts.id = prc.account_id
+                        WHERE prc.expires_at > CURRENT_TIMESTAMP
+                    """)
+                except Exception:
+                    pass
+                cursor.execute("DROP TABLE IF EXISTS password_reset_codes")
         except Exception:
             pass
         cursor.close()
@@ -143,9 +186,23 @@ else:
                         ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS region VARCHAR(64) DEFAULT '';
                         ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS city VARCHAR(64) DEFAULT '';
                         ALTER TABLE account_addresses ADD COLUMN IF NOT EXISTS distance_meters INTEGER;
+                        ALTER TABLE staff_info ADD COLUMN IF NOT EXISTS role VARCHAR(16);
+                        DELETE FROM staff_info WHERE account_id IN (SELECT id FROM accounts WHERE role = 'USER');
+                        INSERT INTO staff_info (account_id, role, is_accepting_deliveries, must_change_password, updated_at)
+                        SELECT id, role, false, false, NOW()
+                        FROM accounts
+                        WHERE role != 'USER' AND id NOT IN (SELECT account_id FROM staff_info);
+                        UPDATE staff_info
+                        SET role = (SELECT role FROM accounts WHERE accounts.id = staff_info.account_id)
+                        WHERE role IS NULL OR role != (SELECT role FROM accounts WHERE accounts.id = staff_info.account_id);
+                        UPDATE staff_info
+                        SET is_accepting_deliveries = false
+                        WHERE is_accepting_deliveries = true
+                        AND account_id IN (SELECT id FROM accounts WHERE role NOT IN ('DELIVERY', 'ADMIN'));
                         CREATE TABLE IF NOT EXISTS email_verification_codes (
                             id SERIAL PRIMARY KEY,
                             email VARCHAR(255),
+                            account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
                             otp_hash VARCHAR(255),
                             purpose VARCHAR(32) DEFAULT 'register',
                             expires_at TIMESTAMPTZ,
@@ -153,6 +210,18 @@ else:
                             used_at TIMESTAMPTZ,
                             created_at TIMESTAMPTZ DEFAULT NOW()
                         );
+                        ALTER TABLE email_verification_codes ADD COLUMN IF NOT EXISTS account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE;
+                        DO $$
+                        BEGIN
+                            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'password_reset_codes') THEN
+                                INSERT INTO email_verification_codes (email, account_id, otp_hash, purpose, expires_at, attempts, created_at)
+                                SELECT accounts.email, prc.account_id, prc.otp_hash, 'password_reset', prc.expires_at, prc.attempts, prc.created_at
+                                FROM password_reset_codes prc
+                                JOIN accounts ON accounts.id = prc.account_id
+                                WHERE prc.expires_at > NOW();
+                                DROP TABLE password_reset_codes CASCADE;
+                            END IF;
+                        END $$;
                         ALTER TABLE restaurant_settings DROP COLUMN IF EXISTS admin_override_open;
                         ALTER TABLE restaurant_settings DROP COLUMN IF EXISTS distance_calculation_mode;
                         DO $$

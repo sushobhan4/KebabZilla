@@ -263,13 +263,6 @@ def current_auth_base(
                 db.commit()
                 raise unauthorized
 
-            if row.device_fingerprint and row.device_fingerprint != current_fp:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Session device unrecognized",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-
             is_staff = row.role != Role.USER
             mcp = bool(row.must_change_password) if is_staff else False
             iad = bool(row.is_accepting_deliveries) if (row.role in (Role.ADMIN, Role.DELIVERY)) else False
@@ -295,6 +288,13 @@ def current_auth_base(
 
             cache_data = auth_context_to_cache(auth, last_act)
             auth_cache.set(token_hash, cache_data, ttl_seconds=60.0, account_id=auth.id)
+
+            if row.device_fingerprint and row.device_fingerprint != current_fp:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Session device unrecognized",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
 
             maybe_extend_session(auth, last_act, cache_data)
             auth_metrics.record_auth_latency((time.perf_counter() - start_time) * 1000)

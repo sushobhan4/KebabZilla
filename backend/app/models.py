@@ -76,7 +76,7 @@ class Account(Base):
         if self.role not in (Role.ADMIN, Role.DELIVERY):
             return
         if self.staff_info is None:
-            self.staff_info = StaffInfo(account_id=self.id, is_accepting_deliveries=bool(value), must_change_password=False)
+            self.staff_info = StaffInfo(account_id=self.id, role=self.role, is_accepting_deliveries=bool(value), must_change_password=False)
         else:
             self.staff_info.is_accepting_deliveries = bool(value)
 
@@ -91,7 +91,7 @@ class Account(Base):
         if self.role == Role.USER:
             return
         if self.staff_info is None:
-            self.staff_info = StaffInfo(account_id=self.id, is_accepting_deliveries=False, must_change_password=bool(value))
+            self.staff_info = StaffInfo(account_id=self.id, role=self.role, is_accepting_deliveries=False, must_change_password=bool(value))
         else:
             self.staff_info.must_change_password = bool(value)
 
@@ -100,6 +100,7 @@ class StaffInfo(Base):
     __tablename__ = "staff_info"
 
     account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True)
+    role: Mapped[Role | None] = mapped_column(Enum(Role, native_enum=False, length=16), nullable=True)
     is_accepting_deliveries: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0", nullable=False)
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0", nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -132,31 +133,24 @@ class AccountAddress(Base):
     __table_args__ = (UniqueConstraint("account_id", "address_id"),)
 
 
-class PasswordResetCode(Base):
-    __tablename__ = "password_reset_codes"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True)
-    otp_hash: Mapped[str] = mapped_column(String(255))
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
-    attempts: Mapped[int] = mapped_column(Integer, default=0)
-    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
-
-    account: Mapped[Account] = relationship()
-
-
 class EmailVerificationCode(Base):
     __tablename__ = "email_verification_codes"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(String(255), index=True)
+    account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), nullable=True, index=True)
     otp_hash: Mapped[str] = mapped_column(String(255))
     purpose: Mapped[str] = mapped_column(String(32), default="register")
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+    account: Mapped[Account | None] = relationship()
+
+
+# Unified OTP alias: merges password_reset_codes into email_verification_codes
+PasswordResetCode = EmailVerificationCode
 
 
 class TwoFactorChallenge(Base):

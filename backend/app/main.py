@@ -330,6 +330,18 @@ def serve_og_image():
     raise HTTPException(status_code=404, detail="Image not found")
 
 
+@app.get("/og-image.webp", tags=["seo"], response_class=Response)
+@app.get(f"{settings.api_prefix}/og-image.webp", tags=["seo"], response_class=Response)
+def serve_og_image_webp():
+    """Serve modern high-efficiency WebP og-image."""
+    from pathlib import Path
+    for base in [Path(__file__).resolve().parents[2] / "frontend" / "public", Path(__file__).resolve().parents[2] / "firebase-public"]:
+        f = base / "og-image.webp"
+        if f.is_file():
+            return Response(content=f.read_bytes(), media_type="image/webp", headers={"Cache-Control": "public, max-age=604800, stale-while-revalidate=86400", "Access-Control-Allow-Origin": "*"})
+    raise HTTPException(status_code=404, detail="Image not found")
+
+
 @app.get("/kebab-thumbnail.jpg", tags=["seo"], response_class=Response)
 @app.get(f"{settings.api_prefix}/kebab-thumbnail.jpg", tags=["seo"], response_class=Response)
 def serve_kebab_thumbnail():
@@ -339,6 +351,18 @@ def serve_kebab_thumbnail():
         f = base / "kebab-thumbnail.jpg"
         if f.is_file():
             return Response(content=f.read_bytes(), media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400", "Access-Control-Allow-Origin": "*"})
+    raise HTTPException(status_code=404, detail="Thumbnail not found")
+
+
+@app.get("/kebab-thumbnail.webp", tags=["seo"], response_class=Response)
+@app.get(f"{settings.api_prefix}/kebab-thumbnail.webp", tags=["seo"], response_class=Response)
+def serve_kebab_thumbnail_webp():
+    """Serve modern high-efficiency WebP kebab-thumbnail."""
+    from pathlib import Path
+    for base in [Path(__file__).resolve().parents[2] / "frontend" / "public", Path(__file__).resolve().parents[2] / "firebase-public"]:
+        f = base / "kebab-thumbnail.webp"
+        if f.is_file():
+            return Response(content=f.read_bytes(), media_type="image/webp", headers={"Cache-Control": "public, max-age=604800, stale-while-revalidate=86400", "Access-Control-Allow-Origin": "*"})
     raise HTTPException(status_code=404, detail="Thumbnail not found")
 
 

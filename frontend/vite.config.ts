@@ -50,7 +50,7 @@ export default defineConfig(() => {
             if (id.includes('node_modules/lucide-react')) {
               return 'vendor-icons'
             }
-            if (id.includes('src/vendor/liquidglass')) {
+            if (id.toLowerCase().includes('liquidglass')) {
               return 'vendor-liquidglass'
             }
           },
@@ -59,4 +59,3 @@ export default defineConfig(() => {
     },
   }
 })
-

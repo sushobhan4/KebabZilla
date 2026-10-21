@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { ArrowLeft, ArrowRight, CircleAlert, Eye, EyeOff, Flame, LockKeyhole, Mail, Phone, UserRound, WifiOff } from 'lucide-react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { GoogleLogin, type CredentialResponse } from '@react-oauth/google'
+import { GoogleOAuthProvider, GoogleLogin, type CredentialResponse } from '@react-oauth/google'
 import { useAuth, useRestaurant } from '../state'
 import { Brand, EmptyState, PhoneInput } from '../components'
 import { EmailVerificationField } from '../components/EmailVerificationField'
@@ -30,61 +30,67 @@ function GoogleAuthButton({
   isRegister,
   onSuccess,
   onError,
+  clientId,
 }: {
   isRegister: boolean
   onSuccess: (credentialResponse: CredentialResponse) => void
   onError: () => void
+  clientId?: string
 }) {
+  const effectiveClientId = (clientId || import.meta.env.VITE_GOOGLE_CLIENT_ID || DEFAULT_GOOGLE_CLIENT_ID).trim()
+
   return (
-    <div className="google-auth-wrap" style={{ position: 'relative', width: '100%', minHeight: '40px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-      <div
-        className="google-btn-placeholder"
-        aria-hidden="true"
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          width: '100%',
-          maxWidth: '360px',
-          height: '40px',
-          borderRadius: '9999px',
-          border: '1px solid #dadce0',
-          backgroundColor: '#ffffff',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '10px',
-          fontFamily: "'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
-          fontSize: '14px',
-          fontWeight: 500,
-          color: '#3c4043',
-          boxSizing: 'border-box',
-          padding: '0 16px',
-          pointerEvents: 'none',
-          userSelect: 'none',
-          boxShadow: '0 1px 2px rgba(60,64,67,0.08)',
-        }}
-      >
-        <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
-          <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.616z" fill="#4285F4"/>
-          <path d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z" fill="#34A853"/>
-          <path d="M3.964 10.707c-.18-.54-.282-1.117-.282-1.707s.102-1.167.282-1.707V4.961H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.039l3.007-2.332z" fill="#FBBC05"/>
-          <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.961L3.964 7.293C4.672 5.166 6.656 3.58 9 3.58z" fill="#EA4335"/>
-        </svg>
-        <span>{isRegister ? 'Sign up with Google' : 'Sign in with Google'}</span>
+    <GoogleOAuthProvider clientId={effectiveClientId}>
+      <div className="google-auth-wrap" style={{ position: 'relative', width: '100%', minHeight: '40px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+        <div
+          className="google-btn-placeholder"
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            width: '100%',
+            maxWidth: '360px',
+            height: '40px',
+            borderRadius: '9999px',
+            border: '1px solid #dadce0',
+            backgroundColor: '#ffffff',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '10px',
+            fontFamily: "'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+            fontSize: '14px',
+            fontWeight: 500,
+            color: '#3c4043',
+            boxSizing: 'border-box',
+            padding: '0 16px',
+            pointerEvents: 'none',
+            userSelect: 'none',
+            boxShadow: '0 1px 2px rgba(60,64,67,0.08)',
+          }}
+        >
+          <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
+            <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.616z" fill="#4285F4"/>
+            <path d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z" fill="#34A853"/>
+            <path d="M3.964 10.707c-.18-.54-.282-1.117-.282-1.707s.102-1.167.282-1.707V4.961H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.039l3.007-2.332z" fill="#FBBC05"/>
+            <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.961L3.964 7.293C4.672 5.166 6.656 3.58 9 3.58z" fill="#EA4335"/>
+          </svg>
+          <span>{isRegister ? 'Sign up with Google' : 'Sign in with Google'}</span>
+        </div>
+        <div style={{ position: 'relative', zIndex: 1, width: '100%', maxWidth: '360px', display: 'flex', justifyContent: 'center' }}>
+          <GoogleLogin
+            onSuccess={onSuccess}
+            onError={onError}
+            shape="pill"
+            size="large"
+            text={isRegister ? 'signup_with' : 'signin_with'}
+            width="360"
+          />
+        </div>
       </div>
-      <div style={{ position: 'relative', zIndex: 1, width: '100%', maxWidth: '360px', display: 'flex', justifyContent: 'center' }}>
-        <GoogleLogin
-          onSuccess={onSuccess}
-          onError={onError}
-          shape="pill"
-          size="large"
-          text={isRegister ? 'signup_with' : 'signin_with'}
-          width="360"
-        />
-      </div>
-    </div>
+    </GoogleOAuthProvider>
   )
 }
 
@@ -96,6 +102,7 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
   const tokenParam = searchParams.get('token') || ''
   const emailParam = searchParams.get('email') || ''
   const otpParam = searchParams.get('otp') || searchParams.get('code') || ''
+  const reasonParam = searchParams.get('reason') || searchParams.get('notice') || ''
   const hasInviteToken = Boolean(tokenParam && mode === 'recovery')
 
   const googleClientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || restaurant?.google_client_id || DEFAULT_GOOGLE_CLIENT_ID).trim()
@@ -136,7 +143,8 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
       setOtp(otpParam)
       if (mode === 'recovery') setOtpSent(true)
     }
-  }, [emailParam, tokenParam, otpParam, mode])
+    if (reasonParam) setError(reasonParam)
+  }, [emailParam, tokenParam, otpParam, reasonParam, mode])
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -398,6 +406,7 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
             <>
               <GoogleAuthButton
                 isRegister={false}
+                clientId={googleClientId}
                 onSuccess={onGoogleSuccess}
                 onError={() => setError('Google sign-in was unsuccessful.')}
               />
@@ -440,6 +449,7 @@ export default function AuthPage({ mode }: { mode: 'login' | 'register' | 'recov
               <div className="auth-divider"><span>or continue with</span></div>
               <GoogleAuthButton
                 isRegister={isRegister}
+                clientId={googleClientId}
                 onSuccess={onGoogleSuccess}
                 onError={() => setError('Google sign-in was unsuccessful.')}
               />

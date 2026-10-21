@@ -31,6 +31,7 @@ def main() -> None:
                     role=Role.ADMIN,
                 )
                 admin_account.staff_info = StaffInfo(
+                    role=Role.ADMIN,
                     is_accepting_deliveries=False,
                     must_change_password=False,
                 )

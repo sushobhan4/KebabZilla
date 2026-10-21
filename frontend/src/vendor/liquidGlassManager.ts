@@ -4,13 +4,52 @@
  * Powered by GlassRenderer (WebGL 1.0 + GLSL ES Shaders).
  */
 
-import {
-  GlassRenderer,
-  HtmlCapture,
-  DEFAULTS,
-  type GlassConfig,
-} from "./liquidglass.js";
 import { getCookie, setCookie } from "../cookies";
+
+export interface GlassConfig {
+  blurAmount?: number;
+  refraction?: number;
+  chromAberration?: number;
+  edgeHighlight?: number;
+  specular?: number;
+  fresnel?: number;
+  distortion?: number;
+  cornerRadius?: number;
+  zRadius?: number;
+  opacity?: number;
+  saturation?: number;
+  tintStrength?: number;
+  brightness?: number;
+  shadowOpacity?: number;
+  shadowSpread?: number;
+  shadowOffsetY?: number;
+  floating?: boolean;
+  button?: boolean;
+  bevelMode?: number;
+  tintColor?: string;
+}
+
+const DEFAULTS: GlassConfig = {
+  blurAmount: 0,
+  refraction: 0.69,
+  chromAberration: 0.05,
+  edgeHighlight: 0.05,
+  specular: 0,
+  fresnel: 1,
+  distortion: 0,
+  cornerRadius: 65,
+  zRadius: 40,
+  opacity: 1,
+  saturation: 0,
+  tintStrength: 0,
+  brightness: 0,
+  shadowOpacity: 0.3,
+  shadowSpread: 10,
+  shadowOffsetY: 1,
+  floating: false,
+  button: false,
+  bevelMode: 0,
+};
 
 export interface GlassSettings extends GlassConfig {
   applyToNav: boolean;
@@ -160,14 +199,13 @@ const DEFAULT_SETTINGS: GlassSettings = {
 const SHADOW_PAD = 20;
 
 class LiquidGlassManager {
-  private renderer: GlassRenderer | null = null;
-  private capture: HtmlCapture | null = null;
+  private renderer: any = null;
+  private capture: any = null;
   private settings: GlassSettings = { ...DEFAULT_SETTINGS };
   private listeners: Set<(settings: GlassSettings) => void> = new Set();
   private elementCanvases: Map<HTMLElement, HTMLCanvasElement> = new Map();
-  private sceneCanvas: HTMLCanvasElement = document.createElement("canvas");
-  private sceneCtx: CanvasRenderingContext2D =
-    this.sceneCanvas.getContext("2d")!;
+  private sceneCanvas: HTMLCanvasElement | null = null;
+  private sceneCtx: CanvasRenderingContext2D | null = null;
   private isRunning = false;
   private rafId: number | null = null;
   private isDirty = true;
@@ -176,7 +214,6 @@ class LiquidGlassManager {
   private isEnabled = true;
   private isThrottled = false;
   private isPausedForVisibility = false;
-  private initStartTime = performance.now();
   private lastResizeTime = 0;
   private lastBurstFrameTimestamp = 0;
   private consecutiveLaggedFrames = 0;
@@ -261,8 +298,113 @@ class LiquidGlassManager {
     this.notify();
   }
 
-  public start() {
+  private ensureSceneCanvas(): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
+    if (!this.sceneCanvas) {
+      this.sceneCanvas = document.createElement("canvas");
+      this.sceneCtx = this.sceneCanvas.getContext("2d")!;
+    }
+    return { canvas: this.sceneCanvas, ctx: this.sceneCtx! };
+  }
+
+  /**
+   * Stricter Device & Machine Capability Evaluation.
+   * If the machine rendering the webpage is weak (mobile device, low RAM, low CPU concurrency,
+   * prefers-reduced-motion, data saver, slow network, or software WebGL emulator),
+   * immediately disables liquidglass and falls back to normal hardware-accelerated CSS glass.
+   */
+  private checkHardwareAndEnvironment(): { isWeak: boolean; reason: string } {
+    if (typeof window === "undefined" || typeof document === "undefined") {
+      return { isWeak: true, reason: "Non-browser environment" };
+    }
+
+    const nav = typeof navigator !== "undefined" ? (navigator as any) : null;
+
+    // 1. Data Saver mode enabled
+    if (nav?.connection?.saveData === true) {
+      return { isWeak: true, reason: "Data Saver active" };
+    }
+
+    // 2. Slow network connection (slow-2g, 2g, 3g)
+    const effectiveType = nav?.connection?.effectiveType;
+    if (effectiveType && ["slow-2g", "2g", "3g"].includes(effectiveType)) {
+      return { isWeak: true, reason: `Slow network (${effectiveType})` };
+    }
+
+    // 3. Low device memory (< 3GB RAM, typical of budget mobile phones)
+    if (nav?.deviceMemory && nav.deviceMemory < 3) {
+      return { isWeak: true, reason: `Low device memory (${nav.deviceMemory} GB RAM < 3 GB)` };
+    }
+
+    // 4. Single-core CPU
+    if (nav?.hardwareConcurrency && nav.hardwareConcurrency < 2) {
+      return { isWeak: true, reason: `Low CPU concurrency (${nav.hardwareConcurrency} core)` };
+    }
+
+    // 5. User prefers reduced motion (accessibility or battery saving mode)
+    if (
+      window.matchMedia &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      return { isWeak: true, reason: "prefers-reduced-motion active" };
+    }
+
+    // 6. Mobile phone viewports (portrait width <= 640px with touch)
+    // Mobile phones heat up rapidly and benefit from 0ms CPU native CSS blur
+    const isMobileWidth =
+      window.innerWidth <= 640 ||
+      (window.matchMedia && window.matchMedia("(max-width: 640px)").matches);
+    const isCoarseTouch =
+      (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) ||
+      "ontouchstart" in window;
+    if (isMobileWidth && isCoarseTouch) {
+      return {
+        isWeak: true,
+        reason: "Mobile phone viewport (optimized with native CSS glass for battery & thermals)",
+      };
+    }
+
+    // 7. Check for software-rendered WebGL emulators (swiftshader, llvmpipe)
+    try {
+      const testCanvas = document.createElement("canvas");
+      const gl =
+        testCanvas.getContext("webgl") ||
+        (testCanvas.getContext("experimental-webgl") as WebGLRenderingContext | null);
+      if (!gl) {
+        return { isWeak: true, reason: "WebGL unavailable" };
+      }
+      const debugInfo = gl.getExtension("WEBGL_debug_renderer_info");
+      if (debugInfo) {
+        const unmaskedRenderer = (
+          gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || ""
+        ).toLowerCase();
+        if (
+          unmaskedRenderer.includes("swiftshader") ||
+          unmaskedRenderer.includes("llvmpipe")
+        ) {
+          return {
+            isWeak: true,
+            reason: `Software-emulated GPU detected (${unmaskedRenderer})`,
+          };
+        }
+      }
+    } catch {
+      return { isWeak: true, reason: "WebGL capability probe failed" };
+    }
+
+    return { isWeak: false, reason: "" };
+  }
+
+  public async start() {
     if (this.isRunning) return;
+
+    // Strict Device & Capability Heuristic:
+    // If the machine is weak, immediately disable liquidglass and fallback to normal CSS.
+    const hwCheck = this.checkHardwareAndEnvironment();
+    if (hwCheck.isWeak) {
+      this.handleThrottlingTrigger(hwCheck.reason);
+      return;
+    }
+
     if (!this.isEnabled) {
       this.isRunning = true;
       // Liquid glass effect disabled: attach lightweight scroll listener for the seamless container merge
@@ -275,20 +417,28 @@ class LiquidGlassManager {
       this.updateStuckState();
       return;
     }
+
     if (this.isThrottled) {
       console.info(
         "LiquidGlassManager: Throttling active; staying on CSS glass fallback.",
       );
       return;
     }
+
     try {
+      const { GlassRenderer, HtmlCapture } = await import("./liquidglass.js");
       this.renderer = new GlassRenderer();
-    } catch (err) {
+      this.capture = new HtmlCapture(document.body);
+      this.capture.prefetchFontEmbedCSS().catch(() => {});
+      this.capture.onCacheUpdate = () => {
+        this.isDirty = true;
+      };
+    } catch (err: any) {
       console.warn(
         "LiquidGlassManager: WebGL initialization failed, fallback to CSS glass:",
         err,
       );
-      this.handleThrottlingTrigger("WebGL initialization failure");
+      this.handleThrottlingTrigger(`WebGL initialization failure: ${err?.message || err}`);
       return;
     }
 
@@ -307,21 +457,6 @@ class LiquidGlassManager {
         );
       }
     } catch {}
-
-
-
-    try {
-      this.capture = new HtmlCapture(document.body);
-      this.capture.prefetchFontEmbedCSS().catch(() => {});
-      this.capture.onCacheUpdate = () => {
-        this.isDirty = true;
-      };
-    } catch (err) {
-      console.warn(
-        "LiquidGlassManager: HtmlCapture initialization failed, using Canvas2D direct renderer:",
-        err,
-      );
-    }
 
     this.isRunning = true;
     this.isDirty = true;
@@ -486,7 +621,6 @@ class LiquidGlassManager {
 
     // Reset performance tracking metrics for a fresh evaluation
     this.isThrottled = false;
-    this.initStartTime = performance.now();
     this.lastBurstFrameTimestamp = 0;
     this.consecutiveLaggedFrames = 0;
     this.highRenderDurationStreak = 0;
@@ -710,29 +844,28 @@ class LiquidGlassManager {
     if (!this.isRunning) return;
 
     const now = typeof timestamp === "number" ? timestamp : performance.now();
-    const isStartupGracePeriod = now - this.initStartTime < 2500;
-    const isRecentResize = now - this.lastResizeTime < 800; // Protect against DevTools inspect open / window resize
+    const isRecentResize = now - this.lastResizeTime < 600;
 
     // Safety timeout for active CSS transitions: auto-expire after 1.5s
     if (this.activeTransitions > 0 && now - this.lastTransitionTime > 1500) {
       this.activeTransitions = 0;
     }
 
-    // Monitor frame performance during active rendering bursts
-    if (!isStartupGracePeriod && !isRecentResize) {
+    // Monitor frame performance during active rendering bursts with strict latency limits
+    if (!isRecentResize) {
       if (this.lastBurstFrameTimestamp > 0) {
         const frameInterval = now - this.lastBurstFrameTimestamp;
-        // Only evaluate frame drops when interval <= 150ms (idle pauses between user events are NOT lag!)
         if (frameInterval <= 150) {
-          if (frameInterval > 65) {
+          // If frame interval exceeds 45ms (< 22 FPS) on 2 frames, immediately fallback to CSS
+          if (frameInterval > 60) {
             this.consecutiveLaggedFrames++;
-            if (this.consecutiveLaggedFrames >= 5) {
+            if (this.consecutiveLaggedFrames >= 4) {
               this.handleThrottlingTrigger(
                 `Active render frame interval dropped (${Math.round(1000 / frameInterval)} FPS / ${Math.round(frameInterval)}ms)`,
               );
               return;
             }
-          } else if (frameInterval <= 35) {
+          } else if (frameInterval <= 30) {
             this.consecutiveLaggedFrames = Math.max(0, this.consecutiveLaggedFrames - 1);
           }
         } else {
@@ -754,10 +887,10 @@ class LiquidGlassManager {
         this.renderElements();
         const renderDuration = performance.now() - renderStart;
 
-        // If the execution time of rendering itself exceeds 35ms (> 2 frames of CPU/GPU work)
-        if (!isStartupGracePeriod && renderDuration > 35) {
+        // Balanced render budget: allow initial cold snapshot up to 90ms, throttle if active rendering exceeds 35ms for 4 frames
+        if (renderDuration > 35) {
           this.highRenderDurationStreak++;
-          if (this.highRenderDurationStreak >= 4) {
+          if (this.highRenderDurationStreak >= 4 || renderDuration > 90) {
             this.handleThrottlingTrigger(
               `Rendering duration exceeded budget (${Math.round(renderDuration)}ms)`,
             );
@@ -829,7 +962,6 @@ class LiquidGlassManager {
 
   public resetThrottling() {
     this.isThrottled = false;
-    this.initStartTime = performance.now();
     this.lastBurstFrameTimestamp = 0;
     this.consecutiveLaggedFrames = 0;
     this.highRenderDurationStreak = 0;
@@ -930,7 +1062,7 @@ class LiquidGlassManager {
 
 
       this.renderer.uploadAndBlur(
-        this.sceneCanvas,
+        this.ensureSceneCanvas().canvas,
         0,
         0,
         targetCanvasW,
@@ -1046,7 +1178,7 @@ class LiquidGlassManager {
 
     // 3. Single WebGL pass: upload background & blur
     this.renderer.uploadAndBlur(
-      this.sceneCanvas,
+      this.ensureSceneCanvas().canvas,
       0,
       0,
       totalRenderW,
@@ -1119,17 +1251,16 @@ class LiquidGlassManager {
     dpr: number,
     ignoreElements: HTMLElement[],
   ) {
+    const { canvas: sceneCanvas, ctx } = this.ensureSceneCanvas();
     if (
-      this.sceneCanvas.width !== renderW ||
-      this.sceneCanvas.height !== renderH
+      sceneCanvas.width !== renderW ||
+      sceneCanvas.height !== renderH
     ) {
-      this.sceneCanvas.width = renderW;
-      this.sceneCanvas.height = renderH;
+      sceneCanvas.width = renderW;
+      sceneCanvas.height = renderH;
     } else {
-      this.sceneCtx.clearRect(0, 0, renderW, renderH);
+      ctx.clearRect(0, 0, renderW, renderH);
     }
-
-    const ctx = this.sceneCtx;
 
     // 1. Fill base site background color (#faf9f6)
     const bodyBg =
@@ -1479,8 +1610,6 @@ class LiquidGlassManager {
 
       // Check if image can be drawn without tainting the canvas
       if (!this.canSafelyDrawImage(img)) {
-        ctx.fillStyle = imgStyle.backgroundColor || "#ece9e2";
-        ctx.fillRect(ix, iy, iw, ih);
         ctx.restore();
         continue;
       }

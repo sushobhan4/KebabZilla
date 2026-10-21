@@ -49,10 +49,31 @@ def hash_session_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def normalize_user_agent_for_fingerprint(user_agent: str | None) -> str:
+    """Normalize User-Agent string to strip volatile minor build/patch digits and transient tags,
+    preserving core device platform and major browser family to avoid false-positive session drops
+    during silent browser updates or minor environment shifts.
+    """
+    if not user_agent:
+        return "empty"
+    ua = user_agent.strip().lower()
+    # Normalize minor browser version numbers to major version only:
+    # e.g., 'chrome/133.0.6943.53' -> 'chrome/133', 'version/17.4.1' -> 'version/17'
+    ua = re.sub(r"([a-z]+)/(\d+)\.[\d\.]+", r"\1/\2", ua)
+    # Remove volatile build tags like 'build/xyz' or 'build/12345'
+    ua = re.sub(r"build/[\w\.-]+", "", ua)
+    # Remove Apple WebKit minor build fractions: 'applewebkit/537.36' -> 'applewebkit/537'
+    ua = re.sub(r"applewebkit/(\d+)\.[\d\.]+", r"applewebkit/\1", ua)
+    # Remove excess whitespace
+    ua = re.sub(r"\s+", " ", ua).strip()
+    return ua
+
+
 def compute_device_fingerprint(user_agent: str | None) -> str:
-    # Hash User-Agent to detect and block cross-device/cross-browser session hijacking
-    clean_ua = (user_agent or "").strip().lower()
-    return hashlib.sha256(clean_ua.encode("utf-8")).hexdigest()
+    # Hash normalized User-Agent to detect and block cross-device/cross-browser session hijacking
+    # while tolerating silent browser minor/patch updates
+    normalized_ua = normalize_user_agent_for_fingerprint(user_agent)
+    return hashlib.sha256(normalized_ua.encode("utf-8")).hexdigest()
 
 
 def parse_device_info(user_agent: str | None) -> dict[str, str]:

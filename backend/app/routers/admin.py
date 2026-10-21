@@ -51,6 +51,7 @@ from app.services import (
     order_total_paise,
     recalculate_all_address_distances,
     restaurant_settings,
+    sync_staff_info_for_account,
     transition_order,
 )
 from app.cache import (
@@ -154,8 +155,10 @@ def create_account(data: AdminAccountCreate, db: DbSession):
     )
     account.staff_info = StaffInfo(
         account_id=account.id,
+        role=data.role,
         is_accepting_deliveries=False,
         must_change_password=False,
+        updated_at=utcnow(),
     )
     db.add(account)
     db.flush()
@@ -183,7 +186,7 @@ def create_account(data: AdminAccountCreate, db: DbSession):
 def change_role(account_id: int, data: RoleChangeInput, actor: CurrentAccountModel, db: DbSession):
     if not verify_password(data.password, actor.password_hash):
         raise HTTPException(status_code=401, detail="Incorrect admin password. Please try again.")
-    account = db.get(Account, account_id)
+    account = db.get(Account, account_id, options=[joinedload(Account.staff_info)])
     if account is None:
         raise HTTPException(status_code=404, detail="Account not found")
     if actor.id == account.id:
@@ -192,16 +195,12 @@ def change_role(account_id: int, data: RoleChangeInput, actor: CurrentAccountMod
         admin_count = db.scalar(select(func.count(Account.id)).where(Account.role == Role.ADMIN)) or 0
         if admin_count <= 1:
             raise HTTPException(status_code=400, detail="Cannot change the role of the last remaining administrator")
-    account.role = data.role
-    if data.role != Role.USER and account.staff_info is None:
-        account.staff_info = StaffInfo(
-            account_id=account.id,
-            is_accepting_deliveries=False,
-            must_change_password=False,
-        )
-    db.add(AdminEvent(event_type="account_role_changed", message=f"{account.name}'s role changed to {data.role.value}", actor_id=actor.id, details={"account_id": account.id, "role": data.role.value}))
+    old_role = account.role
+    sync_staff_info_for_account(account, data.role, db)
+    db.add(AdminEvent(event_type="account_role_changed", message=f"{account.name}'s role changed from {old_role.value} to {data.role.value}", actor_id=actor.id, details={"account_id": account.id, "from_role": old_role.value, "role": data.role.value}))
     db.commit()
     invalidate_accounts_cache()
+    invalidate_delivery_cache()
     invalidate_auth_cache(account_id=account.id)
     db.refresh(account)
     return account
@@ -227,17 +226,23 @@ def admin_orders(
     offset: int = Query(default=0, ge=0),
 ):
     effective_limit = min(limit, 10)
-    filters = []
-    if status_filter:
-        filters.append(Order.status == status_filter)
+    base_filters = []
     if period not in {"all", "day", "week", "month", "year"}:
         raise HTTPException(status_code=422, detail="Choose a valid order time period")
     if period != "all":
         start, end, _ = date_range(period, None)
-        filters.extend([Order.created_at >= start, Order.created_at < end])
+        base_filters.extend([Order.created_at >= start, Order.created_at < end])
     if q.strip():
         pattern = f"%{q.strip()}%"
-        filters.append(or_(Order.order_id.ilike(pattern), Order.customer_name.ilike(pattern), Order.customer_phone.ilike(pattern)))
+        base_filters.append(or_(Order.order_id.ilike(pattern), Order.customer_name.ilike(pattern), Order.customer_phone.ilike(pattern)))
+
+    filters = list(base_filters)
+    if status_filter:
+        if status_filter in {OrderStatus.PREPARING, OrderStatus.ACCEPTED}:
+            filters.append(Order.status.in_([OrderStatus.ACCEPTED, OrderStatus.PREPARING]))
+        else:
+            filters.append(Order.status == status_filter)
+
     total = db.scalar(select(func.count(Order.order_id)).where(*filters)) or 0
     rows = db.scalars(
         select(Order)
@@ -252,9 +257,16 @@ def admin_orders(
         .offset(offset)
         .limit(effective_limit)
     ).all()
+
     status_counts = {item.value: 0 for item in OrderStatus}
-    for status_value, count in db.execute(select(Order.status, func.count(Order.order_id)).group_by(Order.status)):
-        status_counts[status_value.value] = int(count)
+    count_stmt = select(Order.status, func.count(Order.order_id))
+    if base_filters:
+        count_stmt = count_stmt.where(*base_filters)
+    for status_value, count in db.execute(count_stmt.group_by(Order.status)):
+        key = status_value.value if hasattr(status_value, "value") else str(status_value)
+        if key in status_counts:
+            status_counts[key] = int(count)
+
     paid_revenue = sum(order_total_paise(order) for order in rows if order.payment and order.payment.status == PaymentStatus.PAID)
     return {
         "items": [order_payload(order) for order in rows],
@@ -267,13 +279,26 @@ def admin_orders(
 
 
 @router.patch("/orders/{order_id}/status")
-def admin_order_status(order_id: str, data: OrderStatusUpdate, actor: CurrentAccount, db: DbSession):
+async def admin_order_status(order_id: str, data: OrderStatusUpdate, actor: CurrentAccount, db: DbSession):
     order = db.get(Order, order_id)
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found")
+    if order.status == OrderStatus.REJECTED:
+        raise HTTPException(status_code=400, detail="A rejected order cannot have its status changed")
+
     payment = db.get(Payment, order.order_id)
-    if data.status in {OrderStatus.REJECTED, OrderStatus.CANCELLED} and payment and payment.status in {PaymentStatus.PAID, PaymentStatus.REFUND_PENDING}:
-        raise HTTPException(status_code=409, detail="Issue a refund before rejecting or cancelling a paid order")
+    if data.status in {OrderStatus.REJECTED, OrderStatus.CANCELLED} and payment:
+        if payment.method == PaymentMethod.CASH:
+            db.delete(payment)
+            payment = None
+            order.payment = None
+        else:
+            if payment.status in {PaymentStatus.PAID, PaymentStatus.REFUND_PENDING} and payment.method == PaymentMethod.RAZORPAY:
+                try:
+                    await issue_razorpay_refund(order, payment)
+                except Exception as exc:
+                    logger.warning("Auto-refund during admin status override failed: %s", exc)
+            payment.status = PaymentStatus.REFUNDED
 
     old_status = order.status
     order.status = data.status

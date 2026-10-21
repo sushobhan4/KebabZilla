@@ -191,8 +191,13 @@ def update_status(order_id: str, data: OrderStatusUpdate, actor: CurrentAccount,
     if data.status == OrderStatus.DELIVERED:
         raise HTTPException(status_code=400, detail="A delivery partner must verify the customer’s code to complete delivery")
     payment = db.get(Payment, order.order_id)
-    if data.status in {OrderStatus.REJECTED, OrderStatus.CANCELLED} and payment and payment.status in {PaymentStatus.PAID, PaymentStatus.REFUND_PENDING}:
-        raise HTTPException(status_code=409, detail="Issue a refund from order management before rejecting or cancelling a paid order")
+    if data.status in {OrderStatus.REJECTED, OrderStatus.CANCELLED} and payment:
+        if payment.method == PaymentMethod.CASH:
+            db.delete(payment)
+            payment = None
+            order.payment = None
+        else:
+            payment.status = PaymentStatus.REFUNDED
     transition_order(order, data.status)
     db.add(AdminEvent(event_type="order_status", message=f"Order {order.order_id} changed to {data.status.value} by {actor.name}", actor_id=actor.id, details={"order_id": order.order_id, "status": data.status.value}))
     db.commit()

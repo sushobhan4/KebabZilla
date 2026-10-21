@@ -537,24 +537,33 @@ class OrderStatusUpdate(BaseModel):
 
 
 class OrderOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     order_id: str
-    customer_id: int | None
-    customer_name: str
-    customer_email: str
-    customer_phone: str | None
+    customer_id: int | None = None
+    customer_name: str = "Walk-in"
+    customer_email: str = ""
+    customer_phone: str | None = None
     status: OrderStatus
-    order_type: str
-    payment_method: PaymentMethod
-    payment_status: PaymentStatus
-    subtotal_paise: int
-    tax_paise: int
-    delivery_fee_paise: int
-    total_paise: int
-    address: str
-    notes: str
-    assigned_delivery_id: int | None
+    order_type: str = "DELIVERY"
+    payment_method: PaymentMethod | None = None
+    payment_status: PaymentStatus | None = None
+    subtotal_paise: int = 0
+    tax_paise: int = 0
+    delivery_fee_paise: int = 0
+    total_paise: int = 0
+    address: str = ""
+    latitude: float | None = None
+    longitude: float | None = None
+    notes: str = ""
+    assigned_delivery_id: int | None = None
+    delivery_name: str | None = None
+    delivery_phone: str | None = None
     created_at: datetime
-    items: list[dict]
+    scheduled_for: datetime | None = None
+    delivery_started_at: datetime | None = None
+    delivered_at: datetime | None = None
+    delivery_otp: str | None = None
+    items: list[dict] = Field(default_factory=list)
 
 
 class AdminOrdersPageOut(BaseModel):

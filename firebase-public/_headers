@@ -1,0 +1,49 @@
+/*
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(self), payment=(self "https://checkout.razorpay.com")
+  Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://checkout.razorpay.com https://accounts.google.com https://maps.googleapis.com https://*.googleapis.com https://*.gstatic.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://*.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https: https://*.googleapis.com https://*.gstatic.com; connect-src 'self' https: https://*.googleapis.com https://*.gstatic.com; frame-src 'self' https://api.razorpay.com https://checkout.razorpay.com https://accounts.google.com https://www.google.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none';
+
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/fonts/*
+  Cache-Control: public, max-age=31536000, immutable
+  Access-Control-Allow-Origin: *
+
+/sitemap.xml
+  Content-Type: application/xml; charset=utf-8
+  Cache-Control: public, max-age=86400
+  Access-Control-Allow-Origin: *
+
+/robots.txt
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=86400
+  Access-Control-Allow-Origin: *
+
+/*.jpg
+  Cache-Control: public, max-age=604800, stale-while-revalidate=86400
+  Access-Control-Allow-Origin: *
+
+/*.jpeg
+  Cache-Control: public, max-age=604800, stale-while-revalidate=86400
+  Access-Control-Allow-Origin: *
+
+/*.webp
+  Cache-Control: public, max-age=604800, stale-while-revalidate=86400
+  Access-Control-Allow-Origin: *
+
+/*.png
+  Cache-Control: public, max-age=604800, stale-while-revalidate=86400
+  Access-Control-Allow-Origin: *
+
+/*.ico
+  Cache-Control: public, max-age=604800, stale-while-revalidate=86400
+  Access-Control-Allow-Origin: *
+
+/site.webmanifest
+  Content-Type: application/manifest+json
+  Cache-Control: public, max-age=604800
+  Access-Control-Allow-Origin: *

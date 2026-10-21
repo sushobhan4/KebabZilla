@@ -1,12 +1,9 @@
 import React, { Component, type ReactNode } from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
-import { GoogleOAuthProvider } from '@react-oauth/google'
 import { AuthProvider, RestaurantProvider } from './state'
 import App from './App'
 import './styles.css'
-
-const GOOGLE_CLIENT_ID = (import.meta.env.VITE_GOOGLE_CLIENT_ID || '246180384663-jf752n3net3tf4caq3laquoneicitstu.apps.googleusercontent.com').trim()
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null }
@@ -48,15 +45,13 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ErrorBoundary>
-      <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
-        <BrowserRouter basename={import.meta.env.BASE_URL}>
-          <AuthProvider>
-            <RestaurantProvider>
-              <App />
-            </RestaurantProvider>
-          </AuthProvider>
-        </BrowserRouter>
-      </GoogleOAuthProvider>
+      <BrowserRouter basename={import.meta.env.BASE_URL}>
+        <AuthProvider>
+          <RestaurantProvider>
+            <App />
+          </RestaurantProvider>
+        </AuthProvider>
+      </BrowserRouter>
     </ErrorBoundary>
   </React.StrictMode>,
 )

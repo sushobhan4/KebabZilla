@@ -33,6 +33,8 @@ from app.models import (
     RestaurantSettings,
     AdminEvent,
     MenuDiscount,
+    StaffInfo,
+    utcnow,
 )
 from app.schemas import OrderLineInput
 from app.cache import invalidate_delivery_cache, invalidate_orders_cache
@@ -815,6 +817,14 @@ def order_payload(order: Order, *, include_delivery_otp: bool = False, include_c
     customer = order.customer
     delivery = order.delivery
     payment = order.payment
+    payment_method = payment.method if payment else None
+    payment_status = payment.status if payment else None
+    if order.status in {OrderStatus.CANCELLED, OrderStatus.REJECTED}:
+        if payment and payment.method == PaymentMethod.CASH:
+            payment_method = None
+            payment_status = None
+        elif payment and payment.status == PaymentStatus.PENDING:
+            payment_status = PaymentStatus.REFUNDED
     items = []
     for line in order.items:
         if line.custom_menu_item:
@@ -896,8 +906,8 @@ def order_payload(order: Order, *, include_delivery_otp: bool = False, include_c
         "customer_phone": order.customer_phone or (customer.phone if customer else None),
         "status": order.status,
         "order_type": order.order_type,
-        "payment_method": payment.method if payment else None,
-        "payment_status": payment.status if payment else PaymentStatus.PENDING,
+        "payment_method": payment_method,
+        "payment_status": payment_status,
         "subtotal_paise": subtotal,
         "tax_paise": 0,
         "delivery_fee_paise": order.delivery_fee_paise,
@@ -945,6 +955,17 @@ def transition_order(order: Order, new_status: OrderStatus) -> None:
         order.delivery_started_at = datetime.now(timezone.utc)
     elif new_status == OrderStatus.DELIVERED and order.delivered_at is None:
         order.delivered_at = datetime.now(timezone.utc)
+    elif new_status in {OrderStatus.CANCELLED, OrderStatus.REJECTED}:
+        from sqlalchemy.orm import object_session
+        s = object_session(order)
+        payment = order.payment or (s.get(Payment, order.order_id) if s else None)
+        if payment:
+            if payment.method == PaymentMethod.CASH:
+                if s:
+                    s.delete(payment)
+                order.payment = None
+            else:
+                payment.status = PaymentStatus.REFUNDED
     invalidate_orders_cache()
     invalidate_delivery_cache()
 
@@ -1088,4 +1109,38 @@ def recalculate_all_address_distances(db: Session, config: RestaurantSettings | 
             addr.distance_meters = new_dist
             count += 1
     return count
+
+
+def sync_staff_info_for_account(account: Account, new_role: Role, db: Session) -> StaffInfo | None:
+    """Synchronize the staff_info table when an account is promoted, demoted, or transitioned.
+    
+    - Demotion to USER: Removes the staff_info record entirely (customers are not staff).
+    - Promotion from USER to staff: Creates staff_info with the assigned role.
+    - Transition between staff roles: Updates staff_info.role and resets is_accepting_deliveries
+      to False if the target role is not permitted to make deliveries.
+    """
+    account.role = new_role
+    if new_role == Role.USER:
+        if account.staff_info is not None:
+            db.delete(account.staff_info)
+            account.staff_info = None
+        return None
+
+    if account.staff_info is None:
+        staff = StaffInfo(
+            account_id=account.id,
+            role=new_role,
+            is_accepting_deliveries=False,
+            must_change_password=False,
+            updated_at=utcnow(),
+        )
+        account.staff_info = staff
+        db.add(staff)
+        return staff
+    else:
+        account.staff_info.role = new_role
+        if new_role not in (Role.DELIVERY, Role.ADMIN):
+            account.staff_info.is_accepting_deliveries = False
+        account.staff_info.updated_at = utcnow()
+        return account.staff_info
 

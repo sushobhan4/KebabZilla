@@ -52,6 +52,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAccount(null)
       })
       .finally(() => setLoading(false))
+
+    const handleUnauthorized = (event: Event) => {
+      const custom = event as CustomEvent<{ message?: string; path?: string }>
+      setAccount(null)
+      setAccessToken(null)
+      setCsrfToken(null)
+      try {
+        localStorage.removeItem('kz_account')
+        localStorage.removeItem('kz_access_token')
+        localStorage.removeItem('kz_csrf_token')
+        sessionStorage.removeItem('kz_account')
+        sessionStorage.removeItem('kz_access_token')
+      } catch {
+        // ignore
+      }
+      // ONLY redirect to login if the user is currently on a protected route that requires auth
+      const pathname = typeof window !== 'undefined' ? window.location.pathname.toLowerCase() : ''
+      const isProtected =
+        pathname.startsWith('/admin') ||
+        pathname.startsWith('/ops') ||
+        pathname.startsWith('/delivery') ||
+        pathname.startsWith('/orders') ||
+        pathname.startsWith('/profile') ||
+        pathname.startsWith('/security') ||
+        pathname.startsWith('/change-password')
+
+      if (isProtected) {
+        const msg = custom.detail?.message || 'Your session has expired or device was unrecognized. Please sign in again.'
+        const params = new URLSearchParams()
+        params.set('reason', msg)
+        window.location.assign(`/login?${params.toString()}`)
+      }
+    }
+    window.addEventListener('kz_unauthorized', handleUnauthorized)
+    return () => window.removeEventListener('kz_unauthorized', handleUnauthorized)
   }, [])
 
   const accept = useCallback((result: { access_token?: string; csrf_token?: string; account: Account }) => {

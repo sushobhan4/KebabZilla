@@ -3,7 +3,7 @@ import { ArrowDown, ArrowRight, Check, ChevronLeft, ChevronRight, Clock3, Edit3,
 import { Link, useNavigate } from 'react-router-dom'
 import { api, formatINR, formatSavedAddress, getCustomItemLowestPrice, getMenuItemLowestPrice, getItemDiscountedLowestPrice, resolveImageUrl, type CustomMenuItem, type CustomMenuSectionOption, type MenuItem, type MenuItemVariation, type Order, type Restaurant, type SavedCartItem } from '../api'
 import { useAuth } from '../state'
-import { Button, CenterDialog, EmptyState, Loading, Notice, QuantityPicker, RoundedSelect, RoundedTimePicker } from '../components'
+import { Button, CenterDialog, EmptyState, Notice, QuantityPicker, RoundedSelect, RoundedTimePicker } from '../components'
 import { launchCheckout, verifyRazorpayPayment } from '../payments'
 import { liquidGlassManager } from '../vendor/liquidGlassManager'
 import { usePreference } from '../cookies'
@@ -21,27 +21,6 @@ type CartLine = {
 const colors = ['food-red', 'food-gold', 'food-green', 'food-plum', 'food-orange', 'food-teal']
 const art = ['🥙', '🍗', '🫓', '🍢', '🥘', '🍟']
 
-const preloadedImageUrls = new Set<string>()
-
-export function preloadMenuImages(items: MenuItem[]) {
-  if (typeof window === 'undefined') return
-  items.forEach((item) => {
-    const urls: string[] = []
-    if (item.image_url) urls.push(item.image_url)
-    if (Array.isArray(item.image_urls)) {
-      urls.push(...item.image_urls)
-    }
-    urls.forEach((url) => {
-      const resolved = resolveImageUrl(url)
-      if (resolved && !preloadedImageUrls.has(resolved)) {
-        preloadedImageUrls.add(resolved)
-        const img = new Image()
-        img.src = resolved
-      }
-    })
-  })
-}
-
 export default function Storefront() {
   const { account } = useAuth()
   const navigate = useNavigate()
@@ -53,8 +32,20 @@ export default function Storefront() {
     primaryAction: { label: string; variant?: 'primary' | 'secondary' | 'danger'; onClick: () => void }
     secondaryAction?: { label: string; variant?: 'primary' | 'secondary' | 'danger'; onClick: () => void }
   } | null>(null)
-  const [menu, setMenu] = useState<MenuItem[]>([])
-  const [restaurant, setRestaurant] = useState<Restaurant | null>(null)
+  const [menu, setMenu] = useState<MenuItem[]>(() => {
+    try {
+      const cached = localStorage.getItem('kz_storefront_menu')
+      if (cached) return JSON.parse(cached) as MenuItem[]
+    } catch {}
+    return []
+  })
+  const [restaurant, setRestaurant] = useState<Restaurant | null>(() => {
+    try {
+      const cached = localStorage.getItem('kz_restaurant')
+      if (cached) return JSON.parse(cached) as Restaurant
+    } catch {}
+    return null
+  })
   const [category, setCategory] = usePreference<string>('storefront_category', 'All')
   const [menuSearch, setMenuSearch] = useState('')
   const [menuSort, setMenuSort] = usePreference<'popular_desc' | 'popular_asc' | 'price_asc' | 'price_desc'>('storefront_menu_sort', 'popular_desc')
@@ -71,7 +62,7 @@ export default function Storefront() {
   }, [category, menuSearch, menuSort])
 
   useEffect(() => {
-    liquidGlassManager.updateStuckState()
+    void liquidGlassManager.start()
   }, [])
   const [activeDetailItem, setActiveDetailItem] = useState<MenuItem | null>(null)
   const [customizingModalItem, setCustomizingModalItem] = useState<MenuItem | null>(null)
@@ -107,7 +98,13 @@ export default function Storefront() {
   const [notes, setNotes] = useState('')
   const [scheduledFor, setScheduledFor] = useState('')
   const [paymentMethod, setPaymentMethod] = usePreference<'CASH' | 'RAZORPAY'>('kz_payment_method', 'RAZORPAY')
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState<boolean>(() => {
+    try {
+      return !localStorage.getItem('kz_storefront_menu')
+    } catch {
+      return true
+    }
+  })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [serverDown, setServerDown] = useState(false)
@@ -446,8 +443,10 @@ export default function Storefront() {
     })
   }, [])
 
-  const loadStore = useCallback(() => {
-    setLoading(true)
+  const loadStore = useCallback((background = false) => {
+    if (!background) {
+      setLoading(true)
+    }
     setError('')
     Promise.all([
       api<MenuItem[]>('/menu'),
@@ -491,7 +490,10 @@ export default function Storefront() {
       const fullMenu = [...items, ...mappedCustom]
       setMenu(fullMenu)
       setRestaurant(config)
-      preloadMenuImages(fullMenu)
+      try {
+        localStorage.setItem('kz_storefront_menu', JSON.stringify(fullMenu))
+        localStorage.setItem('kz_restaurant', JSON.stringify(config))
+      } catch {}
 
       if (account) {
         api<SavedCartItem[]>('/cart').then((saved) => {
@@ -518,12 +520,26 @@ export default function Storefront() {
     }).catch((err) => {
       const msg = err instanceof Error ? err.message : 'Our servers are currently down. Please check back in a few minutes.'
       setError(msg)
-      setServerDown(true)
+      try {
+        const cached = localStorage.getItem('kz_storefront_menu')
+        if (!cached || JSON.parse(cached).length === 0) {
+          setServerDown(true)
+        }
+      } catch {
+        setServerDown(true)
+      }
     }).finally(() => setLoading(false))
   }, [account, cartLinesFromSaved, persistCart])
 
   useEffect(() => {
-    loadStore()
+    const hasCached = (() => {
+      try {
+        return Boolean(localStorage.getItem('kz_storefront_menu'))
+      } catch {
+        return false
+      }
+    })()
+    loadStore(hasCached)
   }, [loadStore])
 
   useEffect(() => {
@@ -1510,16 +1526,14 @@ export default function Storefront() {
   }
 
   function goToMenu() {
-    preloadMenuImages(menu)
     document.getElementById('menu')?.scrollIntoView({ behavior: 'smooth' })
   }
 
-  if (loading) return <div className="store-loading"><Loading label="Lighting the grill…" /></div>
   if (success) return <main className="order-success-wrap"><section className="order-success"><div className="success-check"><Check size={29} /></div><div className="eyebrow">ORDER {success.payment_method === 'RAZORPAY' && success.payment_status !== 'PAID' ? 'SAVED · PAYMENT PENDING' : 'IT’S ON THE WAY'}</div><h1>{success.payment_method === 'RAZORPAY' && success.payment_status !== 'PAID' ? 'Your ticket is saved.' : 'That’s a wrap.'}</h1><p>{success.payment_method === 'RAZORPAY' && success.payment_status !== 'PAID' ? 'We saved your order, but payment has not been confirmed. Open My orders to finish payment or check its status.' : 'Your order is with the grill team. We’ll keep you posted as it makes its way to you.'}</p><div className="success-order-number"><span>ORDER NUMBER</span><strong>{success.order_id}</strong></div><div className="success-order-meta"><span><Clock3 size={15} /> Track it as it makes its way to you</span><span><ShieldCheck size={15} /> {success.payment_status === 'PAID' ? 'Payment secured' : success.payment_method === 'CASH' ? 'Cash on delivery' : 'Payment not confirmed'}</span></div><Link className="button button-dark" to={account ? '/orders' : '/'}>{success.payment_method === 'RAZORPAY' && success.payment_status !== 'PAID' ? 'Finish payment' : 'Track your order'} <ArrowRight size={16} /></Link><button className="text-button success-back" onClick={() => setSuccess(null)}>Back to the menu</button></section><div className="success-decoration">🥙</div></main>
 
   return <main className="storefront">
     <section className="hero-section">
-      <div className="hero-copy"><div className="hero-kicker"><span className="hero-kicker-icon"><Flame size={15} fill="currentColor" /></span> SLOW FIRE. BIG FLAVOR.</div><h1>Big on flavor.<br />Never <em>on the fence.</em></h1><p className="hero-description">KebabZilla is an online ordering platform for kebabs, located in Amtala on DH Road, South 24 Parganas, West Bengal. Browse our menu, view available items, and place your order online.</p><div className="hero-actions"><Button onClick={goToMenu}>Explore the menu <ArrowDown size={16} /></Button><div className="hero-delivery"><span className="hero-delivery-icon"><Truck size={17} /></span><span><strong>Order updates along the way</strong><small>From our kitchen to your door</small></span></div></div><div className="hero-social-proof"><div className="social-rating"><span>✦</span><b>Made to order</b></div><div className="social-divider" /><span>Freshly prepared</span><span className="social-separator">·</span><span>Made with care</span></div></div>
+      <div className="hero-copy"><div className="hero-kicker"><span className="hero-kicker-icon"><Flame size={15} fill="currentColor" /></span> SLOW FIRE. BIG FLAVOR.</div><h1>Big on flavor.<br />Never <em>on the fence.</em></h1><p className="hero-description">An online ordering platform for our shop KebabZilla, located in Amtala on DH Road, South 24 Parganas, West Bengal. Browse our menu, view available items, and place your order online.</p><div className="hero-actions"><Button onClick={goToMenu}>Explore the menu <ArrowDown size={16} /></Button><div className="hero-delivery"><span className="hero-delivery-icon"><Truck size={17} /></span><span><strong>Order updates along the way</strong><small>From our kitchen to your door</small></span></div></div><div className="hero-social-proof"><div className="social-rating"><span>✦</span><b>Made to order</b></div><div className="social-divider" /><span>Freshly prepared</span><span className="social-separator">·</span><span>Made with care</span></div></div>
       <div className="hero-art"><div className="hero-art-bg" /><div className="hero-orbit hero-orbit-one" /><div className="hero-orbit hero-orbit-two" /><div className="hero-food-main"><span className="hero-food-glow" /><span className="hero-food-emoji">🥙</span><span className="hero-food-herbs">✳ &nbsp;✦ &nbsp;✳</span></div><div className="hero-note hero-note-top"><span className="hero-note-star">✦</span><span>Fire-kissed<br /><strong>to perfection</strong></span></div><div className="hero-note hero-note-bottom"><span className="mini-avatar">Z</span><span><strong>Made fresh</strong><br />Just for you</span><Sparkles className="note-spark" size={17} /></div><span className="hero-art-doodle doodle-one">✷</span><span className="hero-art-doodle doodle-two">✳</span></div>
       <div className="hero-bottomline"><span>01 <i /> GOOD FOOD, GREAT NEIGHBORS</span><span className="hero-bottom-address"><MapPin size={13} /> {restaurant?.address || 'Add your restaurant address'}</span><span>SCROLL TO TASTE <ArrowDown size={13} /></span></div>
     </section>
@@ -1548,7 +1562,31 @@ export default function Storefront() {
         </div>
       ) : (
         <>
-          <div className="menu-tabs">{categories.map((name) => <button className={`menu-tab ${category === name ? 'active' : ''}`} key={name} onClick={() => { setCategory(name); preloadMenuImages(menu); liquidGlassManager.invalidateAll(); }}>{name}</button>)}</div>
+          <div className="menu-tabs">
+            {categories.length > 1 ? (
+              categories.map((name) => (
+                <button
+                  className={`menu-tab ${category === name ? 'active' : ''}`}
+                  key={name}
+                  onClick={() => {
+                    setCategory(name)
+                    liquidGlassManager.invalidateAll()
+                  }}
+                >
+                  {name}
+                </button>
+              ))
+            ) : loading ? (
+              <>
+                <button className="menu-tab active">All</button>
+                <button className="menu-tab skeleton-pill" disabled>Specialty</button>
+                <button className="menu-tab skeleton-pill" disabled>Kebabs</button>
+                <button className="menu-tab skeleton-pill" disabled>Rolls</button>
+              </>
+            ) : (
+              <button className="menu-tab active">All</button>
+            )}
+          </div>
       <div className="storefront-sticky-controls">
         <div className="menu-discovery-controls">
           <label className="menu-search">
@@ -1583,7 +1621,11 @@ export default function Storefront() {
               <img
                 src={resolveImageUrl((item.image_urls?.length ? item.image_urls[0] : item.image_url) || '')}
                 alt={item.name}
-                loading="lazy"
+                width="320"
+                height="183"
+                loading={index < 3 ? 'eager' : 'lazy'}
+                fetchPriority={index === 0 ? 'high' : 'auto'}
+                decoding="async"
                 crossOrigin="anonymous"
               />
             </div>
@@ -1687,7 +1729,28 @@ export default function Storefront() {
             )}
           </div>
         </div>
-      </article>)}</div> : <EmptyState icon={<Utensils size={20} />} title="The menu’s getting warmed up" description="Ask your restaurant admin to publish a few delicious items." />}
+      </article>)}</div> : loading ? (
+        <div className="food-grid food-grid-skeleton" aria-label="Loading menu items" aria-busy="true">
+          {Array.from({ length: 6 }).map((_, idx) => (
+            <article className="food-card food-skeleton-card" key={`skel-${idx}`}>
+              <div className={`food-image food-skeleton-image ${colors[idx % colors.length]}`}>
+                <div className="skeleton-image-shimmer" />
+              </div>
+              <div className="food-card-content">
+                <div className="skeleton-line skeleton-title" />
+                <div className="skeleton-line skeleton-desc" />
+                <div className="skeleton-line skeleton-desc-short" />
+                <div className="food-card-bottom">
+                  <div className="skeleton-line skeleton-price" />
+                  <div className="skeleton-line skeleton-button" />
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <EmptyState icon={<Utensils size={20} />} title="The menu’s getting warmed up" description="Ask your restaurant admin to publish a few delicious items." />
+      )}
         </>
       )}
     </section>
