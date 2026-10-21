@@ -1,0 +1,21 @@
+*.iml
+.gradle
+/local.properties
+local.properties
+/.idea/
+.idea/
+.DS_Store
+/build
+build/
+app/build/
+/captures
+.externalNativeBuild
+.cxx
+*.jks
+*.keystore
+google-services.json
+
+# Agent Context & Local Instructions (Preserved locally, not committed to git)
+AGENTS.md
+agents.md
+GEMINI.md
