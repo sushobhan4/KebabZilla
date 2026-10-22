@@ -1,0 +1,699 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/brand_paper"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="20dp"
+        android:paddingTop="16dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="40dp">
+
+        <!-- Top Navigation Bar (Clean Back Button, No Logo, No Minus) -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <ImageView
+                android:id="@+id/btnAuthBack"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="@drawable/bg_pill_white"
+                android:contentDescription="Back"
+                android:padding="10dp"
+                android:src="@drawable/ic_arrow_back"
+                app:tint="@color/brand_ink" />
+
+        </FrameLayout>
+
+        <!-- Standard Login / Register Form Container -->
+        <LinearLayout
+            android:id="@+id/layoutStandardAuth"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- Header Titles -->
+            <TextView
+                android:id="@+id/tvAuthTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:fontFamily="@font/manrope"
+                android:text="Welcome Back"
+                android:textColor="@color/brand_ink"
+                android:textSize="26sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvAuthSubtitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Sign in to enjoy delicious charcoal grilled kebabs &amp; rolls"
+                android:textColor="@color/brand_muted"
+                android:textSize="13sp" />
+
+            <!-- Tab Toggle Container (Sign In / Register) -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:layout_marginTop="20dp"
+                android:background="@drawable/bg_pill_white"
+                android:orientation="horizontal"
+                android:padding="3dp">
+
+                <TextView
+                    android:id="@+id/tabSignIn"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_category_chip_selected"
+                    android:fontFamily="@font/manrope"
+                    android:gravity="center"
+                    android:text="Sign In"
+                    android:textColor="@color/white"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tabRegister"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_category_chip_unselected"
+                    android:fontFamily="@font/manrope"
+                    android:gravity="center"
+                    android:text="Register"
+                    android:textColor="@color/brand_muted"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+            </LinearLayout>
+
+            <!-- Name Field (Register Mode Only) -->
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilName"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:hint="Full Name"
+                android:visibility="gone"
+                app:boxStrokeColor="@color/selector_box_stroke"
+                tools:visibility="visible">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/etAuthName"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="textPersonName"
+                    android:maxLines="1"
+                    android:textColor="@color/brand_ink"
+                    android:textSize="14sp" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <!-- Phone Field with +91 Prefix (Register Mode Only) -->
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilPhone"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:hint="Phone Number"
+                android:visibility="gone"
+                app:boxStrokeColor="@color/selector_box_stroke"
+                app:prefixText="+91 "
+                app:prefixTextAppearance="@style/TextAppearance.KebabZilla.Prefix"
+                app:prefixTextColor="@color/brand_ink"
+                tools:visibility="visible">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/etAuthPhone"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="phone"
+                    android:maxLength="10"
+                    android:maxLines="1"
+                    android:textColor="@color/brand_ink"
+                    android:textSize="14sp" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <!-- Email Field & In-Field Verify Action -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:orientation="vertical">
+
+                <FrameLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content">
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilAuthEmail"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:hint="Email Address"
+                        app:boxStrokeColor="@color/selector_box_stroke">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etAuthEmail"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="textEmailAddress"
+                            android:maxLines="1"
+                            android:paddingEnd="80dp"
+                            android:textColor="@color/brand_ink"
+                            android:textSize="14sp" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <!-- In-Line Verify Button for Register Mode -->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnVerifyEmailInline"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="40dp"
+                        android:layout_gravity="end|center_vertical"
+                        android:layout_marginEnd="8dp"
+                        android:fontFamily="@font/manrope"
+                        android:text="Verify"
+                        android:textColor="@color/brand_red"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:visibility="gone"
+                        tools:visibility="visible" />
+
+                    <!-- Verified Pill Indicator -->
+                    <LinearLayout
+                        android:id="@+id/layoutEmailVerifiedBadge"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="end|center_vertical"
+                        android:layout_marginEnd="12dp"
+                        android:background="@drawable/bg_spicy_badge"
+                        android:backgroundTint="@color/brand_green_container"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingStart="8dp"
+                        android:paddingTop="4dp"
+                        android:paddingEnd="8dp"
+                        android:paddingBottom="4dp"
+                        android:visibility="gone">
+
+                        <ImageView
+                            android:layout_width="14dp"
+                            android:layout_height="14dp"
+                            android:contentDescription="Verified"
+                            android:src="@drawable/ic_verified"
+                            app:tint="@color/brand_green" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="4dp"
+                            android:fontFamily="@font/manrope"
+                            android:text="Verified"
+                            android:textColor="@color/brand_green"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                </FrameLayout>
+
+                <!-- Email OTP Input Box (Shown below email upon clicking Verify) -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardEmailOtp"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:visibility="gone"
+                    app:cardBackgroundColor="@color/brand_paper_card"
+                    app:cardCornerRadius="14dp"
+                    app:cardElevation="1dp"
+                    app:strokeColor="@color/brand_line"
+                    app:strokeWidth="1dp"
+                    tools:visibility="visible">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="14dp">
+
+                        <TextView
+                            android:id="@+id/tvOtpInstruction"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Enter the 6-digit verification code sent to your email:"
+                            android:textColor="@color/brand_ink"
+                            android:textSize="12sp" />
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:id="@+id/tilEmailOtp"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:hint="6-Digit OTP"
+                                app:boxStrokeColor="@color/selector_box_stroke">
+
+                                <com.google.android.material.textfield.TextInputEditText
+                                    android:id="@+id/etEmailOtp"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:fontFamily="@font/manrope"
+                                    android:gravity="center"
+                                    android:inputType="number"
+                                    android:letterSpacing="0.2"
+                                    android:maxLength="6"
+                                    android:maxLines="1"
+                                    android:textColor="@color/brand_ink"
+                                    android:textSize="16sp"
+                                    android:textStyle="bold" />
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnSubmitOtp"
+                                android:layout_width="wrap_content"
+                                android:layout_height="48dp"
+                                android:layout_marginStart="10dp"
+                                android:backgroundTint="@color/brand_green"
+                                android:fontFamily="@font/manrope"
+                                android:text="Verify OTP"
+                                android:textColor="@color/white"
+                                android:textSize="12sp"
+                                android:textStyle="bold"
+                                app:cornerRadius="10dp" />
+
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <TextView
+                                android:id="@+id/tvOtpResendNotice"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="Didn't receive code?"
+                                android:textColor="@color/brand_muted"
+                                android:textSize="11sp" />
+
+                            <TextView
+                                android:id="@+id/btnResendOtp"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:clickable="true"
+                                android:focusable="true"
+                                android:fontFamily="@font/manrope"
+                                android:text="Resend Code"
+                                android:textColor="@color/brand_red"
+                                android:textSize="12sp"
+                                android:textStyle="bold" />
+
+                        </LinearLayout>
+
+                    </LinearLayout>
+
+                </com.google.android.material.card.MaterialCardView>
+
+            </LinearLayout>
+
+            <!-- Password Field -->
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilAuthPassword"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:hint="Password"
+                app:boxStrokeColor="@color/selector_box_stroke"
+                app:passwordToggleEnabled="true"
+                app:passwordToggleTint="@color/brand_muted">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/etAuthPassword"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="textPassword"
+                    android:maxLines="1"
+                    android:textColor="@color/brand_ink"
+                    android:textSize="14sp" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <!-- Forgot Password Button (Bottom Right of Password Field - Sign In Mode) -->
+            <LinearLayout
+                android:id="@+id/layoutForgotPassword"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="end"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/btnForgotPassword"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:fontFamily="@font/manrope"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:text="Forgot Password?"
+                    android:textColor="@color/brand_red"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+            </LinearLayout>
+
+            <!-- Confirm Password Field (Register Mode Only) -->
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilConfirmPassword"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:hint="Confirm Password"
+                android:visibility="gone"
+                app:boxStrokeColor="@color/selector_box_stroke"
+                app:passwordToggleEnabled="true"
+                app:passwordToggleTint="@color/brand_muted"
+                tools:visibility="visible">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/etAuthConfirmPassword"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="textPassword"
+                    android:maxLines="1"
+                    android:textColor="@color/brand_ink"
+                    android:textSize="14sp" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <!-- Promo Consent (Register Mode Only) -->
+            <CheckBox
+                android:id="@+id/cbPromoConsent"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:buttonTint="@color/brand_red"
+                android:text="Receive exclusive grill deals &amp; event updates"
+                android:textColor="@color/brand_muted"
+                android:textSize="12sp"
+                android:visibility="gone"
+                tools:visibility="visible" />
+
+            <!-- Action Button -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnAuthSubmit"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="16dp"
+                android:backgroundTint="@color/brand_red"
+                android:elevation="3dp"
+                android:fontFamily="@font/manrope"
+                android:text="Sign In"
+                android:textColor="@color/white"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                app:cornerRadius="999dp"
+                app:icon="@drawable/ic_arrow_forward"
+                app:iconGravity="textEnd"
+                app:iconTint="@color/white" />
+
+            <!-- Divider with Text -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="22dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1"
+                    android:background="@color/brand_line" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="14dp"
+                    android:layout_marginEnd="14dp"
+                    android:letterSpacing="0.06"
+                    android:text="OR CONTINUE WITH"
+                    android:textColor="@color/brand_muted"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1"
+                    android:background="@color/brand_line" />
+            </LinearLayout>
+
+            <!-- Google Sign-In Button -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnGoogleSignIn"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="16dp"
+                android:backgroundTint="@color/brand_paper_card"
+                android:fontFamily="@font/manrope"
+                android:text="Sign in with Google"
+                android:textColor="@color/brand_ink"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                app:cornerRadius="999dp"
+                app:icon="@drawable/ic_google_logo"
+                app:iconGravity="textStart"
+                app:iconPadding="12dp"
+                app:iconTint="@null"
+                app:strokeColor="@color/brand_line"
+                app:strokeWidth="1.5dp" />
+
+            <!-- Guest Exploration Pill Button -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnGuestExplore"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginTop="14dp"
+                android:text="Browse Menu as Guest"
+                android:textColor="@color/brand_muted"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+        </LinearLayout>
+
+        <!-- 2-Step Verification Container (Shown for Staff & Admin) -->
+        <LinearLayout
+            android:id="@+id/layoutTwoFactorAuth"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone"
+            tools:visibility="visible">
+
+            <!-- Security Badge Eyebrow -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:background="@drawable/bg_spicy_badge"
+                android:backgroundTint="@color/brand_red_soft"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="10dp"
+                android:paddingTop="5dp"
+                android:paddingEnd="10dp"
+                android:paddingBottom="5dp">
+
+                <ImageView
+                    android:layout_width="14dp"
+                    android:layout_height="14dp"
+                    android:contentDescription="Security"
+                    android:src="@drawable/ic_verified"
+                    app:tint="@color/brand_red" />
+
+                <TextView
+                    android:id="@+id/tvTwoFactorEyebrow"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:fontFamily="@font/manrope"
+                    android:letterSpacing="0.08"
+                    android:text="STAFF SECURITY VERIFICATION"
+                    android:textColor="@color/brand_red"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tvTwoFactorTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:fontFamily="@font/manrope"
+                android:text="Two-Step Verification"
+                android:textColor="@color/brand_ink"
+                android:textSize="26sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvTwoFactorInstruction"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:lineSpacingExtra="3dp"
+                android:text="A 6-digit security code was dispatched to your email. Enter it below to complete sign-in to your staff workspace."
+                android:textColor="@color/brand_muted"
+                android:textSize="13sp" />
+
+            <!-- OTP Card Container -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardTwoFactorOtp"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                app:cardBackgroundColor="@color/brand_paper_card"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="2dp"
+                app:strokeColor="@color/brand_line"
+                app:strokeWidth="1dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="20dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/manrope"
+                        android:letterSpacing="0.06"
+                        android:text="VERIFICATION CODE"
+                        android:textColor="@color/brand_muted"
+                        android:textSize="11sp"
+                        android:textStyle="bold" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilTwoFactorOtp"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:hint="6-Digit Security Code"
+                        app:boxStrokeColor="@color/selector_box_stroke">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etTwoFactorOtp"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="@font/manrope"
+                            android:gravity="center"
+                            android:inputType="number"
+                            android:letterSpacing="0.25"
+                            android:maxLength="6"
+                            android:maxLines="1"
+                            android:textColor="@color/brand_ink"
+                            android:textSize="22sp"
+                            android:textStyle="bold" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <!-- Resend Row with Countdown -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/tvTwoFactorResendNotice"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Didn't receive code?"
+                            android:textColor="@color/brand_muted"
+                            android:textSize="12sp" />
+
+                        <TextView
+                            android:id="@+id/btnTwoFactorResend"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:fontFamily="@font/manrope"
+                            android:text="Resend Code"
+                            android:textColor="@color/brand_red"
+                            android:textSize="12sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Verify & Sign In Button -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnTwoFactorSubmit"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="18dp"
+                android:backgroundTint="@color/brand_red"
+                android:elevation="3dp"
+                android:fontFamily="@font/manrope"
+                android:text="Verify &amp; Sign In"
+                android:textColor="@color/white"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                app:cornerRadius="999dp"
+                app:icon="@drawable/ic_arrow_forward"
+                app:iconGravity="textEnd"
+                app:iconTint="@color/white" />
+
+            <!-- Cancel Button -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnTwoFactorCancel"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="8dp"
+                android:fontFamily="@font/manrope"
+                android:text="Cancel &amp; back to sign in"
+                android:textColor="@color/brand_muted"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+        </LinearLayout>
+
+        <!-- Loading Progress -->
+        <ProgressBar
+            android:id="@+id/pbAuth"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="16dp"
+            android:indeterminateTint="@color/brand_red"
+            android:visibility="gone" />
+
+    </LinearLayout>
+
+</ScrollView>

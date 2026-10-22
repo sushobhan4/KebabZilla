@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/tvCategoryName"
+    android:layout_width="wrap_content"
+    android:layout_height="36dp"
+    android:layout_marginEnd="8dp"
+    android:background="@drawable/bg_category_chip_unselected"
+    android:fontFamily="@font/manrope"
+    android:gravity="center"
+    android:paddingStart="16dp"
+    android:paddingEnd="16dp"
+    android:text="Kebabs"
+    android:textColor="@color/brand_ink"
+    android:textSize="13sp"
+    android:textStyle="bold" />

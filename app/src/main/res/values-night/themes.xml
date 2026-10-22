@@ -1,16 +1,106 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- Base application theme for dark mode. -->
+    <!-- Base application theme (Night) -->
     <style name="Theme.KebabZilla" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <!-- Primary brand color. -->
         <item name="colorPrimary">@color/brand_red</item>
         <item name="colorPrimaryVariant">@color/brand_red_dark</item>
-        <item name="colorOnPrimary">@color/white</item>
+        <item name="colorOnPrimary">#640D07</item>
+
         <!-- Secondary brand color. -->
-        <item name="colorSecondary">@color/brand_amber</item>
-        <item name="colorSecondaryVariant">@color/brand_amber</item>
-        <item name="colorOnSecondary">@color/white</item>
-        <!-- Status bar color. -->
-        <item name="android:statusBarColor">@color/brand_ink</item>
-        <item name="android:windowBackground">@color/brand_ink</item>
+        <item name="colorSecondary">@color/brand_green</item>
+        <item name="colorSecondaryVariant">@color/brand_green_dark</item>
+        <item name="colorOnSecondary">#00391C</item>
+
+        <!-- Status & Navigation bar color. -->
+        <item name="android:statusBarColor">@color/brand_paper</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="m">false</item>
+        <item name="android:navigationBarColor">@color/brand_paper_card</item>
+        <item name="android:windowBackground">@color/brand_paper</item>
+
+        <!-- Typography: DM Sans is the default root body font across the entire application -->
+        <item name="fontFamily">@font/dm_sans</item>
+        <item name="android:fontFamily">@font/dm_sans</item>
+
+        <!-- Heading & Title typography using Manrope -->
+        <item name="textAppearanceHeadline1">@style/TextAppearance.KebabZilla.Heading</item>
+        <item name="textAppearanceHeadline2">@style/TextAppearance.KebabZilla.Heading</item>
+        <item name="textAppearanceHeadline3">@style/TextAppearance.KebabZilla.Heading</item>
+        <item name="textAppearanceHeadline4">@style/TextAppearance.KebabZilla.Heading</item>
+        <item name="textAppearanceHeadline5">@style/TextAppearance.KebabZilla.Heading</item>
+        <item name="textAppearanceHeadline6">@style/TextAppearance.KebabZilla.Heading</item>
+        <item name="textAppearanceSubtitle1">@style/TextAppearance.KebabZilla.Heading</item>
+        <item name="textAppearanceButton">@style/TextAppearance.KebabZilla.Button</item>
+
+        <!-- Form input styling -->
+        <item name="textInputStyle">@style/Widget.KebabZilla.TextInputLayout.Outlined</item>
+
+        <!-- Bottom Sheet Theme -->
+        <item name="bottomSheetDialogTheme">@style/Theme.KebabZilla.BottomSheetDialog</item>
+    </style>
+
+    <!-- Typography Styles -->
+    <style name="TextAppearance.KebabZilla.Heading" parent="TextAppearance.MaterialComponents.Headline6">
+        <item name="fontFamily">@font/manrope</item>
+        <item name="android:fontFamily">@font/manrope</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="TextAppearance.KebabZilla.Badge" parent="TextAppearance.MaterialComponents.Caption">
+        <item name="fontFamily">@font/manrope</item>
+        <item name="android:fontFamily">@font/manrope</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="TextAppearance.KebabZilla.Button" parent="TextAppearance.MaterialComponents.Button">
+        <item name="fontFamily">@font/manrope</item>
+        <item name="android:fontFamily">@font/manrope</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="TextAppearance.KebabZilla.Body" parent="TextAppearance.MaterialComponents.Body1">
+        <item name="fontFamily">@font/dm_sans</item>
+        <item name="android:fontFamily">@font/dm_sans</item>
+    </style>
+
+    <style name="TextAppearance.KebabZilla.Prefix" parent="TextAppearance.MaterialComponents.Subtitle1">
+        <item name="fontFamily">@font/dm_sans</item>
+        <item name="android:fontFamily">@font/dm_sans</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:textStyle">normal</item>
+        <item name="android:textColor">@color/brand_ink</item>
+    </style>
+
+    <style name="Widget.KebabZilla.TextInputLayout.Outlined" parent="Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+        <item name="boxStrokeColor">@color/selector_box_stroke</item>
+        <item name="boxStrokeWidth">1.5dp</item>
+        <item name="boxStrokeWidthFocused">2dp</item>
+        <item name="boxCornerRadiusTopStart">16dp</item>
+        <item name="boxCornerRadiusTopEnd">16dp</item>
+        <item name="boxCornerRadiusBottomStart">16dp</item>
+        <item name="boxCornerRadiusBottomEnd">16dp</item>
+        <item name="boxBackgroundColor">@color/brand_paper_card</item>
+        <item name="hintTextColor">@color/brand_red</item>
+        <item name="android:textColorHint">@color/brand_muted</item>
+        <item name="prefixTextAppearance">@style/TextAppearance.KebabZilla.Prefix</item>
+        <item name="prefixTextColor">@color/brand_ink</item>
+    </style>
+
+    <style name="Theme.KebabZilla.BottomSheetDialog" parent="Theme.Design.Light.BottomSheetDialog">
+        <item name="bottomSheetStyle">@style/Widget.KebabZilla.BottomSheet</item>
+    </style>
+
+    <style name="Widget.KebabZilla.BottomSheet" parent="Widget.Design.BottomSheet.Modal">
+        <item name="android:background">@drawable/bg_bottom_sheet_surface</item>
+    </style>
+
+    <style name="RoundedImageCorner">
+        <item name="cornerSize">16dp</item>
+    </style>
+
+    <style name="TopRoundedImageCorner">
+        <item name="cornerSizeTopLeft">16dp</item>
+        <item name="cornerSizeTopRight">16dp</item>
+        <item name="cornerSizeBottomLeft">0dp</item>
+        <item name="cornerSizeBottomRight">0dp</item>
     </style>
 </resources>

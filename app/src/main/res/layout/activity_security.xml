@@ -1,0 +1,330 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/brand_paper"
+    android:orientation="vertical">
+
+    <!-- Top App Bar -->
+    <LinearLayout
+        android:id="@+id/layoutSecurityHeader"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingTop="16dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="12dp">
+
+        <FrameLayout
+            android:id="@+id/btnSecurityBack"
+            android:layout_width="38dp"
+            android:layout_height="38dp"
+            android:layout_marginEnd="12dp"
+            android:background="@drawable/bg_pill_white"
+            android:clickable="true"
+            android:contentDescription="Back"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_arrow_back"
+                app:tint="@color/brand_ink" />
+        </FrameLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/manrope"
+                android:text="Account Security"
+                android:textColor="@color/brand_ink"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="1dp"
+                android:text="Active devices &amp; sign-in sessions"
+                android:textColor="@color/brand_muted"
+                android:textSize="12sp" />
+
+        </LinearLayout>
+
+        <ProgressBar
+            android:id="@+id/progressSecurityLoading"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:indeterminateTint="@color/brand_red"
+            android:visibility="gone" />
+
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/brand_line" />
+
+    <!-- Scrollable Content -->
+    <androidx.core.widget.NestedScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <!-- Security Info Banner -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:cardBackgroundColor="@color/brand_paper_card"
+                app:cardCornerRadius="14dp"
+                app:cardElevation="0dp"
+                app:strokeColor="@color/brand_line"
+                app:strokeWidth="1dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:padding="14dp">
+
+                    <FrameLayout
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:background="@drawable/bg_pill_primary"
+                        android:backgroundTint="@color/brand_red_soft">
+
+                        <ImageView
+                            android:layout_width="20dp"
+                            android:layout_height="20dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_shield"
+                            app:tint="@color/brand_red" />
+                    </FrameLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="12dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="@font/manrope"
+                            android:text="Signed-In Sessions"
+                            android:textColor="@color/brand_ink"
+                            android:textSize="14sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:lineSpacingExtra="2dp"
+                            android:text="If you notice any unfamiliar device or location, revoke it immediately and change your account password."
+                            android:textColor="@color/brand_muted"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Current Session Section -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:fontFamily="@font/manrope"
+                android:letterSpacing="0.06"
+                android:text="CURRENT DEVICE"
+                android:textColor="@color/brand_muted"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardCurrentSession"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                app:cardBackgroundColor="@color/brand_paper_card"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="1dp"
+                app:strokeColor="@color/brand_emerald"
+                app:strokeWidth="1.5dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <FrameLayout
+                            android:layout_width="44dp"
+                            android:layout_height="44dp"
+                            android:background="@drawable/bg_pill_primary"
+                            android:backgroundTint="#ECFDF5">
+
+                            <ImageView
+                                android:id="@+id/ivCurrentDeviceIcon"
+                                android:layout_width="22dp"
+                                android:layout_height="22dp"
+                                android:layout_gravity="center"
+                                android:src="@drawable/ic_phone_android"
+                                app:tint="@color/brand_emerald" />
+                        </FrameLayout>
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="14dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:id="@+id/tvCurrentDeviceName"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="@font/manrope"
+                                android:text="KebabZilla Android Client"
+                                android:textColor="@color/brand_ink"
+                                android:textSize="15sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:id="@+id/tvCurrentIpAddress"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="1dp"
+                                android:text="IP: 127.0.0.1"
+                                android:textColor="@color/brand_muted"
+                                android:textSize="12sp" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:background="@drawable/bg_status_open"
+                            android:fontFamily="@font/manrope"
+                            android:paddingStart="8dp"
+                            android:paddingTop="3dp"
+                            android:paddingEnd="8dp"
+                            android:paddingBottom="3dp"
+                            android:text="THIS DEVICE"
+                            android:textColor="@color/brand_emerald"
+                            android:textSize="10sp"
+                            android:textStyle="bold" />
+
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/tvCurrentLastActive"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:text="Active now • Session verified"
+                        android:textColor="@color/brand_muted"
+                        android:textSize="12sp" />
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Other Sessions Header -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:fontFamily="@font/manrope"
+                    android:letterSpacing="0.06"
+                    android:text="OTHER ACTIVE SESSIONS"
+                    android:textColor="@color/brand_muted"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvOtherSessionsCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="@font/manrope"
+                    android:textColor="@color/brand_muted"
+                    android:textSize="12sp"
+                    tools:text="2 active" />
+
+            </LinearLayout>
+
+            <!-- Other Sessions RecyclerView -->
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvOtherSessions"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:nestedScrollingEnabled="false" />
+
+            <!-- Empty State for Other Sessions -->
+            <TextView
+                android:id="@+id/tvNoOtherSessions"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:background="@drawable/bg_section_card"
+                android:gravity="center"
+                android:padding="20dp"
+                android:text="No other active devices. You are only signed in on this Android app."
+                android:textColor="@color/brand_muted"
+                android:textSize="13sp"
+                android:visibility="gone" />
+
+            <!-- Revoke All Others CTA Button -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnRevokeAllOtherSessions"
+                android:layout_width="match_parent"
+                android:layout_height="50dp"
+                android:layout_marginTop="28dp"
+                android:backgroundTint="@color/brand_paper_card"
+                android:fontFamily="@font/manrope"
+                android:text="Sign Out All Other Sessions"
+                android:textColor="@color/brand_error"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                app:cornerRadius="14dp"
+                app:strokeColor="@color/brand_error"
+                app:strokeWidth="1dp" />
+
+        </LinearLayout>
+
+    </androidx.core.widget.NestedScrollView>
+
+</LinearLayout>

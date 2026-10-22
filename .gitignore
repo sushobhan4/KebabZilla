@@ -2,6 +2,10 @@
 .gradle
 /local.properties
 local.properties
+/secret.properties
+secret.properties
+/secrets.properties
+secrets.properties
 /.idea/
 .idea/
 .DS_Store

@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="12dp"
+    app:cardBackgroundColor="@color/brand_paper_card"
+    app:cardCornerRadius="16dp"
+    app:cardElevation="1dp"
+    app:strokeColor="@color/brand_line"
+    app:strokeWidth="1dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <!-- Header Row: Icon, Address Name, Default Badge, Edit Button -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <!-- Category Icon Box -->
+            <FrameLayout
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="@drawable/bg_pill_white"
+                android:backgroundTint="#F4F3EE">
+
+                <ImageView
+                    android:id="@+id/ivAddressIcon"
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:layout_gravity="center"
+                    android:contentDescription="Type"
+                    android:src="@drawable/ic_home"
+                    app:tint="@color/brand_red" />
+            </FrameLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_weight="1"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/tvAddressLabel"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="@font/manrope"
+                    android:textColor="@color/brand_ink"
+                    android:textSize="17sp"
+                    android:textStyle="bold"
+                    tools:text="Home" />
+
+                <!-- DEFAULT Pill Badge -->
+                <TextView
+                    android:id="@+id/tvDefaultBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_spicy_badge"
+                    android:backgroundTint="#8B2516"
+                    android:fontFamily="@font/manrope"
+                    android:paddingStart="7dp"
+                    android:paddingTop="2dp"
+                    android:paddingEnd="7dp"
+                    android:paddingBottom="2dp"
+                    android:text="DEFAULT"
+                    android:textColor="@color/white"
+                    android:textSize="10sp"
+                    android:textStyle="bold" />
+
+            </LinearLayout>
+
+            <!-- Edit Button -->
+            <LinearLayout
+                android:id="@+id/btnEditAddress"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:background="@drawable/bg_pill_white"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp">
+
+                <ImageView
+                    android:layout_width="13dp"
+                    android:layout_height="13dp"
+                    android:contentDescription="Edit"
+                    android:src="@drawable/ic_edit"
+                    app:tint="@color/brand_ink" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:fontFamily="@font/manrope"
+                    android:text="Edit"
+                    android:textColor="@color/brand_ink"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- Full Address Body Text (Collapsed if empty) -->
+        <TextView
+            android:id="@+id/tvFullAddress"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:lineSpacingExtra="2dp"
+            android:textColor="@color/brand_ink"
+            android:textSize="13sp"
+            tools:text="Flat 402, Royal Palms Apartments, 5th Main, 7th Cross, Koramangala 4th Block, Bengaluru - 560034" />
+
+    </LinearLayout>
+
+</com.google.android.material.card.MaterialCardView>

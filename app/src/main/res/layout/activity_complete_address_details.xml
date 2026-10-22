@@ -1,0 +1,528 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/brand_paper"
+    android:orientation="vertical">
+
+    <!-- Top Action Bar -->
+    <LinearLayout
+        android:id="@+id/layoutTopBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingTop="12dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="12dp">
+
+        <FrameLayout
+            android:id="@+id/btnBack"
+            android:layout_width="38dp"
+            android:layout_height="38dp"
+            android:background="@drawable/bg_pill_white"
+            android:clickable="true"
+            android:contentDescription="Back"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_arrow_back"
+                app:tint="@color/brand_ink" />
+        </FrameLayout>
+
+        <TextView
+            android:id="@+id/tvScreenTitle"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="14dp"
+            android:layout_weight="1"
+            android:fontFamily="@font/manrope"
+            android:text="Complete Address Details"
+            android:textColor="@color/brand_ink"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/brand_line" />
+
+    <androidx.core.widget.NestedScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:id="@+id/layoutScrollContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="16dp"
+            android:paddingTop="16dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="24dp">
+
+            <!-- Pinned Location Card -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:cardBackgroundColor="@color/brand_paper_card"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="1dp"
+                app:strokeColor="@color/brand_line"
+                app:strokeWidth="1dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <FrameLayout
+                            android:layout_width="38dp"
+                            android:layout_height="38dp"
+                            android:background="@drawable/bg_bestseller_badge"
+                            android:backgroundTint="#FCECE8">
+
+                            <ImageView
+                                android:layout_width="18dp"
+                                android:layout_height="18dp"
+                                android:layout_gravity="center"
+                                android:contentDescription="Pin"
+                                android:src="@drawable/ic_location_pin"
+                                app:tint="@color/brand_red" />
+                        </FrameLayout>
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="@font/manrope"
+                                android:letterSpacing="0.05"
+                                android:text="PINNED LOCATION"
+                                android:textColor="@color/brand_muted"
+                                android:textSize="10sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:id="@+id/tvPinnedLocality"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:ellipsize="end"
+                                android:fontFamily="@font/manrope"
+                                android:maxLines="1"
+                                android:textColor="@color/brand_ink"
+                                android:textSize="16sp"
+                                android:textStyle="bold"
+                                tools:text="Amtala, DH Road" />
+
+                        </LinearLayout>
+
+                        <!-- Change Pin Button -->
+                        <TextView
+                            android:id="@+id/btnChangePin"
+                            android:layout_width="wrap_content"
+                            android:layout_height="32dp"
+                            android:background="@drawable/bg_spicy_badge"
+                            android:backgroundTint="#FCECE8"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:fontFamily="@font/manrope"
+                            android:gravity="center"
+                            android:paddingStart="12dp"
+                            android:paddingEnd="12dp"
+                            android:text="Change Pin"
+                            android:textColor="@color/brand_red"
+                            android:textSize="12sp"
+                            android:textStyle="bold" />
+
+                    </LinearLayout>
+
+                    <!-- Map Snapshot Container -->
+                    <FrameLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="110dp"
+                        android:layout_marginTop="12dp">
+
+                        <androidx.fragment.app.FragmentContainerView
+                            android:id="@+id/liteMapFragment"
+                            android:name="com.google.android.gms.maps.SupportMapFragment"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent" />
+
+                    </FrameLayout>
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Address Fields Card -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                app:cardBackgroundColor="@color/brand_paper_card"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="1dp"
+                app:strokeColor="@color/brand_line"
+                app:strokeWidth="1dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <!-- House / Flat / Block No. * (Required for user to type) -->
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/manrope"
+                        android:text="House / Flat / Block No. *"
+                        android:textColor="@color/brand_ink"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilHouseNumber"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        app:boxStrokeColor="@color/selector_box_stroke"
+                        app:hintEnabled="false">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etHouseNumber"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:hint="e.g. Flat 402, Building 3"
+                            android:inputType="textPostalAddress"
+                            android:maxLines="1"
+                            android:textColor="@color/brand_ink"
+                            android:textColorHint="#45808080"
+                            android:textSize="14sp" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <!-- Apartment / Road / Street Name * (Pre-filled from pin) -->
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        android:fontFamily="@font/manrope"
+                        android:text="Apartment / Road / Street Name *"
+                        android:textColor="@color/brand_ink"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilRoadName"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        app:boxStrokeColor="@color/selector_box_stroke"
+                        app:hintEnabled="false">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etRoadName"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:hint="Road / Street Name"
+                            android:inputType="textPostalAddress"
+                            android:maxLines="1"
+                            android:textColor="@color/brand_ink"
+                            android:textColorHint="#45808080"
+                            android:textSize="14sp" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <!-- Area / Locality * (Pre-filled from pin) -->
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        android:fontFamily="@font/manrope"
+                        android:text="Area / Locality *"
+                        android:textColor="@color/brand_ink"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilAreaLocality"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        app:boxStrokeColor="@color/selector_box_stroke"
+                        app:hintEnabled="false">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etAreaLocality"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:hint="Area / Locality"
+                            android:inputType="textPostalAddress"
+                            android:maxLines="1"
+                            android:textColor="@color/brand_ink"
+                            android:textColorHint="#45808080"
+                            android:textSize="14sp" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <!-- City and Pincode Row (Pre-filled from pin) -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        android:orientation="horizontal">
+
+                        <!-- City Column -->
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginEnd="8dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="@font/manrope"
+                                android:text="City *"
+                                android:textColor="@color/brand_ink"
+                                android:textSize="13sp"
+                                android:textStyle="bold" />
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:id="@+id/tilCity"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="6dp"
+                                app:boxStrokeColor="@color/selector_box_stroke"
+                                app:hintEnabled="false">
+
+                                <com.google.android.material.textfield.TextInputEditText
+                                    android:id="@+id/etCity"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:hint="City"
+                                    android:inputType="textPostalAddress"
+                                    android:maxLines="1"
+                                    android:textColor="@color/brand_ink"
+                                    android:textColorHint="#45808080"
+                                    android:textSize="14sp" />
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                        </LinearLayout>
+
+                        <!-- Pincode Column -->
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="@font/manrope"
+                                android:text="Pincode *"
+                                android:textColor="@color/brand_ink"
+                                android:textSize="13sp"
+                                android:textStyle="bold" />
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:id="@+id/tilPincode"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="6dp"
+                                app:boxStrokeColor="@color/selector_box_stroke"
+                                app:hintEnabled="false">
+
+                                <com.google.android.material.textfield.TextInputEditText
+                                    android:id="@+id/etPincode"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:hint="Pincode"
+                                    android:inputType="number"
+                                    android:maxLength="6"
+                                    android:maxLines="1"
+                                    android:textColor="@color/brand_ink"
+                                    android:textColorHint="#45808080"
+                                    android:textSize="14sp" />
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                        </LinearLayout>
+
+                    </LinearLayout>
+
+                    <!-- Landmark (Optional) -->
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        android:fontFamily="@font/manrope"
+                        android:text="Landmark (Optional)"
+                        android:textColor="@color/brand_ink"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilLandmark"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        app:boxStrokeColor="@color/selector_box_stroke"
+                        app:endIconDrawable="@drawable/ic_flag"
+                        app:endIconMode="custom"
+                        app:endIconTint="@color/brand_muted"
+                        app:hintEnabled="false">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etLandmark"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:hint="e.g. Near SBI Bank / Opposite Petrol Pump"
+                            android:inputType="textPostalAddress"
+                            android:maxLines="1"
+                            android:textColor="@color/brand_ink"
+                            android:textColorHint="#45808080"
+                            android:textSize="14sp" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Set as Default Address Card -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                app:cardBackgroundColor="@color/brand_paper_card"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="1dp"
+                app:strokeColor="@color/brand_line"
+                app:strokeWidth="1dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:padding="16dp">
+
+                    <FrameLayout
+                        android:layout_width="38dp"
+                        android:layout_height="38dp"
+                        android:background="@drawable/bg_bestseller_badge"
+                        android:backgroundTint="#F8F7F2">
+
+                        <ImageView
+                            android:layout_width="18dp"
+                            android:layout_height="18dp"
+                            android:layout_gravity="center"
+                            android:contentDescription="Default"
+                            android:src="@drawable/ic_star"
+                            app:tint="@color/brand_red" />
+                    </FrameLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="12dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="@font/manrope"
+                            android:text="Set as Default Address"
+                            android:textColor="@color/brand_ink"
+                            android:textSize="15sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="Prioritize this address on checkout"
+                            android:textColor="@color/brand_muted"
+                            android:textSize="11sp" />
+
+                    </LinearLayout>
+
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/switchDefaultAddress"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:checked="true"
+                        app:useMaterialThemeColors="false" />
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+        </LinearLayout>
+
+    </androidx.core.widget.NestedScrollView>
+
+    <!-- Sticky Bottom Bar (Raised Safely Above System Navigation Buttons) -->
+    <LinearLayout
+        android:id="@+id/layoutStickyBottom"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/brand_paper_card"
+        android:elevation="8dp"
+        android:orientation="vertical"
+        android:paddingStart="20dp"
+        android:paddingTop="10dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="14dp">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnSaveAddress"
+            android:layout_width="match_parent"
+            android:layout_height="46dp"
+            android:backgroundTint="@color/brand_red"
+            android:fontFamily="@font/manrope"
+            android:text="Save Address"
+            android:textColor="@color/white"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            app:cornerRadius="999dp"
+            app:icon="@drawable/ic_arrow_forward"
+            app:iconGravity="textEnd"
+            app:iconTint="@color/white" />
+
+        <ProgressBar
+            android:id="@+id/pbSavingAddress"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="6dp"
+            android:indeterminateTint="@color/brand_red"
+            android:visibility="gone" />
+
+    </LinearLayout>
+
+</LinearLayout>

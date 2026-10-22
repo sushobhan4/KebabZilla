@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_bottom_sheet_surface"
+    android:orientation="vertical">
+
+    <!-- Drag Handle -->
+    <View
+        android:layout_width="40dp"
+        android:layout_height="4dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="10dp"
+        android:layout_marginBottom="12dp"
+        android:background="@drawable/bg_bottom_sheet_handle" />
+
+    <!-- Header Row -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="20dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="12dp">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <!-- Eyebrow Kicker -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/manrope"
+                android:letterSpacing="0.1"
+                android:text="CUSTOMIZE"
+                android:textColor="@color/brand_red"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <!-- Title -->
+            <TextView
+                android:id="@+id/tvCustomFoodName"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:fontFamily="@font/manrope"
+                android:textColor="@color/brand_ink"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                tools:text="Customize Kebab Roll" />
+
+        </LinearLayout>
+
+        <!-- Close Button -->
+        <ImageButton
+            android:id="@+id/btnClose"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Close"
+            android:padding="6dp"
+            android:src="@drawable/ic_close"
+            app:tint="@color/brand_muted" />
+
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/brand_line" />
+
+    <!-- Scrollable Sections Body -->
+    <androidx.core.widget.NestedScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true"
+        android:maxHeight="420dp">
+
+        <LinearLayout
+            android:id="@+id/llCustomSections"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="16dp"
+            android:paddingTop="8dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="16dp" />
+
+    </androidx.core.widget.NestedScrollView>
+
+    <!-- Bottom Sticky Bar -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/brand_line" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="20dp"
+        android:paddingTop="14dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="24dp">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/dm_sans"
+                android:letterSpacing="0.08"
+                android:text="TOTAL"
+                android:textColor="@color/brand_muted"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvCustomTotalPrice"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/manrope"
+                android:textColor="@color/brand_ink"
+                android:textSize="22sp"
+                android:textStyle="bold"
+                tools:text="₹79" />
+
+        </LinearLayout>
+
+        <!-- Add to Cart CTA -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnCustomAddToCart"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:backgroundTint="@color/brand_red"
+            android:elevation="2dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:paddingStart="22dp"
+            android:paddingEnd="22dp"
+            android:text="+ Add to cart"
+            android:textColor="@color/white"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            app:cornerRadius="12dp" />
+
+    </LinearLayout>
+
+</LinearLayout>

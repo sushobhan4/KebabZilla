@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/cardWorkspaceRoot"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_margin="6dp"
+    android:clickable="true"
+    android:focusable="true"
+    app:cardBackgroundColor="@color/brand_paper_card"
+    app:cardCornerRadius="18dp"
+    app:cardElevation="1dp"
+    app:strokeColor="@color/brand_line"
+    app:strokeWidth="1dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="14dp">
+
+        <!-- Top Row: Icon Container on Left, Badge on Right -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <FrameLayout
+                android:id="@+id/layoutIconBox"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:background="@drawable/bg_pill_white">
+
+                <ImageView
+                    android:id="@+id/ivTabIcon"
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_grid_view"
+                    app:tint="@color/brand_ink" />
+            </FrameLayout>
+
+            <View
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
+
+            <!-- Pill Badge -->
+            <TextView
+                android:id="@+id/tvTabBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_pill_white"
+                android:fontFamily="@font/manrope"
+                android:paddingStart="8dp"
+                android:paddingTop="3dp"
+                android:paddingEnd="8dp"
+                android:paddingBottom="3dp"
+                android:textColor="@color/brand_muted"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                tools:text="Live" />
+
+        </LinearLayout>
+
+        <!-- Title -->
+        <TextView
+            android:id="@+id/tvTabTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:ellipsize="end"
+            android:fontFamily="@font/manrope"
+            android:maxLines="1"
+            android:textColor="@color/brand_ink"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            tools:text="Overview" />
+
+        <!-- Subtitle (2 Lines) -->
+        <TextView
+            android:id="@+id/tvTabSubtitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:ellipsize="end"
+            android:lineSpacingExtra="1dp"
+            android:maxLines="2"
+            android:textColor="@color/brand_muted"
+            android:textSize="11sp"
+            tools:text="Real-time KPI overview &amp; master metrics" />
+
+    </LinearLayout>
+
+</com.google.android.material.card.MaterialCardView>

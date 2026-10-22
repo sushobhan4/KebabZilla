@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="10dp"
+    app:cardBackgroundColor="@color/brand_paper_card"
+    app:cardCornerRadius="14dp"
+    app:cardElevation="1dp"
+    app:strokeColor="@color/brand_line"
+    app:strokeWidth="1dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="14dp">
+
+        <TextView
+            android:id="@+id/tvStaffInitials"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="@drawable/bg_pill_primary"
+            android:fontFamily="@font/manrope"
+            android:gravity="center"
+            android:textColor="@color/white"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            tools:text="AK" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="14dp"
+            android:layout_marginEnd="10dp"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/tvStaffName"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/manrope"
+                android:textColor="@color/brand_ink"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                tools:text="Amit Kumar" />
+
+            <TextView
+                android:id="@+id/tvStaffEmail"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="1dp"
+                android:textColor="@color/brand_muted"
+                android:textSize="12sp"
+                tools:text="amit.k@kebabzilla.in" />
+
+            <TextView
+                android:id="@+id/tvStaffPhone"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="1dp"
+                android:textColor="@color/brand_muted"
+                android:textSize="11sp"
+                tools:text="+91 98301 23456" />
+
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tvStaffRoleBadge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_pill_white"
+            android:fontFamily="@font/manrope"
+            android:paddingStart="8dp"
+            android:paddingTop="3dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="3dp"
+            android:textColor="@color/brand_ink"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            tools:text="STAFF" />
+
+    </LinearLayout>
+
+</com.google.android.material.card.MaterialCardView>

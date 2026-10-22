@@ -1,0 +1,311 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/cardFoodItem"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginStart="16dp"
+    android:layout_marginTop="8dp"
+    android:layout_marginEnd="16dp"
+    android:layout_marginBottom="8dp"
+    app:cardBackgroundColor="@color/brand_paper_card"
+    app:cardCornerRadius="16dp"
+    app:cardElevation="2dp"
+    app:strokeColor="@color/brand_line"
+    app:strokeWidth="1dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <!-- Top Image Container with Badges -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="176dp">
+
+            <com.google.android.material.imageview.ShapeableImageView
+                android:id="@+id/ivFoodImage"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="centerCrop"
+                app:shapeAppearanceOverlay="@style/TopRoundedImageCorner"
+                tools:srcCompat="@drawable/kebabzilla_mark" />
+
+            <!-- Soft Gradient Overlay -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@drawable/bg_gradient_overlay" />
+
+            <!-- Top Left Tags Container -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|start"
+                android:layout_margin="10dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <!-- Discount Campaign Banner Tag (e.g. "KZ SPECIAL") -->
+                <TextView
+                    android:id="@+id/tvDiscountBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_discount_badge"
+                    android:fontFamily="@font/manrope"
+                    android:textColor="@color/brand_red"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:visibility="gone"
+                    tools:text="KZ SPECIAL"
+                    tools:visibility="visible" />
+
+                <!-- Zilla Pick Badge -->
+                <TextView
+                    android:id="@+id/tvZillaPickBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/bg_zilla_pick_badge"
+                    android:fontFamily="@font/manrope"
+                    android:text="ZILLA PICK ✦"
+                    android:textColor="@color/brand_amber_dark"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:visibility="gone"
+                    tools:visibility="visible" />
+
+                <!-- Customizable Tag -->
+                <TextView
+                    android:id="@+id/tvCustomizableBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/bg_customizable_badge"
+                    android:fontFamily="@font/manrope"
+                    android:text="CUSTOMIZABLE"
+                    android:textColor="@color/brand_amber_dark"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:visibility="gone"
+                    tools:visibility="visible" />
+
+            </LinearLayout>
+
+            <!-- Bottom Right Dietary Indicator (Veg: Squared green plant / Non-veg: Squared red circle) -->
+            <ImageView
+                android:id="@+id/ivDietaryBadge"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_gravity="bottom|end"
+                android:layout_margin="10dp"
+                android:contentDescription="Dietary indicator"
+                android:elevation="3dp"
+                android:src="@drawable/bg_diet_dot_nonveg" />
+
+        </FrameLayout>
+
+        <!-- Card Body Content -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <!-- Title & Price Row -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/tvFoodName"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:fontFamily="@font/manrope"
+                    android:maxLines="1"
+                    android:textColor="@color/brand_ink"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    tools:text="Galouti Kebab Melt" />
+
+                <!-- Price and Discount Info -->
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <!-- Original Strikethrough Price -->
+                    <TextView
+                        android:id="@+id/tvFoodOriginalPrice"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="6dp"
+                        android:fontFamily="@font/dm_sans"
+                        android:textColor="@color/brand_muted"
+                        android:textSize="13sp"
+                        android:visibility="gone"
+                        tools:text="₹320"
+                        tools:visibility="visible" />
+
+                    <!-- Active Price (or From Price) -->
+                    <TextView
+                        android:id="@+id/tvFoodPrice"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/manrope"
+                        android:textColor="@color/brand_ink"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        tools:text="₹280" />
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+            <!-- Description -->
+            <TextView
+                android:id="@+id/tvFoodDescription"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:ellipsize="end"
+                android:lineSpacingExtra="2dp"
+                android:maxLines="2"
+                android:textColor="@color/brand_muted"
+                android:textSize="13sp"
+                tools:text="Melt-in-mouth smoked lamb patties infused with 24 aromatic spices, slow-grilled over charcoal." />
+
+            <!-- Divider -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="12dp"
+                android:layout_marginBottom="12dp"
+                android:background="@color/brand_line" />
+
+            <!-- Bottom Row: Ordering Action -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="36dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <!-- Spacer -->
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:layout_weight="1" />
+
+                <!-- Action Button 1: Add / Choose size Pill Button -->
+                <LinearLayout
+                    android:id="@+id/btnAdd"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:background="@drawable/bg_pill_primary"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp">
+
+                    <ImageView
+                        android:id="@+id/ivAddIcon"
+                        android:layout_width="15dp"
+                        android:layout_height="15dp"
+                        android:contentDescription="Add icon"
+                        android:src="@drawable/ic_add"
+                        app:tint="@color/white" />
+
+                    <TextView
+                        android:id="@+id/tvAddText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="4dp"
+                        android:fontFamily="@font/manrope"
+                        android:text="Add"
+                        android:textColor="@color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                </LinearLayout>
+
+                <!-- Action Button 2: Interactive Quantity Stepper Pill -->
+                <LinearLayout
+                    android:id="@+id/layoutStepper"
+                    android:layout_width="96dp"
+                    android:layout_height="36dp"
+                    android:background="@drawable/bg_stepper_pill"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:visibility="gone"
+                    tools:visibility="visible">
+
+                    <ImageView
+                        android:id="@+id/btnMinus"
+                        android:layout_width="32dp"
+                        android:layout_height="match_parent"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:clickable="true"
+                        android:contentDescription="Decrease quantity"
+                        android:focusable="true"
+                        android:padding="8dp"
+                        android:src="@drawable/ic_remove"
+                        app:tint="@color/brand_ink" />
+
+                    <TextView
+                        android:id="@+id/tvQuantity"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:fontFamily="@font/manrope"
+                        android:gravity="center"
+                        android:textColor="@color/brand_ink"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        tools:text="1" />
+
+                    <ImageView
+                        android:id="@+id/btnPlus"
+                        android:layout_width="32dp"
+                        android:layout_height="match_parent"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:clickable="true"
+                        android:contentDescription="Increase quantity"
+                        android:focusable="true"
+                        android:padding="8dp"
+                        android:src="@drawable/ic_add"
+                        app:tint="@color/brand_red" />
+
+                </LinearLayout>
+
+                <!-- Unavailable / Closed Pill Label -->
+                <TextView
+                    android:id="@+id/tvClosedLabel"
+                    android:layout_width="wrap_content"
+                    android:layout_height="34dp"
+                    android:background="@drawable/bg_status_closed"
+                    android:fontFamily="@font/manrope"
+                    android:gravity="center"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:text="Currently unavailable"
+                    android:textColor="@color/brand_red"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</com.google.android.material.card.MaterialCardView>

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/layoutVariationCard"
+    android:layout_width="match_parent"
+    android:layout_height="52dp"
+    android:layout_marginTop="8dp"
+    android:background="@drawable/bg_option_unselected"
+    android:clickable="true"
+    android:focusable="true"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="14dp"
+    android:paddingEnd="14dp">
+
+    <!-- Radio Dot -->
+    <ImageView
+        android:id="@+id/ivRadioDot"
+        android:layout_width="16dp"
+        android:layout_height="16dp"
+        android:contentDescription="Selection radio"
+        android:src="@drawable/ic_radio_dot_unchecked" />
+
+    <!-- Variation Name -->
+    <TextView
+        android:id="@+id/tvVariationName"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:layout_weight="1"
+        android:fontFamily="@font/dm_sans"
+        android:textColor="@color/brand_ink"
+        android:textSize="15sp"
+        android:textStyle="bold"
+        tools:text="Half" />
+
+    <!-- Strikethrough Original Price (if discounted) -->
+    <TextView
+        android:id="@+id/tvOriginalPrice"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginEnd="6dp"
+        android:fontFamily="@font/dm_sans"
+        android:textColor="@color/brand_muted"
+        android:textSize="13sp"
+        android:visibility="gone"
+        tools:text="₹300"
+        tools:visibility="visible" />
+
+    <!-- Price -->
+    <TextView
+        android:id="@+id/tvVariationPrice"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:fontFamily="@font/manrope"
+        android:textColor="@color/brand_ink"
+        android:textSize="15sp"
+        android:textStyle="bold"
+        tools:text="₹260" />
+
+</LinearLayout>

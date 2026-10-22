@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <!-- Composer Card -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:cardBackgroundColor="@color/brand_paper_card"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="1dp"
+            app:strokeColor="@color/brand_line"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="@font/manrope"
+                    android:text="Create Broadcast Announcement"
+                    android:textColor="@color/brand_ink"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="Dispatch instant flash notifications &amp; marketing emails to customers."
+                    android:textColor="@color/brand_muted"
+                    android:textSize="12sp" />
+
+                <!-- Title Input -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:fontFamily="@font/manrope"
+                    android:text="Subject / Header"
+                    android:textColor="@color/brand_ink"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <EditText
+                    android:id="@+id/etBroadcastTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_marginTop="6dp"
+                    android:background="@drawable/bg_input_field"
+                    android:hint="e.g. Weekend Biryani Carnival!"
+                    android:inputType="textCapSentences"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:textColor="@color/brand_ink"
+                    android:textColorHint="@color/brand_muted"
+                    android:textSize="13sp" />
+
+                <!-- Message Input -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:fontFamily="@font/manrope"
+                    android:text="Message Body"
+                    android:textColor="@color/brand_ink"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <EditText
+                    android:id="@+id/etBroadcastBody"
+                    android:layout_width="match_parent"
+                    android:layout_height="100dp"
+                    android:layout_marginTop="6dp"
+                    android:background="@drawable/bg_input_field"
+                    android:gravity="top|start"
+                    android:hint="Type announcement or offer details here..."
+                    android:inputType="textMultiLine"
+                    android:padding="12dp"
+                    android:textColor="@color/brand_ink"
+                    android:textColorHint="@color/brand_muted"
+                    android:textSize="13sp" />
+
+                <!-- Send Button -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnSendBroadcast"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="18dp"
+                    android:backgroundTint="@color/brand_red"
+                    android:fontFamily="@font/manrope"
+                    android:text="Send Broadcast"
+                    android:textColor="@color/white"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    app:cornerRadius="10dp" />
+
+            </LinearLayout>
+
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Past Broadcasts Section -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:fontFamily="@font/manrope"
+            android:letterSpacing="0.06"
+            android:text="PREVIOUS BROADCASTS"
+            android:textColor="@color/brand_muted"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:id="@+id/layoutPastBroadcasts"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="vertical" />
+
+    </LinearLayout>
+
+</androidx.core.widget.NestedScrollView>

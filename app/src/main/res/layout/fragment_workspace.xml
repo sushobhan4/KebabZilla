@@ -1,0 +1,218 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/brand_paper"
+    android:orientation="vertical">
+
+    <!-- Top Header Bar -->
+    <LinearLayout
+        android:id="@+id/layoutWorkspaceTopBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingTop="16dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="10dp">
+
+        <!-- Brand Wordmark & Role Badge -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="@font/manrope"
+                    android:text="KebabZilla"
+                    android:textColor="@color/brand_ink"
+                    android:textSize="20sp"
+                    android:textStyle="bold" />
+
+                <!-- Red Solid ADMIN Pill Badge (Exactly matching picture) -->
+                <TextView
+                    android:id="@+id/tvWorkspaceRoleBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_pill_primary"
+                    android:fontFamily="@font/manrope"
+                    android:letterSpacing="0.05"
+                    android:paddingStart="8dp"
+                    android:paddingTop="2dp"
+                    android:paddingEnd="8dp"
+                    android:paddingBottom="2dp"
+                    android:text="ADMIN"
+                    android:textColor="@color/white"
+                    android:textSize="10sp"
+                    android:textStyle="bold" />
+
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="1dp"
+                android:text="Store Operations"
+                android:textColor="@color/brand_muted"
+                android:textSize="12sp" />
+
+        </LinearLayout>
+
+        <!-- View Switcher (Grid / List toggle) -->
+        <LinearLayout
+            android:id="@+id/layoutViewSwitcher"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:layout_marginEnd="12dp"
+            android:background="@drawable/bg_pill_white"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="2dp">
+
+            <FrameLayout
+                android:id="@+id/btnViewGrid"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:background="@drawable/bg_pill_primary"
+                android:clickable="true"
+                android:contentDescription="Grid View"
+                android:focusable="true">
+
+                <ImageView
+                    android:id="@+id/ivViewGridIcon"
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_grid_view"
+                    app:tint="@color/white" />
+            </FrameLayout>
+
+            <FrameLayout
+                android:id="@+id/btnViewList"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:clickable="true"
+                android:contentDescription="List View"
+                android:focusable="true">
+
+                <ImageView
+                    android:id="@+id/ivViewListIcon"
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_view_list"
+                    app:tint="@color/brand_muted" />
+            </FrameLayout>
+
+        </LinearLayout>
+
+        <!-- Red Circular Profile Avatar Button (Exactly matching picture) -->
+        <FrameLayout
+            android:id="@+id/btnWorkspaceProfile"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@drawable/bg_avatar_circle"
+            android:clickable="true"
+            android:contentDescription="Account Profile"
+            android:elevation="1dp"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_nav_profile"
+                app:tint="@color/white" />
+        </FrameLayout>
+
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/brand_line" />
+
+    <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+        android:id="@+id/swipeWorkspace"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <androidx.core.widget.NestedScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:fillViewport="true">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="12dp"
+                android:paddingTop="16dp"
+                android:paddingEnd="12dp"
+                android:paddingBottom="90dp">
+
+                <!-- Greeting Eyebrow -->
+                <TextView
+                    android:id="@+id/tvWorkspaceEyebrow"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:fontFamily="@font/manrope"
+                    android:letterSpacing="0.08"
+                    android:text="A LITTLE LOOK AROUND"
+                    android:textColor="@color/brand_muted"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <!-- Large Dynamic Greeting (Good morning.) -->
+                <TextView
+                    android:id="@+id/tvWorkspaceGreeting"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginTop="4dp"
+                    android:fontFamily="@font/manrope"
+                    android:text="Good morning."
+                    android:textColor="@color/brand_ink"
+                    android:textSize="28sp"
+                    android:textStyle="bold" />
+
+                <!-- Greeting Subtitle -->
+                <TextView
+                    android:id="@+id/tvWorkspaceSubGreeting"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginTop="2dp"
+                    android:text="Here's what's cooking at KebabZilla today."
+                    android:textColor="@color/brand_muted"
+                    android:textSize="14sp" />
+
+                <!-- Tabs Container (Grid or List via RecyclerView) -->
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/rvWorkspaceTabs"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:nestedScrollingEnabled="false" />
+
+            </LinearLayout>
+
+        </androidx.core.widget.NestedScrollView>
+
+    </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+
+</LinearLayout>

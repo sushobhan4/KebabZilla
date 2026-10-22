@@ -1,0 +1,827 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/brand_paper">
+
+    <!-- Not Logged In View -->
+    <LinearLayout
+        android:id="@+id/layoutProfileGuest"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="32dp"
+        android:visibility="gone"
+        tools:visibility="gone">
+
+        <FrameLayout
+            android:layout_width="88dp"
+            android:layout_height="88dp"
+            android:background="@drawable/bg_pill_white"
+            android:padding="16dp">
+
+            <ImageView
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:contentDescription="@string/app_name"
+                android:src="@drawable/kebabzilla_mark" />
+        </FrameLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:fontFamily="@font/manrope"
+            android:text="Welcome to KebabZilla"
+            android:textColor="@color/brand_ink"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:lineSpacingExtra="2dp"
+            android:text="Sign in to view saved delivery addresses, track live kitchen orders, and enjoy member rewards."
+            android:textColor="@color/brand_muted"
+            android:textSize="13sp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnProfileGuestSignIn"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="28dp"
+            android:backgroundTint="@color/brand_red"
+            android:fontFamily="@font/manrope"
+            android:text="Sign In / Register"
+            android:textColor="@color/white"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            app:cornerRadius="999dp" />
+
+    </LinearLayout>
+
+    <!-- Logged In View -->
+    <ScrollView
+        android:id="@+id/scrollProfileContent"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="16dp"
+            android:paddingTop="16dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="100dp">
+
+            <!-- Top Header Row -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <FrameLayout
+                    android:id="@+id/btnProfileBack"
+                    android:layout_width="38dp"
+                    android:layout_height="38dp"
+                    android:layout_marginEnd="10dp"
+                    android:background="@drawable/bg_pill_white"
+                    android:clickable="true"
+                    android:contentDescription="Back"
+                    android:focusable="true">
+
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_arrow_back"
+                        app:tint="@color/brand_ink" />
+                </FrameLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="@font/manrope"
+                    android:text="Account &amp; Profile"
+                    android:textColor="@color/brand_ink"
+                    android:textSize="22sp"
+                    android:textStyle="bold" />
+
+            </LinearLayout>
+
+            <!-- Profile Delight Header Card (Pen symbol on bottom-left, clean DP, no verified tick, +91 phone) -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                app:cardBackgroundColor="@color/brand_paper_card"
+                app:cardCornerRadius="20dp"
+                app:cardElevation="2dp"
+                app:strokeColor="@color/brand_line"
+                app:strokeWidth="1dp">
+
+                <FrameLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_horizontal"
+                        android:orientation="vertical"
+                        android:padding="20dp">
+
+                        <!-- Avatar Circle (Clean DP, no pen symbol on DP) -->
+                        <TextView
+                            android:id="@+id/tvUserInitials"
+                            android:layout_width="88dp"
+                            android:layout_height="88dp"
+                            android:background="@drawable/bg_pill_primary"
+                            android:fontFamily="@font/manrope"
+                            android:gravity="center"
+                            android:textColor="@color/white"
+                            android:textSize="26sp"
+                            android:textStyle="bold"
+                            tools:text="AS" />
+
+                        <!-- User Name (No verified tick icon) -->
+                        <TextView
+                            android:id="@+id/tvUserName"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            android:fontFamily="@font/manrope"
+                            android:textColor="@color/brand_ink"
+                            android:textSize="18sp"
+                            android:textStyle="bold"
+                            tools:text="Arjun Sharma" />
+
+                        <!-- Email -->
+                        <TextView
+                            android:id="@+id/tvUserEmail"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:textColor="@color/brand_muted"
+                            android:textSize="13sp"
+                            tools:text="arjun.s@example.com" />
+
+                        <!-- Phone Number Prefixed with +91 (Replaces orange role container) -->
+                        <TextView
+                            android:id="@+id/tvUserPhone"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:fontFamily="@font/manrope"
+                            android:textColor="@color/brand_ink"
+                            android:textSize="14sp"
+                            android:textStyle="bold"
+                            tools:text="+91 98765 43210" />
+
+                    </LinearLayout>
+
+                    <!-- Pen Symbol on Right Bottom Side of Top Profile Container -->
+                    <FrameLayout
+                        android:id="@+id/btnEditProfile"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:layout_gravity="bottom|end"
+                        android:layout_marginEnd="14dp"
+                        android:layout_marginBottom="14dp"
+                        android:background="@drawable/bg_pill_white"
+                        android:clickable="true"
+                        android:contentDescription="Edit Profile Details"
+                        android:elevation="2dp"
+                        android:focusable="true">
+
+                        <ImageView
+                            android:layout_width="18dp"
+                            android:layout_height="18dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_edit"
+                            app:tint="@color/brand_ink" />
+                    </FrameLayout>
+
+                </FrameLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Navigation Actions Section -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:fontFamily="@font/manrope"
+                android:letterSpacing="0.06"
+                android:text="ACCOUNT ACTIONS"
+                android:textColor="@color/brand_muted"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <!-- Card 0: Theme (First option for every user, expands downward to Light, Dark, System) -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardNavTheme"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                app:cardBackgroundColor="@color/brand_paper_card"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="1dp"
+                app:strokeColor="@color/brand_line"
+                app:strokeWidth="1dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <!-- Theme Header (Clickable to expand/collapse) -->
+                    <LinearLayout
+                        android:id="@+id/layoutThemeHeader"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:padding="14dp">
+
+                        <FrameLayout
+                            android:layout_width="44dp"
+                            android:layout_height="44dp"
+                            android:background="@drawable/bg_bestseller_badge"
+                            android:backgroundTint="@color/brand_red_soft">
+
+                            <ImageView
+                                android:layout_width="22dp"
+                                android:layout_height="22dp"
+                                android:layout_gravity="center"
+                                android:contentDescription="Theme"
+                                android:src="@drawable/ic_palette"
+                                app:tint="@color/brand_red" />
+                        </FrameLayout>
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="14dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="@font/manrope"
+                                android:text="Theme"
+                                android:textColor="@color/brand_ink"
+                                android:textSize="15sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:id="@+id/tvThemeCurrentMode"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="1dp"
+                                android:text="System default"
+                                android:textColor="@color/brand_muted"
+                                android:textSize="12sp" />
+                        </LinearLayout>
+
+                        <ImageView
+                            android:id="@+id/ivThemeChevron"
+                            android:layout_width="22dp"
+                            android:layout_height="22dp"
+                            android:contentDescription="Expand Theme Options"
+                            android:src="@drawable/ic_chevron_down"
+                            app:tint="@color/brand_muted" />
+
+                    </LinearLayout>
+
+                    <!-- Expandable Theme Options Container (Hidden by default) -->
+                    <LinearLayout
+                        android:id="@+id/layoutThemeOptions"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:paddingStart="14dp"
+                        android:paddingEnd="14dp"
+                        android:paddingBottom="12dp"
+                        android:visibility="gone"
+                        tools:visibility="visible">
+
+                        <View
+                            android:layout_width="match_parent"
+                            android:layout_height="1dp"
+                            android:layout_marginBottom="8dp"
+                            android:background="@color/brand_line" />
+
+                        <!-- Option: Light -->
+                        <LinearLayout
+                            android:id="@+id/btnThemeOptionLight"
+                            android:layout_width="match_parent"
+                            android:layout_height="48dp"
+                            android:background="?attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:paddingStart="8dp"
+                            android:paddingEnd="8dp">
+
+                            <ImageView
+                                android:layout_width="20dp"
+                                android:layout_height="20dp"
+                                android:src="@drawable/ic_sun"
+                                app:tint="@color/brand_ink" />
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="14dp"
+                                android:layout_weight="1"
+                                android:fontFamily="@font/manrope"
+                                android:text="Light"
+                                android:textColor="@color/brand_ink"
+                                android:textSize="14sp" />
+
+                            <ImageView
+                                android:id="@+id/ivCheckThemeLight"
+                                android:layout_width="18dp"
+                                android:layout_height="18dp"
+                                android:src="@drawable/ic_check"
+                                android:visibility="invisible"
+                                app:tint="@color/brand_red" />
+
+                        </LinearLayout>
+
+                        <!-- Option: Dark -->
+                        <LinearLayout
+                            android:id="@+id/btnThemeOptionDark"
+                            android:layout_width="match_parent"
+                            android:layout_height="48dp"
+                            android:background="?attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:paddingStart="8dp"
+                            android:paddingEnd="8dp">
+
+                            <ImageView
+                                android:layout_width="20dp"
+                                android:layout_height="20dp"
+                                android:src="@drawable/ic_moon"
+                                app:tint="@color/brand_ink" />
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="14dp"
+                                android:layout_weight="1"
+                                android:fontFamily="@font/manrope"
+                                android:text="Dark"
+                                android:textColor="@color/brand_ink"
+                                android:textSize="14sp" />
+
+                            <ImageView
+                                android:id="@+id/ivCheckThemeDark"
+                                android:layout_width="18dp"
+                                android:layout_height="18dp"
+                                android:src="@drawable/ic_check"
+                                android:visibility="invisible"
+                                app:tint="@color/brand_red" />
+
+                        </LinearLayout>
+
+                        <!-- Option: System -->
+                        <LinearLayout
+                            android:id="@+id/btnThemeOptionSystem"
+                            android:layout_width="match_parent"
+                            android:layout_height="48dp"
+                            android:background="?attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:paddingStart="8dp"
+                            android:paddingEnd="8dp">
+
+                            <ImageView
+                                android:layout_width="20dp"
+                                android:layout_height="20dp"
+                                android:src="@drawable/ic_phone_android"
+                                app:tint="@color/brand_ink" />
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="14dp"
+                                android:layout_weight="1"
+                                android:fontFamily="@font/manrope"
+                                android:text="System"
+                                android:textColor="@color/brand_ink"
+                                android:textSize="14sp" />
+
+                            <ImageView
+                                android:id="@+id/ivCheckThemeSystem"
+                                android:layout_width="18dp"
+                                android:layout_height="18dp"
+                                android:src="@drawable/ic_check"
+                                android:visibility="visible"
+                                app:tint="@color/brand_red" />
+
+                        </LinearLayout>
+
+                    </LinearLayout>
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Card: Workspace / Storefront Switcher (Visible for employee, delivery, admin; above Track Orders) -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardNavWorkspaceOrStorefront"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:visibility="gone"
+                app:cardBackgroundColor="@color/brand_paper_card"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="1dp"
+                app:strokeColor="@color/brand_line"
+                app:strokeWidth="1dp"
+                tools:visibility="visible">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:padding="14dp">
+
+                    <FrameLayout
+                        android:layout_width="44dp"
+                        android:layout_height="44dp"
+                        android:background="@drawable/bg_bestseller_badge"
+                        android:backgroundTint="#EFF6FF">
+
+                        <ImageView
+                            android:id="@+id/ivWorkspaceOrStorefrontIcon"
+                            android:layout_width="22dp"
+                            android:layout_height="22dp"
+                            android:layout_gravity="center"
+                            android:contentDescription="Workspace"
+                            android:src="@drawable/ic_grid_view"
+                            app:tint="#2563EB" />
+                    </FrameLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="14dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/tvWorkspaceOrStorefrontTitle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="@font/manrope"
+                            android:text="Workspace"
+                            android:textColor="@color/brand_ink"
+                            android:textSize="15sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvWorkspaceOrStorefrontSubtitle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="1dp"
+                            android:text="Store operations &amp; staff hub"
+                            android:textColor="@color/brand_muted"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:contentDescription="Go"
+                        android:src="@drawable/ic_chevron_right"
+                        app:tint="@color/brand_muted_light" />
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Card 1: Track Order -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardNavTrackOrders"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                app:cardBackgroundColor="@color/brand_paper_card"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="1dp"
+                app:strokeColor="@color/brand_line"
+                app:strokeWidth="1dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:padding="14dp">
+
+                    <FrameLayout
+                        android:layout_width="44dp"
+                        android:layout_height="44dp"
+                        android:background="@drawable/bg_bestseller_badge"
+                        android:backgroundTint="@color/brand_red_soft">
+
+                        <ImageView
+                            android:layout_width="22dp"
+                            android:layout_height="22dp"
+                            android:layout_gravity="center"
+                            android:contentDescription="Track"
+                            android:src="@drawable/ic_nav_orders"
+                            app:tint="@color/brand_red" />
+                    </FrameLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="14dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="@font/manrope"
+                            android:text="Track Orders"
+                            android:textColor="@color/brand_ink"
+                            android:textSize="15sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="1dp"
+                            android:text="View live &amp; past orders"
+                            android:textColor="@color/brand_muted"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:contentDescription="Go"
+                        android:src="@drawable/ic_chevron_right"
+                        app:tint="@color/brand_muted_light" />
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Card 2: Saved Addresses (One single bold line, no encaged box, no Home/Default) -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardNavSavedAddresses"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                app:cardBackgroundColor="@color/brand_paper_card"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="1dp"
+                app:strokeColor="@color/brand_line"
+                app:strokeWidth="1dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:padding="14dp">
+
+                    <FrameLayout
+                        android:layout_width="44dp"
+                        android:layout_height="44dp"
+                        android:background="@drawable/bg_bestseller_badge"
+                        android:backgroundTint="@color/brand_green_container">
+
+                        <ImageView
+                            android:layout_width="22dp"
+                            android:layout_height="22dp"
+                            android:layout_gravity="center"
+                            android:contentDescription="Address"
+                            android:src="@drawable/ic_verified"
+                            app:tint="@color/brand_green" />
+                    </FrameLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="14dp"
+                        android:layout_marginEnd="8dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="@font/manrope"
+                            android:text="Saved Addresses"
+                            android:textColor="@color/brand_ink"
+                            android:textSize="15sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="1dp"
+                            android:text="Manage delivery locations"
+                            android:textColor="@color/brand_muted"
+                            android:textSize="12sp" />
+
+                        <!-- Current Selected Address in ONE SINGLE BOLD LINE without home/default -->
+                        <TextView
+                            android:id="@+id/tvSelectedAddressOneLine"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="5dp"
+                            android:ellipsize="end"
+                            android:fontFamily="@font/manrope"
+                            android:maxLines="1"
+                            android:singleLine="true"
+                            android:textColor="@color/brand_ink"
+                            android:textSize="13sp"
+                            android:textStyle="bold"
+                            tools:text="Flat 402, Royal Palms Apartments, Koramangala 4th Block, Bengaluru" />
+                    </LinearLayout>
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:contentDescription="Go"
+                        android:src="@drawable/ic_chevron_right"
+                        app:tint="@color/brand_muted_light" />
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Card: Security (Visible for employee, delivery, admin; below Saved Addresses) -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardNavSecurity"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:visibility="gone"
+                app:cardBackgroundColor="@color/brand_paper_card"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="1dp"
+                app:strokeColor="@color/brand_line"
+                app:strokeWidth="1dp"
+                tools:visibility="visible">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:padding="14dp">
+
+                    <FrameLayout
+                        android:layout_width="44dp"
+                        android:layout_height="44dp"
+                        android:background="@drawable/bg_bestseller_badge"
+                        android:backgroundTint="#F0FDF4">
+
+                        <ImageView
+                            android:layout_width="22dp"
+                            android:layout_height="22dp"
+                            android:layout_gravity="center"
+                            android:contentDescription="Security"
+                            android:src="@drawable/ic_shield"
+                            app:tint="@color/brand_emerald" />
+                    </FrameLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="14dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="@font/manrope"
+                            android:text="Security"
+                            android:textColor="@color/brand_ink"
+                            android:textSize="15sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="1dp"
+                            android:text="Active sessions &amp; device security"
+                            android:textColor="@color/brand_muted"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:contentDescription="Go"
+                        android:src="@drawable/ic_chevron_right"
+                        app:tint="@color/brand_muted_light" />
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Card 3: Sign Out (Destructive Red) -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/btnSignOut"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                app:cardBackgroundColor="@color/brand_paper_card"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="1dp"
+                app:strokeColor="@color/brand_line"
+                app:strokeWidth="1dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:padding="14dp">
+
+                    <FrameLayout
+                        android:layout_width="44dp"
+                        android:layout_height="44dp"
+                        android:background="@drawable/bg_bestseller_badge"
+                        android:backgroundTint="@color/brand_error_container">
+
+                        <ImageView
+                            android:layout_width="22dp"
+                            android:layout_height="22dp"
+                            android:layout_gravity="center"
+                            android:contentDescription="Sign Out"
+                            android:src="@drawable/ic_logout"
+                            app:tint="@color/brand_error" />
+                    </FrameLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="14dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="@font/manrope"
+                            android:text="Sign Out"
+                            android:textColor="@color/brand_error"
+                            android:textSize="15sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="1dp"
+                            android:text="Securely leave your account"
+                            android:textColor="@color/brand_muted"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:contentDescription="Go"
+                        android:src="@drawable/ic_chevron_right"
+                        app:tint="@color/brand_error" />
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+        </LinearLayout>
+
+    </ScrollView>
+
+</FrameLayout>

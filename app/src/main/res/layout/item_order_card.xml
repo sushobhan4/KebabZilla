@@ -1,0 +1,492 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginStart="16dp"
+    android:layout_marginTop="8dp"
+    android:layout_marginEnd="16dp"
+    android:layout_marginBottom="12dp"
+    app:cardBackgroundColor="@color/brand_paper_card"
+    app:cardCornerRadius="18dp"
+    app:cardElevation="2dp"
+    app:strokeColor="@color/brand_line"
+    app:strokeWidth="1dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <!-- Top Order Header Row -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <FrameLayout
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:background="@drawable/bg_bestseller_badge"
+                android:backgroundTint="@color/brand_red_soft">
+
+                <ImageView
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
+                    android:layout_gravity="center"
+                    android:contentDescription="Flame"
+                    android:src="@drawable/ic_flame"
+                    app:tint="@color/brand_red" />
+            </FrameLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tvOrderId"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="@font/manrope"
+                    android:textColor="@color/brand_ink"
+                    android:textSize="15sp"
+                    android:textStyle="bold"
+                    tools:text="Order #KZ-1042" />
+
+                <TextView
+                    android:id="@+id/tvOrderDate"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="1dp"
+                    android:textColor="@color/brand_muted"
+                    android:textSize="11sp"
+                    tools:text="Placed 18m ago" />
+
+            </LinearLayout>
+
+            <!-- Status Pill Badge -->
+            <TextView
+                android:id="@+id/tvOrderStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_status_open"
+                android:fontFamily="@font/manrope"
+                android:paddingStart="10dp"
+                android:paddingTop="4dp"
+                android:paddingEnd="10dp"
+                android:paddingBottom="4dp"
+                android:textColor="@color/brand_green"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                tools:text="OUT FOR DELIVERY" />
+
+        </LinearLayout>
+
+        <!-- Live ETA Row (Shown for active orders) -->
+        <LinearLayout
+            android:id="@+id/layoutEta"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Estimated Handover"
+                    android:textColor="@color/brand_muted"
+                    android:textSize="11sp" />
+
+                <TextView
+                    android:id="@+id/tvEtaTime"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="1dp"
+                    android:fontFamily="@font/manrope"
+                    android:text="8 - 12 mins"
+                    android:textColor="@color/brand_ink"
+                    android:textSize="17sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="end"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tvLiveStatusHint"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Approaching your gate"
+                    android:textColor="@color/brand_green"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvDistanceHint"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="1dp"
+                    android:text="Distance: 1.4 km"
+                    android:textColor="@color/brand_muted"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- Mandatory Emerald Delivery OTP Highlight Card -->
+        <LinearLayout
+            android:id="@+id/layoutDeliveryOtp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/bg_otp_card_emerald"
+            android:orientation="vertical"
+            android:padding="14dp"
+            android:visibility="gone"
+            tools:visibility="visible">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <ImageView
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
+                    android:contentDescription="Shield"
+                    android:src="@drawable/ic_shield"
+                    app:tint="@color/brand_green" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:fontFamily="@font/manrope"
+                    android:letterSpacing="0.08"
+                    android:text="YOUR DELIVERY CODE"
+                    android:textColor="@color/brand_green_dark"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+            </LinearLayout>
+
+            <!-- OTP Number Container -->
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_pill_white">
+
+                <TextView
+                    android:id="@+id/tvDeliveryOtp"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:fontFamily="@font/manrope"
+                    android:letterSpacing="0.35"
+                    android:textColor="@color/brand_green"
+                    android:textSize="26sp"
+                    android:textStyle="bold"
+                    tools:text="482 910" />
+
+            </FrameLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:text="Share this 6-digit code with your delivery partner upon arrival to complete handover."
+                android:textColor="@color/brand_green_dark"
+                android:textSize="11sp" />
+
+        </LinearLayout>
+
+        <!-- 5-Stage Visual Progress Timeline (Shown when active) -->
+        <LinearLayout
+            android:id="@+id/layoutTimeline"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/bg_pill_white"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Live Delivery Timeline"
+                    android:textColor="@color/brand_ink"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvTimelineStage"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Stage 4 of 5"
+                    android:textColor="@color/brand_red"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+            </LinearLayout>
+
+            <!-- Horizontal Step Icons Row -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <!-- Step 1: Placed -->
+                <ImageView
+                    android:id="@+id/ivStepPlaced"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:background="@drawable/bg_bestseller_badge"
+                    android:backgroundTint="@color/brand_green"
+                    android:contentDescription="Placed"
+                    android:padding="5dp"
+                    android:src="@drawable/ic_check"
+                    app:tint="@color/white" />
+
+                <View
+                    android:id="@+id/lineStep1"
+                    android:layout_width="0dp"
+                    android:layout_height="2dp"
+                    android:layout_weight="1"
+                    android:background="@color/brand_green" />
+
+                <!-- Step 2: Preparing -->
+                <ImageView
+                    android:id="@+id/ivStepPreparing"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:background="@drawable/bg_bestseller_badge"
+                    android:backgroundTint="@color/brand_green"
+                    android:contentDescription="Preparing"
+                    android:padding="5dp"
+                    android:src="@drawable/ic_flame"
+                    app:tint="@color/white" />
+
+                <View
+                    android:id="@+id/lineStep2"
+                    android:layout_width="0dp"
+                    android:layout_height="2dp"
+                    android:layout_weight="1"
+                    android:background="@color/brand_green" />
+
+                <!-- Step 3: Ready -->
+                <ImageView
+                    android:id="@+id/ivStepReady"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:background="@drawable/bg_bestseller_badge"
+                    android:backgroundTint="@color/brand_green"
+                    android:contentDescription="Ready"
+                    android:padding="5dp"
+                    android:src="@drawable/ic_check"
+                    app:tint="@color/white" />
+
+                <View
+                    android:id="@+id/lineStep3"
+                    android:layout_width="0dp"
+                    android:layout_height="2dp"
+                    android:layout_weight="1"
+                    android:background="@color/brand_red" />
+
+                <!-- Step 4: Out for delivery -->
+                <ImageView
+                    android:id="@+id/ivStepOut"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:background="@drawable/bg_bestseller_badge"
+                    android:backgroundTint="@color/brand_red"
+                    android:contentDescription="Out"
+                    android:padding="5dp"
+                    android:src="@drawable/ic_two_wheeler"
+                    app:tint="@color/white" />
+
+                <View
+                    android:id="@+id/lineStep4"
+                    android:layout_width="0dp"
+                    android:layout_height="2dp"
+                    android:layout_weight="1"
+                    android:background="@color/brand_line" />
+
+                <!-- Step 5: Delivered -->
+                <ImageView
+                    android:id="@+id/ivStepDelivered"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:background="@drawable/bg_bestseller_badge"
+                    android:backgroundTint="@color/surface_container"
+                    android:contentDescription="Delivered"
+                    android:padding="5dp"
+                    android:src="@drawable/ic_check"
+                    app:tint="@color/brand_muted_light" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- Driver Partner Row (Shown for out_for_delivery) -->
+        <LinearLayout
+            android:id="@+id/layoutDriverCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/bg_pill_white"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="10dp"
+            android:visibility="gone"
+            tools:visibility="visible">
+
+            <FrameLayout
+                android:layout_width="40dp"
+                android:layout_height="40dp">
+
+                <ImageView
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:background="@drawable/bg_bestseller_badge"
+                    android:backgroundTint="@color/surface_container"
+                    android:contentDescription="Rider"
+                    android:padding="8dp"
+                    android:src="@drawable/ic_nav_profile"
+                    app:tint="@color/brand_red" />
+
+                <View
+                    android:layout_width="10dp"
+                    android:layout_height="10dp"
+                    android:layout_gravity="bottom|end"
+                    android:background="@drawable/bg_bestseller_badge"
+                    android:backgroundTint="@color/brand_green" />
+            </FrameLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tvDriverName"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Imran Khan"
+                    android:textColor="@color/brand_ink"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <ImageView
+                        android:layout_width="12dp"
+                        android:layout_height="12dp"
+                        android:contentDescription="Rating"
+                        android:src="@drawable/ic_star"
+                        app:tint="@color/brand_amber" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="3dp"
+                        android:text="4.9 · TVS Apache"
+                        android:textColor="@color/brand_muted"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- Divider -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="12dp"
+            android:layout_marginBottom="10dp"
+            android:background="@color/brand_line" />
+
+        <!-- Order Items & Address Summary -->
+        <TextView
+            android:id="@+id/tvOrderItemsSummary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:lineSpacingExtra="2dp"
+            android:textColor="@color/brand_ink"
+            android:textSize="13sp"
+            tools:text="2x Galouti Kebab, 1x Charcoal Chicken Roll" />
+
+        <TextView
+            android:id="@+id/tvOrderAddress"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textColor="@color/brand_muted"
+            android:textSize="11sp"
+            tools:text="Flat 402, Royal Palms Apartments, Koramangala" />
+
+        <!-- Total -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Paid Amount"
+                android:textColor="@color/brand_muted"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/tvOrderTotal"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/manrope"
+                android:textColor="@color/brand_red"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                tools:text="₹605" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</com.google.android.material.card.MaterialCardView>

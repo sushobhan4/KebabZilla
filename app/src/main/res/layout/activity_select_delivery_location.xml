@@ -1,0 +1,290 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/brand_paper">
+
+    <!-- Full-Screen In-App Google Map (No Radius Circle) -->
+    <androidx.fragment.app.FragmentContainerView
+        android:id="@+id/mapFragment"
+        android:name="com.google.android.gms.maps.SupportMapFragment"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- Center Screen Flame Pin -->
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:layout_marginBottom="70dp"
+        android:clickable="false"
+        android:focusable="false"
+        android:gravity="center_horizontal"
+        android:orientation="vertical">
+
+        <!-- Tooltip Pill -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_bestseller_badge"
+            android:backgroundTint="#1D201E"
+            android:elevation="4dp"
+            android:fontFamily="@font/manrope"
+            android:paddingStart="12dp"
+            android:paddingTop="5dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="5dp"
+            android:text="Drop pin at your front door"
+            android:textColor="@color/white"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <!-- Flame Marker Circle with Pointer Stem -->
+        <FrameLayout
+            android:layout_width="50dp"
+            android:layout_height="50dp"
+            android:layout_marginTop="6dp"
+            android:elevation="6dp">
+
+            <View
+                android:layout_width="50dp"
+                android:layout_height="50dp"
+                android:background="@drawable/bg_bestseller_badge"
+                android:backgroundTint="#FFFFFF" />
+
+            <View
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:layout_gravity="center"
+                android:background="@drawable/bg_bestseller_badge"
+                android:backgroundTint="@color/brand_red" />
+
+            <ImageView
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_gravity="center"
+                android:contentDescription="Pin"
+                android:src="@drawable/ic_flame"
+                app:tint="@color/white" />
+
+        </FrameLayout>
+
+        <!-- Drop Shadow Under Pin -->
+        <View
+            android:layout_width="10dp"
+            android:layout_height="6dp"
+            android:background="@drawable/bg_bestseller_badge"
+            android:backgroundTint="#40000000" />
+
+    </LinearLayout>
+
+    <!-- Top Action Bar (Floating over map) -->
+    <LinearLayout
+        android:id="@+id/layoutTopControls"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingTop="12dp"
+        android:paddingEnd="16dp">
+
+        <FrameLayout
+            android:id="@+id/btnBack"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@drawable/bg_pill_white"
+            android:clickable="true"
+            android:contentDescription="Back"
+            android:elevation="3dp"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_arrow_back"
+                app:tint="@color/brand_ink" />
+        </FrameLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_pill_white"
+            android:elevation="3dp"
+            android:gravity="center_vertical"
+            android:orientation="vertical"
+            android:paddingStart="14dp"
+            android:paddingTop="8dp"
+            android:paddingEnd="14dp"
+            android:paddingBottom="8dp">
+
+            <TextView
+                android:id="@+id/tvMapTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/manrope"
+                android:text="Select Delivery Location"
+                android:textColor="@color/brand_ink"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvMapSubtitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Tap or drag map to set delivery pin"
+                android:textColor="@color/brand_muted"
+                android:textSize="11sp" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- Floating "Locate Me" Button -->
+    <LinearLayout
+        android:id="@+id/btnLocateMe"
+        android:layout_width="wrap_content"
+        android:layout_height="44dp"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="180dp"
+        android:background="@drawable/bg_pill_white"
+        android:clickable="true"
+        android:elevation="4dp"
+        android:focusable="true"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp">
+
+        <ImageView
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:contentDescription="GPS"
+            android:src="@drawable/ic_my_location"
+            app:tint="@color/brand_red" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:fontFamily="@font/manrope"
+            android:text="Locate Me"
+            android:textColor="@color/brand_ink"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+    </LinearLayout>
+
+    <!-- Bottom Confirmation Card (No Green Banner, Above Navigation Buttons) -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/cardBottomConfirmation"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        app:cardBackgroundColor="@color/brand_paper_card"
+        app:cardCornerRadius="24dp"
+        app:cardElevation="10dp"
+        app:strokeColor="@color/brand_line"
+        app:strokeWidth="1dp">
+
+        <LinearLayout
+            android:id="@+id/layoutBottomCardInner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="20dp"
+            android:paddingTop="12dp"
+            android:paddingEnd="20dp"
+            android:paddingBottom="20dp">
+
+            <!-- Drag Handle Bar -->
+            <View
+                android:layout_width="38dp"
+                android:layout_height="4dp"
+                android:layout_gravity="center_horizontal"
+                android:background="@drawable/bg_bottom_sheet_handle" />
+
+            <!-- Pinned Locality Title (No Lat/Lng text) -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <FrameLayout
+                    android:layout_width="38dp"
+                    android:layout_height="38dp"
+                    android:background="@drawable/bg_bestseller_badge"
+                    android:backgroundTint="#FCECE8">
+
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:layout_gravity="center"
+                        android:contentDescription="Pin"
+                        android:src="@drawable/ic_location_pin"
+                        app:tint="@color/brand_red" />
+                </FrameLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tvPinLocalityTitle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:fontFamily="@font/manrope"
+                        android:maxLines="1"
+                        android:textColor="@color/brand_ink"
+                        android:textSize="17sp"
+                        android:textStyle="bold"
+                        tools:text="Amtala, DH Road" />
+
+                    <TextView
+                        android:id="@+id/tvPinAddressSub"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:textColor="@color/brand_muted"
+                        android:textSize="12sp"
+                        tools:text="South 24 Parganas, West Bengal" />
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+            <!-- "Complete Address" Button (Raised above navigation buttons) -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnCompleteAddress"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="14dp"
+                android:backgroundTint="@color/brand_red"
+                android:fontFamily="@font/manrope"
+                android:text="Complete Address"
+                android:textColor="@color/white"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                app:cornerRadius="999dp"
+                app:icon="@drawable/ic_arrow_forward"
+                app:iconGravity="textEnd"
+                app:iconTint="@color/white" />
+
+        </LinearLayout>
+
+    </com.google.android.material.card.MaterialCardView>
+
+</FrameLayout>

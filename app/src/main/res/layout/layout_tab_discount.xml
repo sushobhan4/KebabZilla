@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="16dp">
+
+        <TextView
+            android:id="@+id/tvDiscountSummary"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:fontFamily="@font/manrope"
+            android:textColor="@color/brand_ink"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            tools:text="3 Active Coupons" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnCreateDiscount"
+            android:layout_width="wrap_content"
+            android:layout_height="38dp"
+            android:backgroundTint="@color/brand_red"
+            android:fontFamily="@font/manrope"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:text="+ New Coupon"
+            android:textColor="@color/white"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            app:cornerRadius="8dp" />
+
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/brand_line" />
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rvDiscountsList"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:padding="12dp" />
+
+        <TextView
+            android:id="@+id/tvDiscountsEmpty"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="No promotional coupons active"
+            android:textColor="@color/brand_muted"
+            android:textSize="14sp"
+            android:visibility="gone" />
+
+    </FrameLayout>
+
+</LinearLayout>

@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- KebabZilla "Flame & Skewer" Brand Palette (Material 3 Dark) -->
+    <color name="brand_red">#FFB4A8</color>
+    <color name="brand_red_dark">#B4483A</color>
+    <color name="brand_red_container">#B4483A</color>
+    <color name="brand_red_soft">#FFE8E4</color>
+    <color name="brand_red_fixed">#FFDAD5</color>
+
+    <!-- Emerald Herbal Green (Dark mode mint / deep container) -->
+    <color name="brand_green">#88D8A0</color>
+    <color name="brand_green_dark">#85D49C</color>
+    <color name="brand_green_container">#005D31</color>
+    <color name="brand_green_soft">#A4F4BA</color>
+    <color name="brand_green_fixed">#A4F4BA</color>
+    <color name="brand_emerald">#88D8A0</color>
+    <color name="brand_emerald_soft">#005D31</color>
+    <color name="brand_emerald_dark">#85D49C</color>
+    <color name="on_secondary_fixed">#00210E</color>
+
+    <!-- Amber Embers (Dark mode warm glowing amber) -->
+    <color name="brand_amber">#FFB77D</color>
+    <color name="brand_amber_dark">#A35700</color>
+    <color name="brand_amber_container">#A35700</color>
+    <color name="brand_amber_soft">#FFE8D9</color>
+
+    <!-- Charcoal Foundry Canvas & Containers -->
+    <color name="brand_paper">#121413</color>
+    <color name="brand_paper_card">#1E201F</color>
+    <color name="surface_container_low">#1A1C1B</color>
+    <color name="surface_container">#1E201F</color>
+    <color name="surface_container_high">#282A29</color>
+    <color name="surface_container_highest">#333534</color>
+
+    <!-- Typography & Neutral Charcoal for Dark Mode -->
+    <color name="brand_ink">#E2E3E0</color>
+    <color name="brand_muted">#DEC0BB</color>
+    <color name="brand_muted_light">#A58B87</color>
+    <color name="brand_line">#333534</color>
+    <color name="outline_variant">#57423F</color>
+    <color name="outline_border">#333534</color>
+
+    <!-- Status & Functional -->
+    <color name="brand_error">#FFB4AB</color>
+    <color name="brand_error_container">#93000A</color>
+    <color name="brand_error_text">#FFDAD6</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="black">#FF000000</color>
+    <color name="transparent">#00000000</color>
+
+    <!-- Material Theme Fallbacks -->
+    <color name="primary">#FFB4A8</color>
+    <color name="primary_variant">#B4483A</color>
+    <color name="secondary">#88D8A0</color>
+    <color name="secondary_variant">#005D31</color>
+</resources>

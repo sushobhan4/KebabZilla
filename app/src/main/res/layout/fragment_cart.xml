@@ -1,0 +1,810 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/brand_paper">
+
+    <!-- Empty State -->
+    <LinearLayout
+        android:id="@+id/layoutCartEmpty"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="32dp"
+        android:visibility="gone"
+        tools:visibility="gone">
+
+        <FrameLayout
+            android:layout_width="88dp"
+            android:layout_height="88dp"
+            android:background="@drawable/bg_cart_item_card"
+            android:padding="20dp">
+
+            <ImageView
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:contentDescription="Empty Cart"
+                android:src="@drawable/ic_nav_cart"
+                app:tint="@color/brand_red" />
+        </FrameLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:fontFamily="@font/manrope"
+            android:text="Your Cart is Empty"
+            android:textColor="@color/brand_ink"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:lineSpacingExtra="2dp"
+            android:text="Add succulent kebabs, rolls, or platters to fire up your order!"
+            android:textColor="@color/brand_muted"
+            android:textSize="14sp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnExploreMenu"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:layout_marginTop="24dp"
+            android:backgroundTint="@color/brand_red"
+            android:paddingStart="28dp"
+            android:paddingEnd="28dp"
+            android:text="Browse Menu"
+            android:textColor="@color/white"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            app:cornerRadius="999dp" />
+
+    </LinearLayout>
+
+    <!-- Cart Content Container with Sticky Checkout Bottom Bar -->
+    <LinearLayout
+        android:id="@+id/layoutCartContentContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <!-- Cart Scroll Content -->
+        <ScrollView
+            android:id="@+id/scrollCartContent"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:fillViewport="true">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="16dp"
+                android:paddingTop="16dp"
+                android:paddingEnd="16dp"
+                android:paddingBottom="24dp">
+
+                <!-- Header Row -->
+                <LinearLayout
+                    android:id="@+id/layoutCartHeader"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <FrameLayout
+                        android:id="@+id/btnCartBack"
+                        android:layout_width="38dp"
+                        android:layout_height="38dp"
+                        android:layout_marginEnd="10dp"
+                        android:background="@drawable/bg_cart_item_card"
+                        android:clickable="true"
+                        android:contentDescription="Back"
+                        android:focusable="true">
+
+                        <ImageView
+                            android:layout_width="18dp"
+                            android:layout_height="18dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_arrow_back"
+                            app:tint="@color/brand_ink" />
+                    </FrameLayout>
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/manrope"
+                        android:text="Your Cart"
+                        android:textColor="@color/brand_ink"
+                        android:textSize="22sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tvCartHeaderBadge"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:background="@drawable/bg_bestseller_badge"
+                        android:backgroundTint="@color/brand_red_soft"
+                        android:fontFamily="@font/manrope"
+                        android:text="1 item"
+                        android:textColor="@color/brand_red"
+                        android:textSize="11sp"
+                        android:textStyle="bold" />
+
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="1dp"
+                        android:layout_weight="1" />
+
+                    <TextView
+                        android:id="@+id/btnClearCart"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:padding="6dp"
+                        android:text="Clear cart"
+                        android:textColor="@color/brand_muted"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                </LinearLayout>
+
+                <!-- Cart Items Recycler View (The Menu) -->
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/rvCartItems"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:nestedScrollingEnabled="false"
+                    tools:itemCount="1"
+                    tools:listitem="@layout/item_cart_line" />
+
+                <!-- Bill Details Card (Right After the Menu) -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardBillDetails"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    app:cardBackgroundColor="@color/brand_paper_card"
+                    app:cardCornerRadius="16dp"
+                    app:cardElevation="1dp"
+                    app:strokeColor="@color/brand_line"
+                    app:strokeWidth="1dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="16dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="@font/manrope"
+                            android:text="Bill Details"
+                            android:textColor="@color/brand_ink"
+                            android:textSize="14sp"
+                            android:textStyle="bold" />
+
+                        <!-- Subtotal (Inclusive of all taxes) -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="Subtotal"
+                                    android:textColor="@color/brand_ink"
+                                    android:textSize="13sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="Inclusive of all taxes"
+                                    android:textColor="@color/brand_muted"
+                                    android:textSize="11sp" />
+                            </LinearLayout>
+
+                            <TextView
+                                android:id="@+id/tvBillSubtotal"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="@font/manrope"
+                                android:textColor="@color/brand_ink"
+                                android:textSize="13sp"
+                                android:textStyle="bold"
+                                tools:text="₹150" />
+
+                        </LinearLayout>
+
+                        <!-- Delivery Fee -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="Delivery Fee"
+                                android:textColor="@color/brand_muted"
+                                android:textSize="13sp" />
+
+                            <TextView
+                                android:id="@+id/tvBillDelivery"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="@font/manrope"
+                                android:textColor="@color/brand_ink"
+                                android:textSize="13sp"
+                                android:textStyle="bold"
+                                tools:text="₹50" />
+
+                        </LinearLayout>
+
+                        <!-- Delivery Notice (Free threshold / outside zone notice) -->
+                        <TextView
+                            android:id="@+id/tvBillDeliveryNotice"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:fontFamily="@font/manrope"
+                            android:textColor="@color/brand_green"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            android:visibility="gone"
+                            tools:text="Free · Order over ₹500"
+                            tools:visibility="visible" />
+
+                        <!-- Round Off (Only shown if needed) -->
+                        <LinearLayout
+                            android:id="@+id/layoutBillRoundOff"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:visibility="gone"
+                            tools:visibility="visible">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="Round off"
+                                android:textColor="@color/brand_muted"
+                                android:textSize="13sp" />
+
+                            <TextView
+                                android:id="@+id/tvBillRoundOff"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="@font/manrope"
+                                android:text="₹0"
+                                android:textColor="@color/brand_ink"
+                                android:textSize="13sp"
+                                android:textStyle="bold" />
+
+                        </LinearLayout>
+
+                        <!-- Divider -->
+                        <View
+                            android:layout_width="match_parent"
+                            android:layout_height="1dp"
+                            android:layout_marginTop="12dp"
+                            android:layout_marginBottom="12dp"
+                            android:background="@color/brand_line" />
+
+                        <!-- Total Row -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:fontFamily="@font/manrope"
+                                android:text="Total"
+                                android:textColor="@color/brand_ink"
+                                android:textSize="16sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:id="@+id/tvBillTotal"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="@font/manrope"
+                                android:textColor="@color/brand_red"
+                                android:textSize="18sp"
+                                android:textStyle="bold"
+                                tools:text="₹200" />
+
+                        </LinearLayout>
+
+                    </LinearLayout>
+
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- Delivery Destination Card (Dropdown) -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardDeliveryDestination"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    app:cardBackgroundColor="@color/brand_paper_card"
+                    app:cardCornerRadius="16dp"
+                    app:cardElevation="1dp"
+                    app:strokeColor="@color/brand_line"
+                    app:strokeWidth="1dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="14dp">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <ImageView
+                                android:layout_width="20dp"
+                                android:layout_height="20dp"
+                                android:contentDescription="Address"
+                                android:src="@drawable/ic_nav_profile"
+                                app:tint="@color/brand_red" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:fontFamily="@font/manrope"
+                                android:text="Delivery Destination"
+                                android:textColor="@color/brand_ink"
+                                android:textSize="14sp"
+                                android:textStyle="bold" />
+
+                            <ImageView
+                                android:layout_width="16dp"
+                                android:layout_height="16dp"
+                                android:layout_marginStart="6dp"
+                                android:contentDescription="Verified"
+                                android:src="@drawable/ic_verified"
+                                app:tint="@color/brand_green" />
+
+                        </LinearLayout>
+
+                        <!-- Saved Address Dropdown Selector -->
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/tilDeliveryAddress"
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp"
+                            android:hint="Select Saved Address"
+                            app:boxStrokeColor="@color/selector_box_stroke">
+
+                            <AutoCompleteTextView
+                                android:id="@+id/actvDeliveryAddress"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="@font/dm_sans"
+                                android:inputType="none"
+                                android:textColor="@color/brand_ink"
+                                android:textSize="13sp" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <!-- Add/Manage Addresses Action Button -->
+                        <TextView
+                            android:id="@+id/btnManageAddresses"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="end"
+                            android:layout_marginTop="8dp"
+                            android:background="?attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:fontFamily="@font/manrope"
+                            android:padding="4dp"
+                            android:text="+ Manage / Add Address"
+                            android:textColor="@color/brand_red"
+                            android:textSize="12sp"
+                            android:textStyle="bold" />
+
+                    </LinearLayout>
+
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- Cooking & Delivery Instructions Card -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardCookingInstructions"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    app:cardBackgroundColor="@color/brand_paper_card"
+                    app:cardCornerRadius="16dp"
+                    app:cardElevation="1dp"
+                    app:strokeColor="@color/brand_line"
+                    app:strokeWidth="1dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="14dp">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <ImageView
+                                android:layout_width="18dp"
+                                android:layout_height="18dp"
+                                android:contentDescription="Notes"
+                                android:src="@drawable/ic_edit"
+                                app:tint="@color/brand_muted" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:fontFamily="@font/manrope"
+                                android:text="Cooking &amp; Delivery Instructions"
+                                android:textColor="@color/brand_ink"
+                                android:textSize="14sp"
+                                android:textStyle="bold" />
+
+                        </LinearLayout>
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:hint="E.g., Contactless drop-off, extra mint dip..."
+                            app:boxStrokeColor="@color/selector_box_stroke">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etCookingInstructions"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="textMultiLine"
+                                android:maxLines="2"
+                                android:textColor="@color/brand_ink"
+                                android:textSize="13sp" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="Acknowledged by kitchen lead"
+                                android:textColor="@color/brand_muted"
+                                android:textSize="11sp" />
+
+                            <ImageView
+                                android:layout_width="14dp"
+                                android:layout_height="14dp"
+                                android:contentDescription="Check"
+                                android:src="@drawable/ic_check"
+                                app:tint="@color/brand_red" />
+
+                        </LinearLayout>
+
+                    </LinearLayout>
+
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- Order Timing Card (Below Cooking Instructions) -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardOrderTiming"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    app:cardBackgroundColor="@color/brand_paper_card"
+                    app:cardCornerRadius="16dp"
+                    app:cardElevation="1dp"
+                    app:strokeColor="@color/brand_line"
+                    app:strokeWidth="1dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="14dp">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <ImageView
+                                android:layout_width="18dp"
+                                android:layout_height="18dp"
+                                android:contentDescription="Clock"
+                                android:src="@drawable/ic_clock"
+                                app:tint="@color/brand_red" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:fontFamily="@font/manrope"
+                                android:text="Order Timing"
+                                android:textColor="@color/brand_ink"
+                                android:textSize="14sp"
+                                android:textStyle="bold" />
+
+                        </LinearLayout>
+
+                        <!-- Order Timing Option Dropdown (ASAP vs Schedule for later) -->
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/tilOrderTiming"
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp"
+                            android:hint="Delivery Time Option"
+                            app:boxStrokeColor="@color/selector_box_stroke">
+
+                            <AutoCompleteTextView
+                                android:id="@+id/actvOrderTiming"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="@font/dm_sans"
+                                android:inputType="none"
+                                android:textColor="@color/brand_ink"
+                                android:textSize="13sp" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <!-- Schedule Time Dropdown (Visible only when Schedule for later is selected) -->
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/tilScheduleTime"
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp"
+                            android:hint="Select Schedule Time (Today only)"
+                            android:visibility="gone"
+                            tools:visibility="visible"
+                            app:boxStrokeColor="@color/selector_box_stroke">
+
+                            <AutoCompleteTextView
+                                android:id="@+id/actvScheduleTime"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="@font/dm_sans"
+                                android:inputType="none"
+                                android:textColor="@color/brand_ink"
+                                android:textSize="13sp" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                    </LinearLayout>
+
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- Payment Method Selection -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:fontFamily="@font/manrope"
+                    android:text="Payment Method"
+                    android:textColor="@color/brand_ink"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <!-- Payment Radio Cards -->
+                <RadioGroup
+                    android:id="@+id/rgPayment"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp">
+
+                    <!-- Online Razorpay -->
+                    <com.google.android.material.card.MaterialCardView
+                        android:id="@+id/cardPayOnline"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="8dp"
+                        app:cardBackgroundColor="@color/brand_paper_card"
+                        app:cardCornerRadius="14dp"
+                        app:cardElevation="1dp"
+                        app:strokeColor="@color/brand_line"
+                        app:strokeWidth="1dp">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:padding="12dp">
+
+                            <FrameLayout
+                                android:layout_width="38dp"
+                                android:layout_height="38dp"
+                                android:background="@drawable/bg_cart_item_card"
+                                android:backgroundTint="@color/brand_red_soft">
+
+                                <ImageView
+                                    android:layout_width="20dp"
+                                    android:layout_height="20dp"
+                                    android:layout_gravity="center"
+                                    android:contentDescription="Online"
+                                    android:src="@drawable/ic_wallet"
+                                    app:tint="@color/brand_red" />
+                            </FrameLayout>
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="12dp"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="Online Payment"
+                                    android:textColor="@color/brand_ink"
+                                    android:textSize="14sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="UPI, Cards, NetBanking via Razorpay"
+                                    android:textColor="@color/brand_muted"
+                                    android:textSize="11sp" />
+                            </LinearLayout>
+
+                            <RadioButton
+                                android:id="@+id/rbRazorpay"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:checked="true" />
+
+                        </LinearLayout>
+
+                    </com.google.android.material.card.MaterialCardView>
+
+                    <!-- Cash on Delivery -->
+                    <com.google.android.material.card.MaterialCardView
+                        android:id="@+id/cardPayCash"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        app:cardBackgroundColor="@color/brand_paper_card"
+                        app:cardCornerRadius="14dp"
+                        app:cardElevation="1dp"
+                        app:strokeColor="@color/brand_line"
+                        app:strokeWidth="1dp">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:padding="12dp">
+
+                            <FrameLayout
+                                android:layout_width="38dp"
+                                android:layout_height="38dp"
+                                android:background="@drawable/bg_cart_item_card"
+                                android:backgroundTint="@color/surface_container">
+
+                                <ImageView
+                                    android:layout_width="20dp"
+                                    android:layout_height="20dp"
+                                    android:layout_gravity="center"
+                                    android:contentDescription="Cash"
+                                    android:src="@drawable/ic_cash"
+                                    app:tint="@color/brand_muted" />
+                            </FrameLayout>
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="12dp"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="Cash on Delivery (COD)"
+                                    android:textColor="@color/brand_ink"
+                                    android:textSize="14sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="Exact change encouraged at door"
+                                    android:textColor="@color/brand_muted"
+                                    android:textSize="11sp" />
+                            </LinearLayout>
+
+                            <RadioButton
+                                android:id="@+id/rbCash"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content" />
+
+                        </LinearLayout>
+
+                    </com.google.android.material.card.MaterialCardView>
+
+                </RadioGroup>
+
+            </LinearLayout>
+
+        </ScrollView>
+
+        <!-- Sticky Place Order Button Container -->
+        <LinearLayout
+            android:id="@+id/layoutStickyCheckout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@color/brand_paper_card"
+            android:elevation="8dp"
+            android:orientation="vertical"
+            android:paddingStart="16dp"
+            android:paddingTop="12dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="12dp">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnCheckout"
+                android:layout_width="match_parent"
+                android:layout_height="54dp"
+                android:backgroundTint="@color/brand_red"
+                android:elevation="4dp"
+                android:fontFamily="@font/manrope"
+                android:text="Place Order"
+                android:textColor="@color/white"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                app:cornerRadius="999dp" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</FrameLayout>

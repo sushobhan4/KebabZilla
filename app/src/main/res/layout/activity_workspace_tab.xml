@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/brand_paper"
+    android:orientation="vertical">
+
+    <!-- Top Action Bar -->
+    <LinearLayout
+        android:id="@+id/layoutTabTopBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingTop="16dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="12dp">
+
+        <FrameLayout
+            android:id="@+id/btnTabBack"
+            android:layout_width="38dp"
+            android:layout_height="38dp"
+            android:layout_marginEnd="12dp"
+            android:background="@drawable/bg_pill_white"
+            android:clickable="true"
+            android:contentDescription="Back to Workspace"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_arrow_back"
+                app:tint="@color/brand_ink" />
+        </FrameLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/tvTabHeaderTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/manrope"
+                android:textColor="@color/brand_ink"
+                android:textSize="20sp"
+                android:textStyle="bold"
+                tools:text="Order Queue" />
+
+            <TextView
+                android:id="@+id/tvTabHeaderSubtitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="1dp"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="@color/brand_muted"
+                android:textSize="12sp"
+                tools:text="Live KDS tickets &amp; grill station flow" />
+
+        </LinearLayout>
+
+        <ProgressBar
+            android:id="@+id/progressTabLoading"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:indeterminateTint="@color/brand_red"
+            android:visibility="gone" />
+
+        <!-- Optional Top Right Action Button (e.g. Add, Save, Refresh) -->
+        <FrameLayout
+            android:id="@+id/btnTabAction"
+            android:layout_width="38dp"
+            android:layout_height="38dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/bg_pill_white"
+            android:clickable="true"
+            android:focusable="true"
+            android:visibility="gone"
+            tools:visibility="visible">
+
+            <ImageView
+                android:id="@+id/ivTabActionIcon"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_add"
+                app:tint="@color/brand_red" />
+        </FrameLayout>
+
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/brand_line" />
+
+    <!-- Container Frame for Tab Contents -->
+    <FrameLayout
+        android:id="@+id/frameTabContent"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+</LinearLayout>

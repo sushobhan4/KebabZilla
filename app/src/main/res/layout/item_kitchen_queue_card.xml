@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="12dp"
+    app:cardBackgroundColor="@color/brand_paper_card"
+    app:cardCornerRadius="16dp"
+    app:cardElevation="1dp"
+    app:strokeColor="#86EFAC"
+    app:strokeWidth="1.5dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/tvKitchenOrderId"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:fontFamily="@font/manrope"
+                android:textColor="@color/brand_ink"
+                android:textSize="17sp"
+                android:textStyle="bold"
+                tools:text="Order #KZ-9821" />
+
+            <TextView
+                android:id="@+id/tvKitchenStatusBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_status_open"
+                android:fontFamily="@font/manrope"
+                android:paddingStart="8dp"
+                android:paddingTop="3dp"
+                android:paddingEnd="8dp"
+                android:paddingBottom="3dp"
+                android:textColor="@color/brand_emerald"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                tools:text="PREPARING" />
+
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tvKitchenCustomer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:textColor="@color/brand_muted"
+            android:textSize="12sp"
+            tools:text="Customer: Rahul Sen (Walk-In Takeaway)" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="10dp"
+            android:layout_marginBottom="10dp"
+            android:background="@color/brand_line" />
+
+        <!-- Dishes to Cook -->
+        <TextView
+            android:id="@+id/tvKitchenItemsList"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:lineSpacingExtra="3dp"
+            android:textColor="@color/brand_ink"
+            android:textSize="14sp"
+            tools:text="• 2× Chicken Tikka Roll (Spicy, Extra Mayo)\n• 1× Galouti Kebab (4 pcs)\n• 1× Tandoori Roti" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="12dp"
+            android:layout_marginBottom="12dp"
+            android:background="@color/brand_line" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/tvKitchenElapsedTime"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textColor="@color/brand_muted"
+                android:textSize="12sp"
+                tools:text="Fired 8 mins ago" />
+
+            <!-- Mark Ready & Print Button -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnKitchenMarkReady"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:backgroundTint="@color/brand_emerald"
+                android:fontFamily="@font/manrope"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:text="Ready for Pass"
+                android:textColor="@color/white"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                app:cornerRadius="8dp" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</com.google.android.material.card.MaterialCardView>
