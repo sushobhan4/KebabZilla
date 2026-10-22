@@ -12,10 +12,40 @@
         android:orientation="vertical"
         android:padding="16dp">
 
-        <!-- Timeframe Selector Tabs -->
+        <!-- Eyebrow & Title Banner -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="@font/manrope"
+            android:letterSpacing="0.08"
+            android:text="NUMBERS WITH A LITTLE MORE FLAVOR"
+            android:textColor="@color/brand_red"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:fontFamily="@font/manrope"
+            android:text="Sales reports"
+            android:textColor="@color/brand_ink"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:text="A clear picture of sales, order volume and what people are loving."
+            android:textColor="@color/brand_muted"
+            android:textSize="12sp" />
+
+        <!-- Timeframe Selector Tabs (Today, Week, Month, Year) -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="40dp"
+            android:layout_marginTop="14dp"
             android:background="@drawable/bg_pill_white"
             android:orientation="horizontal"
             android:padding="3dp">
@@ -40,7 +70,7 @@
                 android:layout_weight="1"
                 android:fontFamily="@font/manrope"
                 android:gravity="center"
-                android:text="7 Days"
+                android:text="This Week"
                 android:textColor="@color/brand_muted"
                 android:textSize="12sp" />
 
@@ -51,68 +81,29 @@
                 android:layout_weight="1"
                 android:fontFamily="@font/manrope"
                 android:gravity="center"
-                android:text="Month"
+                android:text="This Month"
+                android:textColor="@color/brand_muted"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/btnPeriodYear"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:fontFamily="@font/manrope"
+                android:gravity="center"
+                android:text="This Year"
                 android:textColor="@color/brand_muted"
                 android:textSize="12sp" />
 
         </LinearLayout>
 
-        <!-- Revenue Card -->
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            app:cardBackgroundColor="@color/brand_paper_card"
-            app:cardCornerRadius="16dp"
-            app:cardElevation="1dp"
-            app:strokeColor="@color/brand_line"
-            app:strokeWidth="1dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="18dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:fontFamily="@font/manrope"
-                    android:letterSpacing="0.06"
-                    android:text="NET REVENUE COLLECTED"
-                    android:textColor="@color/brand_muted"
-                    android:textSize="11sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/tvReportRevenue"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:fontFamily="@font/manrope"
-                    android:textColor="@color/brand_ink"
-                    android:textSize="30sp"
-                    android:textStyle="bold"
-                    tools:text="₹18,450" />
-
-                <TextView
-                    android:id="@+id/tvReportPaidOrders"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:text="From 32 settled customer orders"
-                    android:textColor="@color/brand_muted"
-                    android:textSize="13sp" />
-
-            </LinearLayout>
-
-        </com.google.android.material.card.MaterialCardView>
-
-        <!-- Financial Breakdown Cards -->
+        <!-- 4-Card Hero Stat Grid -->
+        <!-- Row 1: Primary Revenue Card & Paid Orders Card -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
+            android:layout_marginTop="14dp"
             android:orientation="horizontal">
 
             <com.google.android.material.card.MaterialCardView
@@ -120,43 +111,46 @@
                 android:layout_height="wrap_content"
                 android:layout_marginEnd="6dp"
                 android:layout_weight="1"
-                app:cardBackgroundColor="@color/brand_paper_card"
-                app:cardCornerRadius="14dp"
-                app:cardElevation="1dp"
-                app:strokeColor="@color/brand_line"
-                app:strokeWidth="1dp">
+                app:cardBackgroundColor="@color/brand_red"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="2dp">
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
-                    android:padding="14dp">
+                    android:padding="16dp">
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="GST Liability (5%)"
-                        android:textColor="@color/brand_muted"
-                        android:textSize="12sp" />
+                        android:fontFamily="@font/manrope"
+                        android:letterSpacing="0.06"
+                        android:text="PAID REVENUE"
+                        android:textColor="#FEE2E2"
+                        android:textSize="10sp"
+                        android:textStyle="bold" />
 
                     <TextView
-                        android:id="@+id/tvReportGst"
+                        android:id="@+id/tvReportRevenue"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="2dp"
                         android:fontFamily="@font/manrope"
-                        android:textColor="@color/brand_ink"
-                        android:textSize="18sp"
+                        android:textColor="@color/white"
+                        android:textSize="22sp"
                         android:textStyle="bold"
-                        tools:text="₹878" />
+                        tools:text="₹18,450" />
 
                     <TextView
+                        android:id="@+id/tvReportRevenuePeriod"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="2dp"
-                        android:text="CGST 2.5% + SGST 2.5%"
-                        android:textColor="@color/brand_muted"
-                        android:textSize="10sp" />
+                        android:layout_marginTop="4dp"
+                        android:text="For this period ↗"
+                        android:textColor="#FEE2E2"
+                        android:textSize="11sp" />
+
                 </LinearLayout>
 
             </com.google.android.material.card.MaterialCardView>
@@ -167,7 +161,7 @@
                 android:layout_marginStart="6dp"
                 android:layout_weight="1"
                 app:cardBackgroundColor="@color/brand_paper_card"
-                app:cardCornerRadius="14dp"
+                app:cardCornerRadius="16dp"
                 app:cardElevation="1dp"
                 app:strokeColor="@color/brand_line"
                 app:strokeWidth="1dp">
@@ -176,14 +170,77 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
-                    android:padding="14dp">
+                    android:padding="16dp">
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Average Ticket"
+                        android:fontFamily="@font/manrope"
+                        android:letterSpacing="0.06"
+                        android:text="PAID ORDERS"
                         android:textColor="@color/brand_muted"
-                        android:textSize="12sp" />
+                        android:textSize="10sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tvReportPaidOrdersCount"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:fontFamily="@font/manrope"
+                        android:textColor="@color/brand_ink"
+                        android:textSize="22sp"
+                        android:textStyle="bold"
+                        tools:text="32" />
+
+                    <TextView
+                        android:id="@+id/tvReportPaidOrdersSubtext"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="36 placed in this period"
+                        android:textColor="@color/brand_muted"
+                        android:textSize="11sp" />
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+        </LinearLayout>
+
+        <!-- Row 2: Average Order & Payment Success % -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:orientation="horizontal">
+
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="6dp"
+                android:layout_weight="1"
+                app:cardBackgroundColor="@color/brand_paper_card"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="1dp"
+                app:strokeColor="@color/brand_line"
+                app:strokeWidth="1dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/manrope"
+                        android:letterSpacing="0.06"
+                        android:text="AVERAGE TICKET"
+                        android:textColor="@color/brand_muted"
+                        android:textSize="10sp"
+                        android:textStyle="bold" />
 
                     <TextView
                         android:id="@+id/tvReportAov"
@@ -192,28 +249,90 @@
                         android:layout_marginTop="2dp"
                         android:fontFamily="@font/manrope"
                         android:textColor="@color/brand_ink"
-                        android:textSize="18sp"
+                        android:textSize="22sp"
                         android:textStyle="bold"
                         tools:text="₹576" />
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="2dp"
-                        android:text="Per transaction"
+                        android:layout_marginTop="4dp"
+                        android:text="Paid orders average"
                         android:textColor="@color/brand_muted"
-                        android:textSize="10sp" />
+                        android:textSize="11sp" />
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:layout_weight="1"
+                app:cardBackgroundColor="@color/brand_paper_card"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="1dp"
+                app:strokeColor="@color/brand_line"
+                app:strokeWidth="1dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/manrope"
+                        android:letterSpacing="0.06"
+                        android:text="PAYMENT SUCCESS"
+                        android:textColor="@color/brand_muted"
+                        android:textSize="10sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tvReportSuccessRate"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:fontFamily="@font/manrope"
+                        android:textColor="@color/brand_emerald"
+                        android:textSize="22sp"
+                        android:textStyle="bold"
+                        tools:text="89%" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="Payments marked paid"
+                        android:textColor="@color/brand_muted"
+                        android:textSize="11sp" />
+
                 </LinearLayout>
 
             </com.google.android.material.card.MaterialCardView>
 
         </LinearLayout>
 
-        <!-- Payment Settlement Split -->
+        <!-- Fulfillment Channels (Delivery vs Dine-in/POS) -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="22dp"
+            android:fontFamily="@font/manrope"
+            android:letterSpacing="0.06"
+            android:text="FULFILLMENT CHANNELS"
+            android:textColor="@color/brand_muted"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
+            android:layout_marginTop="8dp"
             app:cardBackgroundColor="@color/brand_paper_card"
             app:cardCornerRadius="14dp"
             app:cardElevation="1dp"
@@ -226,26 +345,109 @@
                 android:orientation="vertical"
                 android:padding="16dp">
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:fontFamily="@font/manrope"
-                    android:text="Payment Channel Reconciliation"
-                    android:textColor="@color/brand_ink"
-                    android:textSize="14sp"
-                    android:textStyle="bold" />
-
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
+                    android:gravity="center_vertical"
                     android:orientation="horizontal">
 
                     <TextView
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="Razorpay Online UPI/Cards"
+                        android:text="🛵 Home Delivery"
+                        android:textColor="@color/brand_ink"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tvReportDeliveryOrders"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/manrope"
+                        android:textColor="@color/brand_ink"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        tools:text="24 orders · ₹14,200" />
+
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="10dp"
+                    android:layout_marginBottom="10dp"
+                    android:background="@color/brand_line" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="🍽 Walk-In POS / Dine-In"
+                        android:textColor="@color/brand_ink"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tvReportWalkInOrders"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/manrope"
+                        android:textColor="@color/brand_ink"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        tools:text="8 orders · ₹4,250" />
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Payment Settlement Split -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:fontFamily="@font/manrope"
+            android:letterSpacing="0.06"
+            android:text="PAYMENT METHOD RECONCILIATION"
+            android:textColor="@color/brand_muted"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            app:cardBackgroundColor="@color/brand_paper_card"
+            app:cardCornerRadius="14dp"
+            app:cardElevation="1dp"
+            app:strokeColor="@color/brand_line"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Razorpay Online UPI / Cards"
                         android:textColor="@color/brand_muted"
                         android:textSize="13sp" />
 
@@ -287,9 +489,79 @@
 
                 </LinearLayout>
 
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="10dp"
+                    android:layout_marginBottom="10dp"
+                    android:background="@color/brand_line" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="GST Liability (5% CGST+SGST)"
+                        android:textColor="@color/brand_muted"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:id="@+id/tvReportGst"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/manrope"
+                        android:textColor="@color/brand_ink"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        tools:text="₹878" />
+
+                </LinearLayout>
+
             </LinearLayout>
 
         </com.google.android.material.card.MaterialCardView>
+
+        <!-- Order Status Pipeline Breakdown -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:fontFamily="@font/manrope"
+            android:letterSpacing="0.06"
+            android:text="IN THE FLOW · ORDER STATUSES"
+            android:textColor="@color/brand_muted"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:id="@+id/layoutReportStatuses"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="vertical" />
+
+        <!-- Guest Favorites / Top Sellers -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:fontFamily="@font/manrope"
+            android:letterSpacing="0.06"
+            android:text="GUEST FAVORITES · TOP SELLERS"
+            android:textColor="@color/brand_muted"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:id="@+id/layoutReportTopSellers"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="vertical" />
 
     </LinearLayout>
 

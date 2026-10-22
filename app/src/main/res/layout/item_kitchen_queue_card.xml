@@ -99,6 +99,26 @@
                 android:textSize="12sp"
                 tools:text="Fired 8 mins ago" />
 
+            <!-- View Ticket Button -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnKitchenViewTicket"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:layout_marginEnd="6dp"
+                android:backgroundTint="@color/brand_paper"
+                android:fontFamily="@font/manrope"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:text="Ticket"
+                android:textColor="@color/brand_ink"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                app:cornerRadius="8dp"
+                app:strokeColor="@color/brand_line"
+                app:strokeWidth="1dp" />
+
             <!-- Mark Ready & Print Button -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnKitchenMarkReady"

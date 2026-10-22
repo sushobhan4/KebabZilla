@@ -90,7 +90,7 @@
         </LinearLayout>
 
         <!-- Stock Switch (Available vs 86/Paused) -->
-        <com.google.android.material.materialswitch.MaterialSwitch
+        <androidx.appcompat.widget.SwitchCompat
             android:id="@+id/switchMenuItemStock"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -99,3 +99,4 @@
     </LinearLayout>
 
 </com.google.android.material.card.MaterialCardView>
+

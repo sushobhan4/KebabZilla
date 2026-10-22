@@ -4,6 +4,8 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@color/brand_paper"
+    android:clipToPadding="false"
     android:fillViewport="true">
 
     <LinearLayout
@@ -12,106 +14,126 @@
         android:orientation="vertical"
         android:padding="16dp">
 
-        <!-- Revenue Highlight Card -->
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            app:cardBackgroundColor="@color/brand_red"
-            app:cardCornerRadius="18dp"
-            app:cardElevation="2dp">
+        <!-- ======================================================== -->
+        <!-- TOP KPI STATS GRID (5 Cards matching Web Console)       -->
+        <!-- ======================================================== -->
 
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="20dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:fontFamily="@font/manrope"
-                    android:letterSpacing="0.08"
-                    android:text="TODAY'S GROSS REVENUE"
-                    android:textColor="#FEE2E2"
-                    android:textSize="11sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/tvOverviewRevenue"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:fontFamily="@font/manrope"
-                    android:textColor="@color/white"
-                    android:textSize="32sp"
-                    android:textStyle="bold"
-                    tools:text="₹18,450" />
-
-                <TextView
-                    android:id="@+id/tvOverviewOrdersSummary"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
-                    android:text="32 paid orders · Average ₹576 per order"
-                    android:textColor="#FEE2E2"
-                    android:textSize="13sp" />
-
-            </LinearLayout>
-
-        </com.google.android.material.card.MaterialCardView>
-
-        <!-- 2-Column Quick Metrics Grid -->
+        <!-- Row 1: Paid Revenue (Dark Card) & Orders Succeeded (White Card) -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
             android:orientation="horizontal">
 
+            <!-- Card 1: Paid Revenue (Dark Slate / Charcoal) -->
             <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardOverviewRevenue"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginEnd="6dp"
                 android:layout_weight="1"
-                app:cardBackgroundColor="@color/brand_paper_card"
-                app:cardCornerRadius="14dp"
-                app:cardElevation="1dp"
-                app:strokeColor="@color/brand_line"
+                app:cardBackgroundColor="#1F2927"
+                app:cardCornerRadius="18dp"
+                app:cardElevation="2dp"
+                app:strokeColor="#2C3B37"
                 app:strokeWidth="1dp">
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
-                    android:padding="14dp">
+                    android:padding="16dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <FrameLayout
+                            android:layout_width="32dp"
+                            android:layout_height="32dp"
+                            android:background="@drawable/bg_avatar_circle"
+                            android:backgroundTint="#2C3B37">
+
+                            <ImageView
+                                android:layout_width="16dp"
+                                android:layout_height="16dp"
+                                android:layout_gravity="center"
+                                android:src="@drawable/ic_circle_rupee"
+                                app:tint="#86EFAC" />
+                        </FrameLayout>
+
+                        <View
+                            android:layout_width="0dp"
+                            android:layout_height="1dp"
+                            android:layout_weight="1" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="@font/manrope"
+                            android:letterSpacing="0.06"
+                            android:text="THIS WEEK"
+                            android:textColor="#A3B8B0"
+                            android:textSize="10sp"
+                            android:textStyle="bold" />
+
+                    </LinearLayout>
 
                     <TextView
+                        android:id="@+id/tvOverviewRevenue"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Total Orders"
-                        android:textColor="@color/brand_muted"
-                        android:textSize="12sp" />
-
-                    <TextView
-                        android:id="@+id/tvOverviewTotalOrders"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="2dp"
+                        android:layout_marginTop="12dp"
                         android:fontFamily="@font/manrope"
-                        android:textColor="@color/brand_ink"
-                        android:textSize="22sp"
+                        android:textColor="@color/white"
+                        android:textSize="24sp"
                         android:textStyle="bold"
-                        tools:text="36" />
+                        tools:text="₹2,776" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Paid revenue"
+                            android:textColor="#A3B8B0"
+                            android:textSize="11sp" />
+
+                        <TextView
+                            android:id="@+id/tvOverviewRevenueSalesKicker"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="@font/manrope"
+                            android:text="↗ Sales"
+                            android:textColor="#86EFAC"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            tools:text="71 Sales" />
+
+                    </LinearLayout>
+
                 </LinearLayout>
 
             </com.google.android.material.card.MaterialCardView>
 
+            <!-- Card 2: Orders Succeeded (White Card) -->
             <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardOverviewOrders"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="6dp"
                 android:layout_weight="1"
-                app:cardBackgroundColor="@color/brand_paper_card"
-                app:cardCornerRadius="14dp"
+                android:clickable="true"
+                android:focusable="true"
+                app:cardBackgroundColor="@color/white"
+                app:cardCornerRadius="18dp"
                 app:cardElevation="1dp"
                 app:strokeColor="@color/brand_line"
                 app:strokeWidth="1dp">
@@ -120,68 +142,962 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
-                    android:padding="14dp">
+                    android:padding="16dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <FrameLayout
+                            android:layout_width="32dp"
+                            android:layout_height="32dp"
+                            android:background="@drawable/bg_avatar_circle"
+                            android:backgroundTint="#FEE2E2">
+
+                            <ImageView
+                                android:layout_width="16dp"
+                                android:layout_height="16dp"
+                                android:layout_gravity="center"
+                                android:src="@drawable/ic_shopping_bag"
+                                app:tint="@color/brand_red" />
+                        </FrameLayout>
+
+                        <View
+                            android:layout_width="0dp"
+                            android:layout_height="1dp"
+                            android:layout_weight="1" />
+
+                        <FrameLayout
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:background="@drawable/bg_avatar_circle"
+                            android:backgroundTint="#F3F4F6">
+
+                            <ImageView
+                                android:layout_width="12dp"
+                                android:layout_height="12dp"
+                                android:layout_gravity="center"
+                                android:src="@drawable/ic_chevron_right"
+                                app:tint="@color/brand_muted" />
+                        </FrameLayout>
+
+                    </LinearLayout>
 
                     <TextView
+                        android:id="@+id/tvOverviewOrdersCount"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Online vs Cash"
-                        android:textColor="@color/brand_muted"
-                        android:textSize="12sp" />
-
-                    <TextView
-                        android:id="@+id/tvOverviewPaymentSplit"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="2dp"
+                        android:layout_marginTop="12dp"
                         android:fontFamily="@font/manrope"
                         android:textColor="@color/brand_ink"
-                        android:textSize="22sp"
+                        android:textSize="24sp"
                         android:textStyle="bold"
-                        tools:text="28 / 8" />
+                        tools:text="38" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Orders succeeded"
+                            android:textColor="@color/brand_muted"
+                            android:textSize="11sp" />
+
+                        <TextView
+                            android:id="@+id/tvOverviewActiveOrdersCount"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="@font/manrope"
+                            android:textColor="@color/brand_ink"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            tools:text="0 active now" />
+
+                    </LinearLayout>
+
                 </LinearLayout>
 
             </com.google.android.material.card.MaterialCardView>
 
         </LinearLayout>
 
-        <!-- Live Order Status Breakdown -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:fontFamily="@font/manrope"
-            android:letterSpacing="0.06"
-            android:text="STATUS PIPELINE"
-            android:textColor="@color/brand_muted"
-            android:textSize="11sp"
-            android:textStyle="bold" />
-
+        <!-- Row 2: Active Accounts & Out With A Rider -->
         <LinearLayout
-            android:id="@+id/layoutOverviewStatuses"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:orientation="vertical" />
+            android:layout_marginTop="12dp"
+            android:orientation="horizontal">
 
-        <!-- Top Selling Items -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:fontFamily="@font/manrope"
-            android:letterSpacing="0.06"
-            android:text="TOP COOKING TODAY"
-            android:textColor="@color/brand_muted"
-            android:textSize="11sp"
-            android:textStyle="bold" />
+            <!-- Card 3: Active Accounts -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardOverviewAccounts"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="6dp"
+                android:layout_weight="1"
+                android:clickable="true"
+                android:focusable="true"
+                app:cardBackgroundColor="@color/white"
+                app:cardCornerRadius="18dp"
+                app:cardElevation="1dp"
+                app:strokeColor="@color/brand_line"
+                app:strokeWidth="1dp">
 
-        <LinearLayout
-            android:id="@+id/layoutOverviewTopItems"
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <FrameLayout
+                            android:layout_width="32dp"
+                            android:layout_height="32dp"
+                            android:background="@drawable/bg_avatar_circle"
+                            android:backgroundTint="#DCFCE7">
+
+                            <ImageView
+                                android:layout_width="16dp"
+                                android:layout_height="16dp"
+                                android:layout_gravity="center"
+                                android:src="@drawable/ic_people"
+                                app:tint="#16A34A" />
+                        </FrameLayout>
+
+                        <View
+                            android:layout_width="0dp"
+                            android:layout_height="1dp"
+                            android:layout_weight="1" />
+
+                        <FrameLayout
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:background="@drawable/bg_avatar_circle"
+                            android:backgroundTint="#F3F4F6">
+
+                            <ImageView
+                                android:layout_width="12dp"
+                                android:layout_height="12dp"
+                                android:layout_gravity="center"
+                                android:src="@drawable/ic_arrow_up_right"
+                                app:tint="@color/brand_muted" />
+                        </FrameLayout>
+
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/tvOverviewAccountsCount"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:fontFamily="@font/manrope"
+                        android:textColor="@color/brand_ink"
+                        android:textSize="24sp"
+                        android:textStyle="bold"
+                        tools:text="7" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Active accounts"
+                            android:textColor="@color/brand_muted"
+                            android:textSize="11sp" />
+
+                        <TextView
+                            android:id="@+id/tvOverviewEmployeesCount"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="@font/manrope"
+                            android:textColor="@color/brand_ink"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            tools:text="0 employees" />
+
+                    </LinearLayout>
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Card 4: Out With A Rider -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardOverviewRider"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:layout_weight="1"
+                android:clickable="true"
+                android:focusable="true"
+                app:cardBackgroundColor="@color/white"
+                app:cardCornerRadius="18dp"
+                app:cardElevation="1dp"
+                app:strokeColor="@color/brand_line"
+                app:strokeWidth="1dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <FrameLayout
+                            android:layout_width="32dp"
+                            android:layout_height="32dp"
+                            android:background="@drawable/bg_avatar_circle"
+                            android:backgroundTint="#FEF3C7">
+
+                            <ImageView
+                                android:layout_width="16dp"
+                                android:layout_height="16dp"
+                                android:layout_gravity="center"
+                                android:src="@drawable/ic_delivery"
+                                app:tint="#D97706" />
+                        </FrameLayout>
+
+                        <View
+                            android:layout_width="0dp"
+                            android:layout_height="1dp"
+                            android:layout_weight="1" />
+
+                        <FrameLayout
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:background="@drawable/bg_avatar_circle"
+                            android:backgroundTint="#F3F4F6">
+
+                            <ImageView
+                                android:layout_width="12dp"
+                                android:layout_height="12dp"
+                                android:layout_gravity="center"
+                                android:src="@drawable/ic_arrow_up_right"
+                                app:tint="@color/brand_muted" />
+                        </FrameLayout>
+
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/tvOverviewRiderOrdersCount"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:fontFamily="@font/manrope"
+                        android:textColor="@color/brand_ink"
+                        android:textSize="24sp"
+                        android:textStyle="bold"
+                        tools:text="0" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Out with a rider"
+                            android:textColor="@color/brand_muted"
+                            android:textSize="11sp" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="@font/manrope"
+                            android:text="Being delivered"
+                            android:textColor="#16A34A"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
+
+                    </LinearLayout>
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+        </LinearLayout>
+
+        <!-- Row 3: Available Drivers (Full Width Card) -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardOverviewDrivers"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:orientation="vertical" />
+            android:layout_marginTop="12dp"
+            android:clickable="true"
+            android:focusable="true"
+            app:cardBackgroundColor="@color/white"
+            app:cardCornerRadius="18dp"
+            app:cardElevation="1dp"
+            app:strokeColor="@color/brand_line"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <FrameLayout
+                        android:layout_width="32dp"
+                        android:layout_height="32dp"
+                        android:background="@drawable/bg_avatar_circle"
+                        android:backgroundTint="#E0F2FE">
+
+                        <ImageView
+                            android:layout_width="16dp"
+                            android:layout_height="16dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_badge_driver"
+                            app:tint="#0284C7" />
+                    </FrameLayout>
+
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="1dp"
+                        android:layout_weight="1" />
+
+                    <FrameLayout
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:background="@drawable/bg_avatar_circle"
+                        android:backgroundTint="#F3F4F6">
+
+                        <ImageView
+                            android:layout_width="12dp"
+                            android:layout_height="12dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_chevron_right"
+                            app:tint="@color/brand_muted" />
+                    </FrameLayout>
+
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvOverviewAvailableDriversCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:fontFamily="@font/manrope"
+                    android:textColor="@color/brand_ink"
+                    android:textSize="24sp"
+                    android:textStyle="bold"
+                    tools:text="0" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Available drivers"
+                        android:textColor="@color/brand_muted"
+                        android:textSize="11sp" />
+
+                    <TextView
+                        android:id="@+id/tvOverviewDriversReadySubtext"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/manrope"
+                        android:textColor="@color/brand_ink"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        tools:text="0 drivers ready" />
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- ======================================================== -->
+        <!-- SECTION 2: SALES AT A GLANCE (Bar Chart)                 -->
+        <!-- ======================================================== -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardOverviewSalesGlance"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            app:cardBackgroundColor="@color/white"
+            app:cardCornerRadius="18dp"
+            app:cardElevation="1dp"
+            app:strokeColor="@color/brand_line"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="18dp">
+
+                <!-- Heading Row -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="@font/manrope"
+                            android:letterSpacing="0.08"
+                            android:text="THE WEEK SO FAR"
+                            android:textColor="@color/brand_red"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:fontFamily="@font/manrope"
+                            android:text="Sales at a glance"
+                            android:textColor="@color/brand_ink"
+                            android:textSize="18sp"
+                            android:textStyle="bold" />
+
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/btnOverviewFullReport"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:fontFamily="@font/manrope"
+                        android:text="Full report ↗"
+                        android:textColor="@color/brand_red"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+
+                </LinearLayout>
+
+                <!-- Dynamic Histogram Chart Container -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="140dp"
+                    android:layout_marginTop="18dp"
+                    android:orientation="horizontal">
+
+                    <!-- Y-Axis Labels Column -->
+                    <LinearLayout
+                        android:layout_width="52dp"
+                        android:layout_height="115dp"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/tvChartAxisMax"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textColor="@color/brand_muted"
+                            android:textSize="10sp"
+                            tools:text="₹2,400" />
+
+                        <View
+                            android:layout_width="1dp"
+                            android:layout_height="0dp"
+                            android:layout_weight="1" />
+
+                        <TextView
+                            android:id="@+id/tvChartAxisMid"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textColor="@color/brand_muted"
+                            android:textSize="10sp"
+                            tools:text="₹1,200" />
+
+                        <View
+                            android:layout_width="1dp"
+                            android:layout_height="0dp"
+                            android:layout_weight="1" />
+
+                        <TextView
+                            android:id="@+id/tvChartAxisZero"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="₹0"
+                            android:textColor="@color/brand_muted"
+                            android:textSize="10sp" />
+
+                    </LinearLayout>
+
+                    <!-- Chart Grid and Dynamic Bars Row -->
+                    <HorizontalScrollView
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:fillViewport="true"
+                        android:scrollbars="none">
+
+                        <LinearLayout
+                            android:id="@+id/layoutChartBarsContainer"
+                            android:layout_width="wrap_content"
+                            android:layout_height="match_parent"
+                            android:gravity="bottom"
+                            android:orientation="horizontal"
+                            android:paddingStart="8dp"
+                            android:paddingEnd="8dp" />
+
+                    </HorizontalScrollView>
+
+                </LinearLayout>
+
+                <!-- Divider & Footer Summary -->
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="14dp"
+                    android:layout_marginBottom="12dp"
+                    android:background="@color/brand_line" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <View
+                        android:layout_width="8dp"
+                        android:layout_height="8dp"
+                        android:background="@drawable/bg_avatar_circle"
+                        android:backgroundTint="@color/brand_red" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:text="Paid sales"
+                        android:textColor="@color/brand_ink"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tvOverviewAvgPaidOrder"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/manrope"
+                        android:textColor="@color/brand_ink"
+                        android:textSize="14sp"
+                        android:textStyle="bold"
+                        tools:text="₹252.36" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text=" avg. paid order"
+                        android:textColor="@color/brand_muted"
+                        android:textSize="11sp" />
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- ======================================================== -->
+        <!-- SECTION 3: TOP OF THE GRILL (Ranked Dishes)              -->
+        <!-- ======================================================== -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardOverviewTopGrill"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            app:cardBackgroundColor="@color/white"
+            app:cardCornerRadius="18dp"
+            app:cardElevation="1dp"
+            app:strokeColor="@color/brand_line"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="18dp">
+
+                <!-- Heading Row with Flame Icon -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="@font/manrope"
+                            android:letterSpacing="0.08"
+                            android:text="PEOPLE KEEP COMING BACK FOR"
+                            android:textColor="@color/brand_red"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:fontFamily="@font/manrope"
+                            android:text="Top of the grill"
+                            android:textColor="@color/brand_ink"
+                            android:textSize="18sp"
+                            android:textStyle="bold" />
+
+                    </LinearLayout>
+
+                    <FrameLayout
+                        android:layout_width="32dp"
+                        android:layout_height="32dp"
+                        android:background="@drawable/bg_avatar_circle"
+                        android:backgroundTint="#FEE2E2">
+
+                        <ImageView
+                            android:layout_width="16dp"
+                            android:layout_height="16dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_flame"
+                            app:tint="@color/brand_red" />
+                    </FrameLayout>
+
+                </LinearLayout>
+
+                <!-- Top Dishes List Container -->
+                <LinearLayout
+                    android:id="@+id/layoutOverviewTopDishesList"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:orientation="vertical" />
+
+                <TextView
+                    android:id="@+id/tvOverviewTopDishesEmpty"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:layout_marginBottom="16dp"
+                    android:gravity="center"
+                    android:text="Waiting for the first orders\nMenu favorites will show up here."
+                    android:textColor="@color/brand_muted"
+                    android:textSize="12sp"
+                    android:visibility="gone" />
+
+                <!-- Manage the menu link -->
+                <LinearLayout
+                    android:id="@+id/btnOverviewManageMenu"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_horizontal"
+                    android:layout_marginTop="16dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:padding="6dp">
+
+                    <ImageView
+                        android:layout_width="16dp"
+                        android:layout_height="16dp"
+                        android:src="@drawable/ic_cooking_pot"
+                        app:tint="@color/brand_red" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="6dp"
+                        android:fontFamily="@font/manrope"
+                        android:text="Manage the menu ↗"
+                        android:textColor="@color/brand_red"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- ======================================================== -->
+        <!-- SECTION 4: RECENT ORDERS (Latest from the Pass)         -->
+        <!-- ======================================================== -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardOverviewRecentOrders"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            app:cardBackgroundColor="@color/white"
+            app:cardCornerRadius="18dp"
+            app:cardElevation="1dp"
+            app:strokeColor="@color/brand_line"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="18dp">
+
+                <!-- Heading Row -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="@font/manrope"
+                            android:letterSpacing="0.08"
+                            android:text="THE LATEST FROM THE PASS"
+                            android:textColor="@color/brand_red"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:fontFamily="@font/manrope"
+                            android:text="Recent orders"
+                            android:textColor="@color/brand_ink"
+                            android:textSize="18sp"
+                            android:textStyle="bold" />
+
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/btnOverviewSeeAllOrders"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:fontFamily="@font/manrope"
+                        android:text="See all orders ↗"
+                        android:textColor="@color/brand_red"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+
+                </LinearLayout>
+
+                <!-- Table Column Headers -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:orientation="horizontal"
+                    android:paddingBottom="6dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1.1"
+                        android:fontFamily="@font/manrope"
+                        android:letterSpacing="0.06"
+                        android:text="ORDER"
+                        android:textColor="@color/brand_muted"
+                        android:textSize="10sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1.3"
+                        android:fontFamily="@font/manrope"
+                        android:letterSpacing="0.06"
+                        android:text="GUEST"
+                        android:textColor="@color/brand_muted"
+                        android:textSize="10sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1.6"
+                        android:fontFamily="@font/manrope"
+                        android:letterSpacing="0.06"
+                        android:text="WHEN"
+                        android:textColor="@color/brand_muted"
+                        android:textSize="10sp"
+                        android:textStyle="bold" />
+
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/brand_line" />
+
+                <!-- Recent Orders Table Rows -->
+                <LinearLayout
+                    android:id="@+id/layoutOverviewRecentOrdersList"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <TextView
+                    android:id="@+id/tvOverviewRecentOrdersEmpty"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:layout_marginBottom="8dp"
+                    android:gravity="center"
+                    android:text="No orders yet · Once someone places an order, you'll find it here."
+                    android:textColor="@color/brand_muted"
+                    android:textSize="12sp"
+                    android:visibility="gone" />
+
+            </LinearLayout>
+
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- ======================================================== -->
+        <!-- SECTION 5: NOTIFICATIONS & EVENT LOG                     -->
+        <!-- ======================================================== -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardOverviewActivity"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:layout_marginBottom="12dp"
+            app:cardBackgroundColor="@color/white"
+            app:cardCornerRadius="18dp"
+            app:cardElevation="1dp"
+            app:strokeColor="@color/brand_line"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="18dp">
+
+                <!-- Heading Row -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="@font/manrope"
+                            android:letterSpacing="0.08"
+                            android:text="RESTAURANT ACTIVITY"
+                            android:textColor="@color/brand_red"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:fontFamily="@font/manrope"
+                            android:text="Notifications &amp; event log"
+                            android:textColor="@color/brand_ink"
+                            android:textSize="18sp"
+                            android:textStyle="bold" />
+
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/btnOverviewAllUpdates"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:fontFamily="@font/manrope"
+                        android:text="All updates ↗"
+                        android:textColor="@color/brand_red"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+
+                </LinearLayout>
+
+                <!-- Activity Events List Container -->
+                <LinearLayout
+                    android:id="@+id/layoutOverviewEventsList"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:orientation="vertical" />
+
+                <TextView
+                    android:id="@+id/tvOverviewEventsEmpty"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:layout_marginBottom="8dp"
+                    android:gravity="center"
+                    android:text="No recent activity logged."
+                    android:textColor="@color/brand_muted"
+                    android:textSize="12sp"
+                    android:visibility="gone" />
+
+            </LinearLayout>
+
+        </com.google.android.material.card.MaterialCardView>
 
     </LinearLayout>
 

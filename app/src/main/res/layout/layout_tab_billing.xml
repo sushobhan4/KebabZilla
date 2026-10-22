@@ -79,14 +79,37 @@
 
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- Search Dish Filter -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp">
+
+            <EditText
+                android:id="@+id/etPosDishSearch"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:background="@drawable/bg_input_field"
+                android:drawableStart="@drawable/ic_search"
+                android:drawablePadding="10dp"
+                android:drawableTint="@color/brand_muted"
+                android:hint="Search dish for counter register..."
+                android:inputType="text"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:textColor="@color/brand_ink"
+                android:textColorHint="@color/brand_muted"
+                android:textSize="13sp" />
+        </LinearLayout>
+
         <!-- Order Items Section -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
+            android:layout_marginTop="16dp"
             android:fontFamily="@font/manrope"
             android:letterSpacing="0.06"
-            android:text="TICKET ITEMS"
+            android:text="MENU ITEMS SELECTION"
             android:textColor="@color/brand_muted"
             android:textSize="11sp"
             android:textStyle="bold" />
@@ -143,18 +166,43 @@
 
                 </LinearLayout>
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnGeneratePosBill"
+                <LinearLayout
                     android:layout_width="match_parent"
-                    android:layout_height="50dp"
+                    android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
-                    android:backgroundTint="@color/brand_emerald"
-                    android:fontFamily="@font/manrope"
-                    android:text="Print Bill &amp; Send to Grill"
-                    android:textColor="@color/white"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    app:cornerRadius="10dp" />
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnPosClear"
+                        android:layout_width="0dp"
+                        android:layout_height="50dp"
+                        android:layout_marginEnd="6dp"
+                        android:layout_weight="1"
+                        android:backgroundTint="@color/brand_paper"
+                        android:fontFamily="@font/manrope"
+                        android:text="Clear"
+                        android:textColor="@color/brand_muted"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:cornerRadius="10dp"
+                        app:strokeColor="@color/brand_line"
+                        app:strokeWidth="1dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnGeneratePosBill"
+                        android:layout_width="0dp"
+                        android:layout_height="50dp"
+                        android:layout_marginStart="6dp"
+                        android:layout_weight="2"
+                        android:backgroundTint="@color/brand_emerald"
+                        android:fontFamily="@font/manrope"
+                        android:text="Place &amp; Print Bill"
+                        android:textColor="@color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:cornerRadius="10dp" />
+
+                </LinearLayout>
 
             </LinearLayout>
 

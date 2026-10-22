@@ -18,6 +18,7 @@ import com.kebabzilla.data.api.NetworkResult
 import com.kebabzilla.data.local.TokenManager
 import com.kebabzilla.databinding.FragmentWorkspaceBinding
 import com.kebabzilla.utils.Constants
+import com.kebabzilla.utils.CurrencyFormatter
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import java.util.Calendar
@@ -323,14 +324,18 @@ class WorkspaceFragment : Fragment() {
                 val menuDeferred = async { apiClient.getAllMenuItemsCombined() }
                 val accountsDeferred = async { apiClient.getAdminAccounts(true) }
                 val discountsDeferred = async { apiClient.getDiscounts() }
+                val settingsDeferred = async { apiClient.getAdminSettings() }
+                val salesDeferred = async { apiClient.getSalesReport("today") }
 
                 val ordersResult = ordersDeferred.await()
                 if (ordersResult is NetworkResult.Success) {
                     val orders = ordersResult.data
                     val activeCount = orders.count { it.status in listOf("PLACED", "ACCEPTED", "PREPARING", "READY") }
                     val grillCount = orders.count { it.status in listOf("ACCEPTED", "PREPARING") }
+                    val deliveryCount = orders.count { it.status in listOf("READY", "OUT_FOR_DELIVERY") }
                     updateTabBadge(WorkspaceTabAdapter.TAB_ORDER, "$activeCount Active")
                     updateTabBadge(WorkspaceTabAdapter.TAB_ORDER_QUEUE, "$grillCount Grill")
+                    updateTabBadge(WorkspaceTabAdapter.TAB_DELIVERY_QUEUE, "$deliveryCount Active")
                 }
 
                 val menuResult = menuDeferred.await()
@@ -347,6 +352,19 @@ class WorkspaceFragment : Fragment() {
                 if (discountsResult is NetworkResult.Success) {
                     val activeDiscounts = discountsResult.data.count { it.isActive }
                     updateTabBadge(WorkspaceTabAdapter.TAB_DISCOUNT, "$activeDiscounts Active")
+                }
+
+                val settingsResult = settingsDeferred.await()
+                if (settingsResult is NetworkResult.Success) {
+                    val statusText = if (settingsResult.data.isOpen) "Open" else "Closed"
+                    updateTabBadge(WorkspaceTabAdapter.TAB_SETTINGS, "Store #01 · $statusText")
+                }
+
+                val salesResult = salesDeferred.await()
+                if (salesResult is NetworkResult.Success) {
+                    val rev = CurrencyFormatter.formatPaise(salesResult.data.revenuePaise)
+                    updateTabBadge(WorkspaceTabAdapter.TAB_OVERVIEW, rev)
+                    updateTabBadge(WorkspaceTabAdapter.TAB_REPORTS, rev)
                 }
             } catch (_: Exception) {
             } finally {

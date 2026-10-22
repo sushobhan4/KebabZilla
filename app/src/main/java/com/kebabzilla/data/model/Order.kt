@@ -14,7 +14,9 @@ data class Order(
     val notes: String? = null,
     val deliveryOtp: String? = null,
     val createdAt: String? = null,
-    val items: List<OrderItem> = emptyList()
+    val items: List<OrderItem> = emptyList(),
+    val latitude: Double? = null,
+    val longitude: Double? = null
 ) {
     val isActive: Boolean
         get() = status in listOf("PLACED", "PREPARING", "READY", "OUT_FOR_DELIVERY")

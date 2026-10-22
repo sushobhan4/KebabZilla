@@ -1129,6 +1129,39 @@ class ApiClient(private val context: Context) {
                         }
                     }
 
+                    val orderTypesObj = obj.optJSONObject("order_types")
+                    var deliveryOrders = 0
+                    var deliveryRev = 0L
+                    var dineInOrders = 0
+                    var dineInRev = 0L
+                    if (orderTypesObj != null) {
+                        val deliv = orderTypesObj.optJSONObject("delivery")
+                        if (deliv != null) {
+                            deliveryOrders = deliv.optInt("orders", 0)
+                            deliveryRev = deliv.optLong("revenue_paise", 0L)
+                        }
+                        val dineIn = orderTypesObj.optJSONObject("dine_in")
+                        if (dineIn != null) {
+                            dineInOrders = dineIn.optInt("orders", 0)
+                            dineInRev = dineIn.optLong("revenue_paise", 0L)
+                        }
+                    }
+
+                    val seriesList = mutableListOf<SalesChartPoint>()
+                    val seriesArray = obj.optJSONArray("series")
+                    if (seriesArray != null) {
+                        for (i in 0 until seriesArray.length()) {
+                            val p = seriesArray.getJSONObject(i)
+                            seriesList.add(
+                                SalesChartPoint(
+                                    label = p.optString("label", ""),
+                                    revenuePaise = p.optLong("revenue_paise", 0L),
+                                    orders = p.optInt("orders", 0)
+                                )
+                            )
+                        }
+                    }
+
                     val report = SalesReport(
                         period = obj.optString("period", period),
                         revenuePaise = obj.optLong("revenue_paise", 0L),
@@ -1137,10 +1170,15 @@ class ApiClient(private val context: Context) {
                         averageOrderPaise = obj.optLong("average_order_paise", 0L),
                         statuses = statusMap,
                         topItems = topItemsList,
+                        series = seriesList,
                         cashOrders = cashOrders,
                         cashRevenuePaise = cashRev,
                         onlineOrders = onlineOrders,
-                        onlineRevenuePaise = onlineRev
+                        onlineRevenuePaise = onlineRev,
+                        deliveryOrders = deliveryOrders,
+                        deliveryRevenuePaise = deliveryRev,
+                        dineInOrders = dineInOrders,
+                        dineInRevenuePaise = dineInRev
                     )
                     NetworkResult.Success(report)
                 } else {
@@ -1182,6 +1220,51 @@ class ApiClient(private val context: Context) {
             }
         } catch (e: Exception) {
             NetworkResult.Error(e.localizedMessage ?: "Failed to connect for accounts")
+        }
+    }
+
+    suspend fun getAdminAccountsSummary(limit: Int = 5): NetworkResult<AdminAccountsSummary> = withContext(Dispatchers.IO) {
+        try {
+            executeRequest(path = "admin/accounts?limit=$limit", method = "GET").use { response ->
+                val body = response.body?.string() ?: ""
+                if (response.isSuccessful) {
+                    val obj = JSONObject(body)
+                    val itemsArray = obj.optJSONArray("items") ?: JSONArray()
+                    val accounts = mutableListOf<AdminAccount>()
+                    for (i in 0 until itemsArray.length()) {
+                        val accObj = itemsArray.getJSONObject(i)
+                        accounts.add(
+                            AdminAccount(
+                                id = accObj.optLong("id"),
+                                name = accObj.optString("name", "Staff Member"),
+                                email = accObj.optString("email"),
+                                phone = accObj.optString("phone").takeIf { it.isNotBlank() },
+                                role = accObj.optString("role", "STAFF"),
+                                createdAt = accObj.optString("created_at")
+                            )
+                        )
+                    }
+                    val roleCountsMap = mutableMapOf<String, Int>()
+                    val rcObj = obj.optJSONObject("role_counts")
+                    if (rcObj != null) {
+                        for (k in rcObj.keys()) {
+                            roleCountsMap[k] = rcObj.optInt(k, 0)
+                        }
+                    }
+                    NetworkResult.Success(
+                        AdminAccountsSummary(
+                            items = accounts,
+                            total = obj.optInt("total", accounts.size),
+                            roleCounts = roleCountsMap
+                        )
+                    )
+                } else {
+                    val errorDetail = parseErrorDetail(body, "Failed to load accounts summary", response.code)
+                    NetworkResult.Error(errorDetail, response.code)
+                }
+            }
+        } catch (e: Exception) {
+            NetworkResult.Error(e.localizedMessage ?: "Failed to connect for accounts summary")
         }
     }
 
@@ -1248,6 +1331,41 @@ class ApiClient(private val context: Context) {
             }
         } catch (e: Exception) {
             NetworkResult.Error(e.localizedMessage ?: "Failed to connect for admin orders")
+        }
+    }
+
+    suspend fun getAdminOrdersSummary(limit: Int = 5): NetworkResult<AdminOrdersSummary> = withContext(Dispatchers.IO) {
+        try {
+            executeRequest(path = "admin/orders?limit=$limit", method = "GET").use { response ->
+                val body = response.body?.string() ?: ""
+                if (response.isSuccessful) {
+                    val obj = JSONObject(body)
+                    val ordersArray = obj.optJSONArray("items") ?: JSONArray()
+                    val ordersList = mutableListOf<Order>()
+                    for (i in 0 until ordersArray.length()) {
+                        ordersList.add(parseOrderJson(ordersArray.getJSONObject(i)))
+                    }
+                    val statusCountsMap = mutableMapOf<String, Int>()
+                    val scObj = obj.optJSONObject("status_counts")
+                    if (scObj != null) {
+                        for (k in scObj.keys()) {
+                            statusCountsMap[k] = scObj.optInt(k, 0)
+                        }
+                    }
+                    NetworkResult.Success(
+                        AdminOrdersSummary(
+                            items = ordersList,
+                            total = obj.optInt("total", ordersList.size),
+                            statusCounts = statusCountsMap
+                        )
+                    )
+                } else {
+                    val errorDetail = parseErrorDetail(body, "Failed to load orders summary", response.code)
+                    NetworkResult.Error(errorDetail, response.code)
+                }
+            }
+        } catch (e: Exception) {
+            NetworkResult.Error(e.localizedMessage ?: "Failed to connect for orders summary")
         }
     }
 
@@ -1365,21 +1483,24 @@ class ApiClient(private val context: Context) {
 
     suspend fun toggleMenuPause(menuItemId: String, isPaused: Boolean, mode: String = "today"): NetworkResult<Unit> = withContext(Dispatchers.IO) {
         try {
-            val jsonBody = JSONObject().apply {
-                put("menu_item_id", menuItemId)
-                put("is_paused", isPaused)
-                put("mode", mode)
-            }
+            val isCustom = menuItemId.startsWith("custom-")
+            val cleanId = menuItemId.removePrefix("custom-")
+            val path = if (isCustom) "staff/custom-menu/$cleanId/pause" else "staff/menu/$cleanId/pause"
+            val method = if (isPaused) "POST" else "DELETE"
+            val body = if (isPaused) {
+                JSONObject().apply { put("mode", mode) }.toString().toRequestBody(jsonMediaType)
+            } else null
+
             executeRequest(
-                path = "staff/menu-pause",
-                method = "POST",
-                body = jsonBody.toString().toRequestBody(jsonMediaType)
+                path = path,
+                method = method,
+                body = body
             ).use { response ->
-                val body = response.body?.string() ?: ""
+                val resBody = response.body?.string() ?: ""
                 if (response.isSuccessful) {
                     NetworkResult.Success(Unit)
                 } else {
-                    val errorDetail = parseErrorDetail(body, "Failed to toggle item availability", response.code)
+                    val errorDetail = parseErrorDetail(resBody, "Failed to toggle item availability", response.code)
                     NetworkResult.Error(errorDetail, response.code)
                 }
             }
@@ -1393,7 +1514,11 @@ class ApiClient(private val context: Context) {
             executeRequest(path = "admin/events?limit=$limit", method = "GET").use { response ->
                 val body = response.body?.string() ?: ""
                 if (response.isSuccessful) {
-                    val array = JSONArray(body)
+                    val array = if (body.trim().startsWith("[")) {
+                        JSONArray(body)
+                    } else {
+                        JSONObject(body).optJSONArray("items") ?: JSONArray()
+                    }
                     val list = mutableListOf<AdminEvent>()
                     for (i in 0 until array.length()) {
                         val obj = array.getJSONObject(i)
@@ -1401,8 +1526,9 @@ class ApiClient(private val context: Context) {
                             AdminEvent(
                                 id = obj.optLong("id"),
                                 eventType = obj.optString("event_type", "AUDIT"),
-                                description = obj.optString("description", obj.optString("details", "Activity recorded")),
+                                description = obj.optString("message", obj.optString("description", obj.optString("details", "Activity recorded"))),
                                 actorEmail = obj.optString("actor_email").takeIf { it.isNotBlank() },
+                                actorName = obj.optString("actor_name", obj.optString("actor_email")).takeIf { it.isNotBlank() },
                                 createdAt = obj.optString("created_at")
                             )
                         )
@@ -1503,12 +1629,32 @@ class ApiClient(private val context: Context) {
         }
     }
 
-    suspend fun sendOfferBroadcast(title: String, message: String, channel: String = "EMAIL"): NetworkResult<Unit> = withContext(Dispatchers.IO) {
+    suspend fun sendOfferBroadcast(
+        subject: String,
+        message: String,
+        audience: String = "ALL",
+        channels: List<String> = listOf("EMAIL"),
+        headline: String? = null,
+        subheading: String? = null,
+        promoCode: String? = null,
+        discountHighlight: String? = null,
+        ctaText: String? = null,
+        ctaUrl: String? = null
+    ): NetworkResult<Unit> = withContext(Dispatchers.IO) {
         try {
             val jsonBody = JSONObject().apply {
-                put("title", title)
+                put("audience", audience)
+                val chanArr = JSONArray()
+                channels.forEach { chanArr.put(it) }
+                put("channels", chanArr)
+                put("subject", subject)
                 put("message", message)
-                put("channel", channel)
+                if (!headline.isNullOrBlank()) put("headline", headline)
+                if (!subheading.isNullOrBlank()) put("subheading", subheading)
+                if (!promoCode.isNullOrBlank()) put("promo_code", promoCode)
+                if (!discountHighlight.isNullOrBlank()) put("discount_highlight", discountHighlight)
+                if (!ctaText.isNullOrBlank()) put("cta_text", ctaText)
+                if (!ctaUrl.isNullOrBlank()) put("cta_url", ctaUrl)
             }
             executeRequest(
                 path = "admin/offers",
@@ -1537,13 +1683,24 @@ class ApiClient(private val context: Context) {
                     val list = mutableListOf<OfferLog>()
                     for (i in 0 until array.length()) {
                         val obj = array.getJSONObject(i)
+                        val subject = obj.optString("subject", obj.optString("title", "Broadcast Alert"))
+                        val channelsList = mutableListOf<String>()
+                        val chanArr = obj.optJSONArray("channels")
+                        if (chanArr != null) {
+                            for (c in 0 until chanArr.length()) {
+                                channelsList.add(chanArr.optString(c))
+                            }
+                        }
                         list.add(
                             OfferLog(
                                 id = obj.optLong("id"),
-                                title = obj.optString("title", "Broadcast Alert"),
+                                subject = subject,
                                 message = obj.optString("message", ""),
-                                channel = obj.optString("channel", "EMAIL"),
+                                audience = obj.optString("audience", "ALL"),
+                                channels = if (channelsList.isNotEmpty()) channelsList else listOf("EMAIL"),
                                 recipientCount = obj.optInt("recipient_count", 0),
+                                sentCount = obj.optInt("sent_count", 0),
+                                status = obj.optString("status", "QUEUED"),
                                 createdAt = obj.optString("created_at")
                             )
                         )
@@ -1559,6 +1716,29 @@ class ApiClient(private val context: Context) {
         }
     }
 
+    suspend fun updateDiscountActive(discountId: Long, isActive: Boolean): NetworkResult<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val jsonBody = JSONObject().apply {
+                put("is_active", isActive)
+            }
+            executeRequest(
+                path = "admin/discounts/$discountId",
+                method = "PUT",
+                body = jsonBody.toString().toRequestBody(jsonMediaType)
+            ).use { response ->
+                val body = response.body?.string() ?: ""
+                if (response.isSuccessful) {
+                    NetworkResult.Success(Unit)
+                } else {
+                    val errorDetail = parseErrorDetail(body, "Failed to update coupon status", response.code)
+                    NetworkResult.Error(errorDetail, response.code)
+                }
+            }
+        } catch (e: Exception) {
+            NetworkResult.Error(e.localizedMessage ?: "Failed to connect for discount update")
+        }
+    }
+
     suspend fun getAdminSettings(): NetworkResult<AdminRestaurantSettings> = withContext(Dispatchers.IO) {
         try {
             executeRequest(path = "admin/settings", method = "GET").use { response ->
@@ -1566,12 +1746,21 @@ class ApiClient(private val context: Context) {
                 if (response.isSuccessful) {
                     val obj = JSONObject(body)
                     val settings = AdminRestaurantSettings(
-                        isOpen = obj.optBoolean("is_open", true),
-                        isDeliveryEnabled = obj.optBoolean("is_delivery_enabled", true),
+                        isOpen = obj.optBoolean("is_open", obj.optBoolean("accepting_orders", true)),
+                        isDeliveryEnabled = obj.optBoolean("is_delivery_enabled", obj.optBoolean("is_delivery_open", true)),
+                        restaurantName = obj.optString("restaurant_name", "KebabZilla"),
+                        tagline = obj.optString("tagline", "Smoky Kebabs & Rolls"),
+                        address = obj.optString("address", "Kolkata, India"),
                         openTime = obj.optString("open_time", "11:00"),
                         closeTime = obj.optString("close_time", "23:00"),
                         phone = obj.optString("phone", "+91 9876543210"),
-                        deliveryRadiusKm = obj.optDouble("delivery_radius_km", 15.0)
+                        deliveryRadiusKm = obj.optDouble("delivery_radius_km", 15.0),
+                        freeDeliveryRadiusKm = obj.optDouble("free_delivery_radius_km", 2.0),
+                        freeDeliveryThresholdPaise = obj.optLong("free_delivery_threshold_paise", 29900L),
+                        deliveryFeePerKmPaise = obj.optLong("delivery_fee_per_km_paise", 1500L),
+                        minimumOrderPaise = obj.optLong("minimum_order_paise", 0L),
+                        orderCutoffMinutes = obj.optInt("order_cutoff_minutes_before_closing", 30),
+                        availableDriversReady = obj.optInt("available_drivers_ready", 0)
                     )
                     NetworkResult.Success(settings)
                 } else {
@@ -1587,12 +1776,18 @@ class ApiClient(private val context: Context) {
     suspend fun updateAdminSettings(settings: AdminRestaurantSettings): NetworkResult<Unit> = withContext(Dispatchers.IO) {
         try {
             val jsonBody = JSONObject().apply {
-                put("is_open", settings.isOpen)
-                put("is_delivery_enabled", settings.isDeliveryEnabled)
-                put("open_time", settings.openTime)
-                put("close_time", settings.closeTime)
+                put("restaurant_name", settings.restaurantName)
+                put("tagline", settings.tagline)
                 put("phone", settings.phone)
+                put("address", settings.address)
                 put("delivery_radius_km", settings.deliveryRadiusKm)
+                put("free_delivery_radius_km", settings.freeDeliveryRadiusKm)
+                put("free_delivery_threshold_paise", settings.freeDeliveryThresholdPaise)
+                put("delivery_fee_per_km_paise", settings.deliveryFeePerKmPaise)
+                put("minimum_order_paise", settings.minimumOrderPaise)
+                put("accepting_orders", settings.isOpen)
+                put("is_delivery_open", settings.isDeliveryEnabled)
+                put("order_cutoff_minutes_before_closing", settings.orderCutoffMinutes)
             }
             executeRequest(
                 path = "admin/settings",
@@ -1612,14 +1807,277 @@ class ApiClient(private val context: Context) {
         }
     }
 
+    suspend fun createWalkInOrder(
+        customerName: String,
+        phone: String?,
+        items: List<CartLine>
+    ): NetworkResult<Order> = withContext(Dispatchers.IO) {
+        try {
+            val queryParams = StringBuilder("customer_name=").append(java.net.URLEncoder.encode(customerName, "UTF-8"))
+            if (!phone.isNullOrBlank()) {
+                val cleanPhone = if (phone.startsWith("+91")) phone else "+91$phone"
+                queryParams.append("&phone=").append(java.net.URLEncoder.encode(cleanPhone, "UTF-8"))
+            }
+
+            val itemsArray = JSONArray()
+            for (line in items) {
+                val itemObj = JSONObject().apply {
+                    put("menu_item_id", line.menuItem.id)
+                    put("quantity", line.quantity)
+                    if (!line.variationName.isNullOrBlank()) {
+                        put("variation_name", line.variationName)
+                    }
+                }
+                itemsArray.put(itemObj)
+            }
+
+            val jsonBody = JSONObject().apply {
+                put("items", itemsArray)
+                put("payment_method", "CASH")
+                put("address", "Restaurant counter")
+                put("notes", "")
+            }
+
+            executeRequest(
+                path = "staff/walk-in?$queryParams",
+                method = "POST",
+                body = jsonBody.toString().toRequestBody(jsonMediaType)
+            ).use { response ->
+                val body = response.body?.string() ?: ""
+                if (response.isSuccessful) {
+                    val obj = JSONObject(body)
+                    NetworkResult.Success(parseOrderJson(obj))
+                } else {
+                    val errorDetail = parseErrorDetail(body, "Failed to create walk-in bill", response.code)
+                    NetworkResult.Error(errorDetail, response.code)
+                }
+            }
+        } catch (e: Exception) {
+            NetworkResult.Error(e.localizedMessage ?: "Failed to connect for walk-in order")
+        }
+    }
+
+    suspend fun createMenuItem(
+        name: String,
+        description: String,
+        category: String,
+        pricePaise: Long,
+        isVeg: Boolean,
+        variations: List<Pair<String, Long>> = emptyList()
+    ): NetworkResult<MenuItem> = withContext(Dispatchers.IO) {
+        try {
+            val varArray = JSONArray()
+            for ((varName, varPrice) in variations) {
+                varArray.put(JSONObject().apply {
+                    put("name", varName)
+                    put("price_paise", varPrice)
+                })
+            }
+            val jsonBody = JSONObject().apply {
+                put("name", name)
+                put("description", description)
+                put("category", category)
+                put("categories", JSONArray().apply { put(category) })
+                put("price_paise", pricePaise)
+                put("is_vegetarian", isVeg)
+                put("is_available", true)
+                put("variations", varArray)
+            }
+            executeRequest(
+                path = "menu",
+                method = "POST",
+                body = jsonBody.toString().toRequestBody(jsonMediaType)
+            ).use { response ->
+                val body = response.body?.string() ?: ""
+                if (response.isSuccessful) {
+                    val obj = JSONObject(body)
+                    NetworkResult.Success(
+                        MenuItem(
+                            id = obj.optLong("id", System.currentTimeMillis()),
+                            name = obj.optString("name", name),
+                            description = obj.optString("description", description),
+                            category = obj.optString("category", category),
+                            pricePaise = obj.optLong("price_paise", pricePaise),
+                            isVegetarian = obj.optBoolean("is_vegetarian", isVeg),
+                            isAvailable = obj.optBoolean("is_available", true)
+                        )
+                    )
+                } else {
+                    val errorDetail = parseErrorDetail(body, "Failed to create menu item", response.code)
+                    NetworkResult.Error(errorDetail, response.code)
+                }
+            }
+        } catch (e: Exception) {
+            NetworkResult.Error(e.localizedMessage ?: "Failed to connect to create menu item")
+        }
+    }
+
+    suspend fun deleteMenuItem(itemId: Long): NetworkResult<Unit> = withContext(Dispatchers.IO) {
+        try {
+            executeRequest(path = "menu/$itemId", method = "DELETE").use { response ->
+                val body = response.body?.string() ?: ""
+                if (response.isSuccessful) {
+                    NetworkResult.Success(Unit)
+                } else {
+                    val errorDetail = parseErrorDetail(body, "Failed to delete menu item", response.code)
+                    NetworkResult.Error(errorDetail, response.code)
+                }
+            }
+        } catch (e: Exception) {
+            NetworkResult.Error(e.localizedMessage ?: "Failed to connect to delete menu item")
+        }
+    }
+
+    suspend fun unassignDelivery(orderId: String): NetworkResult<Unit> = withContext(Dispatchers.IO) {
+        try {
+            executeRequest(path = "admin/orders/$orderId/unassign-delivery", method = "POST").use { response ->
+                val body = response.body?.string() ?: ""
+                if (response.isSuccessful) {
+                    NetworkResult.Success(Unit)
+                } else {
+                    val errorDetail = parseErrorDetail(body, "Failed to unassign delivery", response.code)
+                    NetworkResult.Error(errorDetail, response.code)
+                }
+            }
+        } catch (e: Exception) {
+            NetworkResult.Error(e.localizedMessage ?: "Failed to connect to unassign delivery")
+        }
+    }
+
+    suspend fun updateStaffAccountRole(accountId: Long, newRole: String, adminPassword: String): NetworkResult<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val jsonBody = JSONObject().apply {
+                put("role", newRole)
+                put("password", adminPassword)
+            }
+            executeRequest(
+                path = "admin/accounts/$accountId/role",
+                method = "PATCH",
+                body = jsonBody.toString().toRequestBody(jsonMediaType)
+            ).use { response ->
+                val body = response.body?.string() ?: ""
+                if (response.isSuccessful) {
+                    NetworkResult.Success(Unit)
+                } else {
+                    val errorDetail = parseErrorDetail(body, "Failed to update staff role", response.code)
+                    NetworkResult.Error(errorDetail, response.code)
+                }
+            }
+        } catch (e: Exception) {
+            NetworkResult.Error(e.localizedMessage ?: "Failed to connect to update role")
+        }
+    }
+
+    suspend fun getAccountOrders(accountId: Long): NetworkResult<List<Order>> = withContext(Dispatchers.IO) {
+        try {
+            executeRequest(path = "admin/accounts/$accountId/orders", method = "GET").use { response ->
+                val body = response.body?.string() ?: ""
+                if (response.isSuccessful) {
+                    val array = JSONArray(body)
+                    val list = mutableListOf<Order>()
+                    for (i in 0 until array.length()) {
+                        list.add(parseOrderJson(array.getJSONObject(i)))
+                    }
+                    NetworkResult.Success(list)
+                } else {
+                    val errorDetail = parseErrorDetail(body, "Failed to load account orders", response.code)
+                    NetworkResult.Error(errorDetail, response.code)
+                }
+            }
+        } catch (e: Exception) {
+            NetworkResult.Error(e.localizedMessage ?: "Failed to connect for account orders")
+        }
+    }
+
+    suspend fun getDriverDutyStatus(): NetworkResult<DriverDutyStatus> = withContext(Dispatchers.IO) {
+        try {
+            executeRequest(path = "delivery/duty-status", method = "GET").use { response ->
+                val body = response.body?.string() ?: ""
+                if (response.isSuccessful && body.isNotBlank()) {
+                    val obj = JSONObject(body)
+                    NetworkResult.Success(
+                        DriverDutyStatus(
+                            isAcceptingDeliveries = obj.optBoolean("is_accepting_deliveries", false),
+                            isRestaurantOpen = obj.optBoolean("is_restaurant_open", true),
+                            scheduleStatus = obj.optString("schedule_status").takeIf { it.isNotBlank() },
+                            activeRiders = obj.optInt("active_riders", 0),
+                            restaurantLatitude = if (obj.has("restaurant_latitude") && !obj.isNull("restaurant_latitude")) obj.optDouble("restaurant_latitude") else null,
+                            restaurantLongitude = if (obj.has("restaurant_longitude") && !obj.isNull("restaurant_longitude")) obj.optDouble("restaurant_longitude") else null
+                        )
+                    )
+                } else {
+                    val errorDetail = parseErrorDetail(body, "Failed to load duty status", response.code)
+                    NetworkResult.Error(errorDetail, response.code)
+                }
+            }
+        } catch (e: Exception) {
+            NetworkResult.Error(e.localizedMessage ?: "Failed to connect to duty status")
+        }
+    }
+
+    suspend fun updateDriverDutyStatus(accepting: Boolean, lat: Double? = null, lng: Double? = null): NetworkResult<DriverDutyStatus> = withContext(Dispatchers.IO) {
+        try {
+            val jsonBody = JSONObject().apply {
+                put("accepting", accepting)
+                if (lat != null && lng != null) {
+                    put("latitude", lat)
+                    put("longitude", lng)
+                }
+            }
+            executeRequest(
+                path = "delivery/duty-status",
+                method = "POST",
+                body = jsonBody.toString().toRequestBody(jsonMediaType)
+            ).use { response ->
+                val body = response.body?.string() ?: ""
+                if (response.isSuccessful && body.isNotBlank()) {
+                    val obj = JSONObject(body)
+                    NetworkResult.Success(
+                        DriverDutyStatus(
+                            isAcceptingDeliveries = obj.optBoolean("is_accepting_deliveries", false),
+                            isRestaurantOpen = obj.optBoolean("is_restaurant_open", true),
+                            scheduleStatus = obj.optString("schedule_status").takeIf { it.isNotBlank() },
+                            activeRiders = obj.optInt("active_riders", 0)
+                        )
+                    )
+                } else {
+                    val errorDetail = parseErrorDetail(body, "Failed to update duty status", response.code)
+                    NetworkResult.Error(errorDetail, response.code)
+                }
+            }
+        } catch (e: Exception) {
+            NetworkResult.Error(e.localizedMessage ?: "Failed to connect to update duty status")
+        }
+    }
+
+    suspend fun getDeliveryHistory(): NetworkResult<List<Order>> = withContext(Dispatchers.IO) {
+        try {
+            executeRequest(path = "delivery/history", method = "GET").use { response ->
+                val body = response.body?.string() ?: ""
+                if (response.isSuccessful) {
+                    val array = JSONArray(body)
+                    val list = mutableListOf<Order>()
+                    for (i in 0 until array.length()) {
+                        list.add(parseOrderJson(array.getJSONObject(i)))
+                    }
+                    NetworkResult.Success(list)
+                } else {
+                    val errorDetail = parseErrorDetail(body, "Failed to load delivery history", response.code)
+                    NetworkResult.Error(errorDetail, response.code)
+                }
+            }
+        } catch (e: Exception) {
+            NetworkResult.Error(e.localizedMessage ?: "Failed to connect to delivery history")
+        }
+    }
+
     suspend fun verifyDeliveryOtp(orderId: String, otp: String): NetworkResult<Boolean> = withContext(Dispatchers.IO) {
         try {
             val jsonBody = JSONObject().apply {
-                put("order_id", orderId)
                 put("otp", otp.trim())
             }
             executeRequest(
-                path = "delivery/verify-delivery-otp",
+                path = "delivery/orders/$orderId/verify-otp",
                 method = "POST",
                 body = jsonBody.toString().toRequestBody(jsonMediaType)
             ).use { response ->
@@ -1666,6 +2124,9 @@ class ApiClient(private val context: Context) {
             o.optString("delivery_address_summary", o.optString("address", ""))
         }
 
+        val lat = if (o.has("latitude") && !o.isNull("latitude")) o.optDouble("latitude") else addrObj?.optDouble("latitude")
+        val lng = if (o.has("longitude") && !o.isNull("longitude")) o.optDouble("longitude") else addrObj?.optDouble("longitude")
+
         return Order(
             orderId = o.optString("order_id", o.optString("id")),
             status = o.optString("status", "PLACED"),
@@ -1679,7 +2140,9 @@ class ApiClient(private val context: Context) {
             paymentMethod = paymentMethod,
             paymentStatus = o.optString("payment_status", "PAID"),
             deliveryOtp = o.optString("delivery_otp").takeIf { it.isNotBlank() },
-            createdAt = o.optString("created_at")
+            createdAt = o.optString("created_at"),
+            latitude = lat,
+            longitude = lng
         )
     }
 }

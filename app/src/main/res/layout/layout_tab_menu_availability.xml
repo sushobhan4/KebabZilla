@@ -23,7 +23,7 @@
         android:paddingStart="16dp"
         android:paddingTop="4dp"
         android:paddingEnd="16dp"
-        android:paddingBottom="8dp">
+        android:paddingBottom="6dp">
 
         <EditText
             android:id="@+id/etAvailabilitySearch"
@@ -41,6 +41,23 @@
             android:textColorHint="@color/brand_muted"
             android:textSize="13sp" />
     </LinearLayout>
+
+    <!-- Category Filter Chips -->
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="8dp"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:id="@+id/layoutAvailabilityCategoryChips"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal" />
+
+    </HorizontalScrollView>
 
     <View
         android:layout_width="match_parent"
@@ -64,7 +81,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
-            android:text="No items found"
+            android:text="No items matching search"
             android:textColor="@color/brand_muted"
             android:textSize="14sp"
             android:visibility="gone" />

@@ -12,7 +12,7 @@
         android:paddingStart="16dp"
         android:paddingTop="12dp"
         android:paddingEnd="16dp"
-        android:paddingBottom="8dp">
+        android:paddingBottom="6dp">
 
         <EditText
             android:id="@+id/etMenuSearch"
@@ -30,6 +30,23 @@
             android:textColorHint="@color/brand_muted"
             android:textSize="13sp" />
     </LinearLayout>
+
+    <!-- Category Filter Chips -->
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="8dp"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:id="@+id/layoutMenuCategoryChips"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal" />
+
+    </HorizontalScrollView>
 
     <View
         android:layout_width="match_parent"
