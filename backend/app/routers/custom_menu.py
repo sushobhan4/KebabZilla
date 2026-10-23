@@ -46,7 +46,7 @@ def list_custom_menu(db: DbSession, response: Response):
             res["discounted_base_price_paise"] = max(1, (item.price_paise * (100 - d.discount_percent) + 50) // 100)
             res["discount_campaign_name"] = d.campaign_name
         results.append(res)
-    cache.set(cache_key, results, ttl_seconds=20.0)
+    cache.set(cache_key, results, permanent=True)
     response.headers["Cache-Control"] = "public, max-age=15, stale-while-revalidate=30"
     return results
 
@@ -62,7 +62,7 @@ def list_all_custom_menu(db: DbSession):
         .where(CustomMenuItem.is_customizable.is_(True))
         .order_by(CustomMenuItem.name)
     ).all()
-    cache.set(KEY_CUSTOM_MENU_MANAGE, items, ttl_seconds=60.0)
+    cache.set(KEY_CUSTOM_MENU_MANAGE, items, permanent=True)
     return items
 
 

@@ -26,6 +26,7 @@ from app.config import settings
 from app.services import assemble_order, order_payload, order_total_paise, restaurant_settings, transition_order
 from app.cache import (
     KEY_STAFF_MENU,
+    KEY_STAFF_MENU_PAUSES,
     PREFIX_ORDERS,
     cache,
     invalidate_delivery_cache,
@@ -43,12 +44,16 @@ def staff_menu(db: DbSession):
         return cached
 
     items = db.scalars(select(MenuItem).order_by(MenuItem.name)).all()
-    cache.set(KEY_STAFF_MENU, items, ttl_seconds=60.0)
+    cache.set(KEY_STAFF_MENU, items, permanent=True)
     return items
 
 
 @router.get("/menu-pauses")
 def staff_menu_pauses(db: DbSession):
+    cached = cache.get(KEY_STAFF_MENU_PAUSES)
+    if cached is not None:
+        return cached
+
     rows = db.scalars(select(MenuItem).where(MenuItem.paused_by_id.is_not(None))).all()
     custom_rows = db.scalars(select(CustomMenuItem).where(CustomMenuItem.paused_by_id.is_not(None))).all()
     all_paused_by = [r.paused_by_id for r in rows if r.paused_by_id] + [r.paused_by_id for r in custom_rows if r.paused_by_id]
@@ -56,6 +61,7 @@ def staff_menu_pauses(db: DbSession):
     results = [{"menu_item_id": row.id, "employee_name": people.get(row.paused_by_id, "Staff member"), "paused_until": row.paused_until.isoformat() if row.paused_until else None} for row in rows]
     for crow in custom_rows:
         results.append({"menu_item_id": f"custom-{crow.id}", "employee_name": people.get(crow.paused_by_id, "Staff member"), "paused_until": crow.paused_until.isoformat() if crow.paused_until else None})
+    cache.set(KEY_STAFF_MENU_PAUSES, results, permanent=True)
     return results
 
 

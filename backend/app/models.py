@@ -1,8 +1,8 @@
 from datetime import datetime, timezone
 from enum import StrEnum
 
-from sqlalchemy import Boolean, Column, DateTime, Enum, Float, ForeignKey, Integer, JSON, String, Table, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import Boolean, Column, DateTime, Enum, Float, ForeignKey, Integer, JSON, String, Table, Text, UniqueConstraint, and_
+from sqlalchemy.orm import Mapped, foreign, mapped_column, relationship
 
 from app.db import Base
 
@@ -133,39 +133,45 @@ class AccountAddress(Base):
     __table_args__ = (UniqueConstraint("account_id", "address_id"),)
 
 
-class EmailVerificationCode(Base):
-    __tablename__ = "email_verification_codes"
+class AllOtp(Base):
+    __tablename__ = "all_otp"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    email: Mapped[str] = mapped_column(String(255), index=True)
+    purpose: Mapped[str] = mapped_column(String(32), default="2fa", index=True)  # "2fa", "forgot_password", "delivery", "register"
+    otp_code: Mapped[str] = mapped_column(String(255))
+    token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
     account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), nullable=True, index=True)
-    otp_hash: Mapped[str] = mapped_column(String(255))
-    purpose: Mapped[str] = mapped_column(String(32), default="register")
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    order_id: Mapped[str | None] = mapped_column(ForeignKey("orders.order_id", ondelete="CASCADE"), nullable=True, index=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
-    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
-    account: Mapped[Account | None] = relationship()
+    account: Mapped["Account | None"] = relationship()
+    order: Mapped["Order | None"] = relationship("Order", back_populates="delivery_otp_record")
+
+    # Backward compatibility properties
+    @property
+    def code_hash(self) -> str:
+        return self.otp_code
+
+    @code_hash.setter
+    def code_hash(self, val: str) -> None:
+        self.otp_code = val
+
+    @property
+    def otp_hash(self) -> str:
+        return self.otp_code
+
+    @otp_hash.setter
+    def otp_hash(self, val: str) -> None:
+        self.otp_code = val
 
 
-# Unified OTP alias: merges password_reset_codes into email_verification_codes
-PasswordResetCode = EmailVerificationCode
-
-
-class TwoFactorChallenge(Base):
-    __tablename__ = "two_factor_challenges"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True)
-    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    code_hash: Mapped[str] = mapped_column(String(64))
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
-    attempts: Mapped[int] = mapped_column(Integer, default=0)
-    is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-    account: Mapped[Account] = relationship()
+# Compatibility aliases
+TwoFactorChallenge = AllOtp
+EmailVerificationCode = AllOtp
+PasswordResetCode = AllOtp
 
 
 class UserSession(Base):
@@ -174,6 +180,8 @@ class UserSession(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    previous_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    grace_period_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     user_agent: Mapped[str] = mapped_column(String(512), default="")
     ip_address: Mapped[str] = mapped_column(String(64), default="")
     device_fingerprint: Mapped[str] = mapped_column(String(64), default="")
@@ -395,6 +403,14 @@ class Order(Base):
     delivery: Mapped[Account | None] = relationship(foreign_keys=[assigned_delivery_id], lazy="selectin")
     items: Mapped[list["OrderItem"]] = relationship(cascade="all, delete-orphan", lazy="selectin")
     payment: Mapped["Payment | None"] = relationship(back_populates="order", uselist=False, cascade="all, delete-orphan", lazy="selectin")
+    delivery_otp_record: Mapped["AllOtp | None"] = relationship(
+        "AllOtp",
+        primaryjoin="and_(foreign(AllOtp.order_id) == Order.order_id, AllOtp.purpose == 'delivery')",
+        uselist=False,
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        back_populates="order",
+    )
 
     @property
     def payment_method(self) -> "PaymentMethod | None":

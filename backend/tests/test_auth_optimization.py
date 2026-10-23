@@ -32,7 +32,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.testclient import TestClient
 
-from app.cache import SimpleTTLCache, auth_cache, auth_metrics, invalidate_auth_cache
+from app.cache import SimpleTTLCache, auth_cache, auth_metrics, invalidate_auth_cache, mark_session_revoked, is_session_revoked
 from app.dependencies import (
     AuthContext,
     CurrentAccount,
@@ -46,7 +46,16 @@ from app.dependencies import (
     auth_context_from_cache,
 )
 from app.models import Base, Account, UserSession, StaffInfo, Role, utcnow
-from app.security import hash_session_token, compute_device_fingerprint, SESSION_COOKIE_NAME
+from app.security import (
+    hash_session_token,
+    compute_device_fingerprint,
+    compute_composite_device_fingerprint,
+    create_access_token,
+    decode_access_token,
+    SESSION_COOKIE_NAME,
+    ACCESS_COOKIE_NAME,
+    REFRESH_COOKIE_NAME,
+)
 
 
 class QueryCounter:
@@ -265,6 +274,13 @@ class TestAuthIntegration(unittest.TestCase):
         from app.db import get_db
         cls.app.dependency_overrides[get_db] = override_get_db
 
+        from app.routers import auth as auth_router
+        from app.routers import admin as admin_router
+        cls.app.include_router(auth_router.router, prefix="/api/v1")
+        cls.app.include_router(auth_router.router, prefix="")
+        cls.app.include_router(admin_router.router, prefix="/api/v1")
+        cls.app.include_router(admin_router.router, prefix="")
+
         # Define test endpoints
         @cls.app.get("/test/lightweight")
         def route_lightweight(auth: CurrentAccount):
@@ -291,6 +307,7 @@ class TestAuthIntegration(unittest.TestCase):
         cls.client = TestClient(cls.app)
 
     def setUp(self):
+        self.client.cookies.clear()
         auth_cache.clear()
         auth_metrics.reset()
 
@@ -505,15 +522,15 @@ class TestAuthIntegration(unittest.TestCase):
         res = self.client.get("/test/lightweight", headers=headers)
         self.assertEqual(res.status_code, 401)
 
-    def test_device_fingerprint_mismatch_rejected(self):
-        """Request from unrecognized device fingerprint is rejected with 401."""
-        spoofed_headers = {
+    def test_user_agent_change_tolerated(self):
+        """Request from modified User-Agent (e.g. DevTools responsive mode, mobile emulation) is accepted."""
+        responsive_headers = {
             "Authorization": f"Bearer {self.user_token}",
-            "User-Agent": "MaliciousScraper/2.0",
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
         }
-        res = self.client.get("/test/lightweight", headers=spoofed_headers)
-        self.assertEqual(res.status_code, 401)
-        self.assertIn("device unrecognized", res.json()["detail"].lower())
+        res = self.client.get("/test/lightweight", headers=responsive_headers)
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["id"], self.user.id)
 
     def test_sliding_session_conditional_update(self):
         """Session older than 30 mins triggers sliding expiry update; active session does not."""
@@ -546,6 +563,150 @@ class TestAuthIntegration(unittest.TestCase):
             self.client.get("/test/lightweight", headers=headers)
             self.assertEqual(qc.count, 0)
         self.assertEqual(auth_metrics.sliding_expiry_updates, 1)
+
+    def test_short_lived_access_jwt_verification(self):
+        """Short-lived 2-minute HS256 JWT access token in kz_access cookie is verified statelessly."""
+        token, _ = create_access_token(
+            account_id=self.user.id,
+            session_id=self.user_session.id,
+            role=self.user.role,
+            expires_seconds=120,
+        )
+        # Call endpoint passing cookie
+        res = self.client.get("/test/lightweight", cookies={ACCESS_COOKIE_NAME: token})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["id"], self.user.id)
+
+    def test_revoked_session_tombstone_blocks_jwt(self):
+        """Tombstone in auth cache blocks an active 2-minute JWT in 0.1ms."""
+        token, _ = create_access_token(
+            account_id=self.user.id,
+            session_id=self.user_session.id,
+            role=self.user.role,
+            expires_seconds=120,
+        )
+        # Verify it works initially
+        res = self.client.get("/test/lightweight", cookies={ACCESS_COOKIE_NAME: token})
+        self.assertEqual(res.status_code, 200)
+
+        # Mark session revoked in cache
+        mark_session_revoked(self.user_session.id)
+
+        # Now it is immediately rejected
+        res2 = self.client.get("/test/lightweight", cookies={ACCESS_COOKIE_NAME: token})
+        self.assertEqual(res2.status_code, 401)
+
+    def test_refresh_rotation_grace_period_and_theft_detection(self):
+        """Test full Refresh Token Rotation lifecycle:
+        1. Normal rotation (R1 -> R2) with grace period setting.
+        2. Parallel request reuse within 10s grace period is accepted.
+        3. Token theft reuse outside grace period terminates session.
+        4. Hardware device fingerprint mismatch terminates session.
+        """
+        # Create session with token R1
+        raw_r1 = "test_refresh_token_r1_entropy_32_chars"
+        hash_r1 = hash_session_token(raw_r1)
+        test_session = UserSession(
+            account_id=self.user.id,
+            token_hash=hash_r1,
+            user_agent="TestClient/1.0",
+            ip_address="127.0.0.1",
+            device_fingerprint=compute_composite_device_fingerprint("hw-fp-test", "TestClient/1.0"),
+            device_name="Test Device",
+            created_at=utcnow(),
+            last_active_at=utcnow(),
+            expires_at=utcnow() + timedelta(days=30),
+            is_revoked=False,
+        )
+        self.db.add(test_session)
+        self.db.commit()
+        self.db.refresh(test_session)
+
+        # 1. Normal rotation: call /auth/refresh with R1
+        res1 = self.client.post(
+            "/auth/refresh",
+            cookies={REFRESH_COOKIE_NAME: raw_r1},
+            headers={"X-Device-Fingerprint": "hw-fp-test", "User-Agent": "TestClient/1.0"},
+        )
+        self.assertEqual(res1.status_code, 200)
+        self.assertIn(ACCESS_COOKIE_NAME, res1.cookies)
+        self.assertIn(REFRESH_COOKIE_NAME, res1.cookies)
+        raw_r2 = res1.cookies[REFRESH_COOKIE_NAME]
+        self.assertNotEqual(raw_r1, raw_r2)
+
+        # Verify DB session state
+        self.db.refresh(test_session)
+        self.assertEqual(test_session.previous_token_hash, hash_r1)
+        self.assertEqual(test_session.token_hash, hash_session_token(raw_r2))
+        self.assertIsNotNone(test_session.grace_period_until)
+        gpu = test_session.grace_period_until if test_session.grace_period_until.tzinfo else test_session.grace_period_until.replace(tzinfo=timezone.utc)
+        self.assertGreater(gpu, utcnow())
+
+        # 2. Parallel request: repeat call with old R1 within grace period
+        res_parallel = self.client.post(
+            "/auth/refresh",
+            cookies={REFRESH_COOKIE_NAME: raw_r1},
+            headers={"X-Device-Fingerprint": "hw-fp-test", "User-Agent": "TestClient/1.0"},
+        )
+        self.assertEqual(res_parallel.status_code, 200)
+        # Verify token_hash was not rotated again
+        self.db.refresh(test_session)
+        self.assertEqual(test_session.token_hash, hash_session_token(raw_r2))
+
+        # 3. Token theft: call with old R1 AFTER grace period expires
+        test_session.grace_period_until = utcnow() - timedelta(seconds=2)
+        self.db.commit()
+
+        res_theft = self.client.post(
+            "/auth/refresh",
+            cookies={REFRESH_COOKIE_NAME: raw_r1},
+            headers={"X-Device-Fingerprint": "hw-fp-test", "User-Agent": "TestClient/1.0"},
+        )
+        self.assertEqual(res_theft.status_code, 401)
+        self.assertIn("compromised", res_theft.json()["detail"].lower())
+        self.db.refresh(test_session)
+        self.assertTrue(test_session.is_revoked)
+
+        # 4. Device mismatch: attempt refresh on new session with different hardware fingerprint
+        raw_r3 = "test_refresh_token_r3_entropy_32_chars"
+        session3 = UserSession(
+            account_id=self.user.id,
+            token_hash=hash_session_token(raw_r3),
+            user_agent="TestClient/1.0",
+            ip_address="127.0.0.1",
+            device_fingerprint=compute_composite_device_fingerprint("hardware-original", "TestClient/1.0"),
+            device_name="Original PC",
+            created_at=utcnow(),
+            last_active_at=utcnow(),
+            expires_at=utcnow() + timedelta(days=30),
+            is_revoked=False,
+        )
+        self.db.add(session3)
+        self.db.commit()
+
+        # Attacker on different hardware presents R3
+        res_mismatch = self.client.post(
+            "/auth/refresh",
+            cookies={REFRESH_COOKIE_NAME: raw_r3},
+            headers={"X-Device-Fingerprint": "hardware-stolen-laptop", "User-Agent": "TestClient/1.0"},
+        )
+        self.assertEqual(res_mismatch.status_code, 401)
+        self.assertIn("device mismatch", res_mismatch.json()["detail"].lower())
+        self.db.refresh(session3)
+        self.assertTrue(session3.is_revoked)
+
+    def test_admin_orders_endpoint(self):
+        """Verify GET /admin/orders returns 200 without NameError or schema issues."""
+        res = self.client.get(
+            "/admin/orders?limit=5",
+            headers={"Authorization": f"Bearer {self.admin_token}", "User-Agent": "TestClient/1.0"},
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIn("items", data)
+        self.assertIn("total", data)
+        self.assertIn("status_counts", data)
+        self.assertIn("paid_revenue_paise", data)
 
 
 if __name__ == "__main__":

@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     jwt_secret: str = "local-development-secret-change-me"
     jwt_issuer: str = "kebabzilla-api"
     access_token_minutes: int = 60
+    access_token_seconds: int = 120
+    session_cookie_domain: str | None = None
+    access_cookie_name: str = "kz_access"
+    refresh_cookie_name: str = "kz_refresh"
     session_cookie_name: str = "kz_session"
     session_cookie_samesite: str = "lax"
     session_cookie_secure: bool | None = None
@@ -54,6 +58,7 @@ class Settings(BaseSettings):
     gcs_email_images_folder: str = "emailImages"
     public_backend_url: str = "https://api.kebabzilla.in"
     redis_url: str | None = None
+    backup_auth_secret: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -62,6 +67,7 @@ class Settings(BaseSettings):
         alias_map = {
             "public_backend_url": ["PUBLIC_BACKEND_URL", "BACKEND_URL", "publicBackendUrl", "BACKEND_PUBLIC_URL"],
             "redis_url": ["REDIS_URL", "redisUrl", "REDIS_URI", "redis_uri"],
+            "backup_auth_secret": ["BACKUP_AUTH_SECRET", "backupAuthSecret", "BACKUP_SECRET"],
             "jwt_secret": ["JWTsecret", "jwtSecret", "JWT_SECRET"],
             "database_url": ["databaseURL", "databaseUrl", "DATABASE_URL"],
             "cors_origins": ["corsOrigins", "CORS_ORIGINS"],

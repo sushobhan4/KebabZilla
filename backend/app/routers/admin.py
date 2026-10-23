@@ -18,6 +18,7 @@ from app.integrations import staff_account_notifier
 from app.models import (
     Account,
     AdminEvent,
+    AllOtp,
     CustomMenuItem,
     DeliveryBatch,
     DeliveryBatchOrder,
@@ -29,7 +30,6 @@ from app.models import (
     Order,
     OrderItem,
     OrderStatus,
-    PasswordResetCode,
     Payment,
     PaymentMethod,
     PaymentStatus,
@@ -61,6 +61,7 @@ from app.cache import (
     KEY_ADMIN_SETTINGS,
     KEY_EMAIL_STATUS,
     PREFIX_EVENTS,
+    PREFIX_ORDERS,
     PREFIX_REPORTS,
     cache,
     invalidate_accounts_cache,
@@ -226,6 +227,13 @@ def admin_orders(
     offset: int = Query(default=0, ge=0),
 ):
     effective_limit = min(limit, 10)
+    cache_key = None
+    if not q.strip():
+        cache_key = f"{PREFIX_ORDERS}admin_{status_filter.value if status_filter else 'all'}_{period}_{offset}_{effective_limit}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     base_filters = []
     if period not in {"all", "day", "week", "month", "year"}:
         raise HTTPException(status_code=422, detail="Choose a valid order time period")
@@ -268,7 +276,7 @@ def admin_orders(
             status_counts[key] = int(count)
 
     paid_revenue = sum(order_total_paise(order) for order in rows if order.payment and order.payment.status == PaymentStatus.PAID)
-    return {
+    res = {
         "items": [order_payload(order) for order in rows],
         "total": total,
         "limit": effective_limit,
@@ -276,6 +284,9 @@ def admin_orders(
         "status_counts": status_counts,
         "paid_revenue_paise": int(paid_revenue),
     }
+    if cache_key:
+        cache.set(cache_key, res, ttl_seconds=60.0)
+    return res
 
 
 @router.patch("/orders/{order_id}/status")
@@ -285,6 +296,8 @@ async def admin_order_status(order_id: str, data: OrderStatusUpdate, actor: Curr
         raise HTTPException(status_code=404, detail="Order not found")
     if order.status == OrderStatus.REJECTED:
         raise HTTPException(status_code=400, detail="A rejected order cannot have its status changed")
+    if order.status == OrderStatus.CANCELLED:
+        raise HTTPException(status_code=400, detail="A cancelled order cannot have its status changed")
 
     payment = db.get(Payment, order.order_id)
     if data.status in {OrderStatus.REJECTED, OrderStatus.CANCELLED} and payment:
@@ -311,6 +324,7 @@ async def admin_order_status(order_id: str, data: OrderStatusUpdate, actor: Curr
             order.delivery_otp_ciphertext = None
             order.delivery_otp_expires_at = None
             order.delivery_otp_attempts = 0
+            db.execute(delete(AllOtp).where(AllOtp.order_id == order.order_id, AllOtp.purpose == "delivery"))
             db.execute(delete(DeliveryBatchOrder).where(DeliveryBatchOrder.order_id == order.order_id))
             empty_batches = db.scalars(select(DeliveryBatch).where(~DeliveryBatch.orders.any())).all()
             for eb in empty_batches:
@@ -349,6 +363,7 @@ def admin_unassign_delivery(order_id: str, actor: CurrentAccount, db: DbSession)
     order.delivery_otp_ciphertext = None
     order.delivery_otp_expires_at = None
     order.delivery_otp_attempts = 0
+    db.execute(delete(AllOtp).where(AllOtp.order_id == order.order_id, AllOtp.purpose == "delivery"))
     if order.status == OrderStatus.OUT_FOR_DELIVERY:
         order.status = OrderStatus.READY
 
@@ -514,7 +529,7 @@ def get_settings(db: DbSession):
     settings = restaurant_settings(db)
     sync_override_if_expired(settings, db)
     data = serialize_restaurant_settings(settings, db=db)
-    cache.set(KEY_ADMIN_SETTINGS, data, ttl_seconds=60.0)
+    cache.set(KEY_ADMIN_SETTINGS, data, permanent=True)
     return data
 
 
@@ -1219,5 +1234,23 @@ def sales_report(db: DbSession, period: str = "week", at: datetime | None = None
         "new_customers": new_customers,
         "avg_fulfillment_minutes": avg_fulfillment_minutes,
     }
-    cache.set(cache_key, result, ttl_seconds=30.0)
+    now_utc = datetime.now(timezone.utc)
+    is_past_period = bool(at and end <= now_utc)
+    report_ttl = 86400.0 if is_past_period else 120.0
+    cache.set(cache_key, result, ttl_seconds=report_ttl)
     return result
+
+
+@router.post("/database/backup")
+def admin_trigger_database_backup():
+    """Manual trigger to perform a full database backup and upload to Google Cloud Storage."""
+    from app.backup import perform_database_backup
+    return perform_database_backup()
+
+
+@router.get("/database/backups")
+def admin_list_database_backups():
+    """List recent database backups stored in Google Cloud Storage."""
+    from app.backup import list_database_backups
+    return list_database_backups()
+

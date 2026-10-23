@@ -1,8 +1,9 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
 import math
+import secrets
 from sqlalchemy import select
 
 from app.config import settings
@@ -66,8 +67,8 @@ app.add_middleware(
     allow_origin_regex=r"^https://.*\.trycloudflare\.com$" if is_dev else None,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Razorpay-Signature", "X-CSRF-Token"],
-    expose_headers=["X-CSRF-Token"],
+    allow_headers=["Authorization", "Content-Type", "X-Razorpay-Signature", "X-CSRF-Token", "X-Device-Fingerprint", "X-Device-Name", "X-Refresh-Token"],
+    expose_headers=["X-CSRF-Token", "X-Refresh-Token"],
 )
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -85,7 +86,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     if origin and (origin in allowed_origins or (is_dev and origin.endswith(".trycloudflare.com"))):
         headers["Access-Control-Allow-Origin"] = origin
         headers["Access-Control-Allow-Credentials"] = "true"
-        headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, X-Razorpay-Signature, X-CSRF-Token"
+        headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, X-Razorpay-Signature, X-CSRF-Token, X-Device-Fingerprint, X-Device-Name"
         headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
     return JSONResponse(
         status_code=500,
@@ -687,7 +688,7 @@ def public_restaurant(db: DbSession, response: Response):
         "can_schedule_order": can_schedule,
         "google_client_id": settings.google_client_id or None,
     }
-    cache.set(KEY_PUBLIC_RESTAURANT, data, ttl_seconds=15.0)
+    cache.set(KEY_PUBLIC_RESTAURANT, data, permanent=True)
     response.headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"
     return data
 
@@ -740,6 +741,22 @@ def estimate_delivery(latitude: float, longitude: float, db: DbSession, subtotal
 @app.get("/health", tags=["health"])
 def health():
     return {"status": "ok", "service": "kebabzilla-api"}
+
+
+@app.post(f"{settings.api_prefix}/system/backup", tags=["system"])
+@app.post("/system/backup", tags=["system"])
+def system_database_backup(
+    x_backup_token: str | None = Header(None, alias="x-backup-token"),
+    token: str | None = Query(None),
+):
+    """Secure endpoint for automated database backup triggers (e.g. Google Cloud Scheduler)."""
+    expected = (settings.backup_auth_secret or settings.jwt_secret or "").strip()
+    provided = (x_backup_token or token or "").strip()
+    if not expected or not provided or not secrets.compare_digest(provided, expected):
+        raise HTTPException(status_code=401, detail="Unauthorized backup request")
+    from app.backup import perform_database_backup
+    return perform_database_backup()
+
 
 
 @app.get(f"{settings.api_prefix}/admin-preview/delivery", tags=["administration"])

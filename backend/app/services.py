@@ -13,14 +13,15 @@ from fastapi import HTTPException
 from cryptography.fernet import Fernet, InvalidToken
 
 logger = logging.getLogger(__name__)
-from sqlalchemy import select, func
-from sqlalchemy.orm import Session
+from sqlalchemy import select, func, delete
+from sqlalchemy.orm import Session, object_session
 
 from app.config import settings
 from app.integrations import razorpay
 from app.models import (
     Account,
     AccountAddress,
+    AllOtp,
     CustomMenuItem,
     MenuItem,
     Order,
@@ -1022,10 +1023,37 @@ def recalculate_and_update_delivery_speed(db: Session) -> float | None:
     return new_speed
 
 
-def create_delivery_otp(order: Order) -> str:
+def create_delivery_otp(order: Order, db: Session | None = None) -> str:
     otp = "".join(secrets.choice(string.digits) for _ in range(6))
-    order.delivery_otp_ciphertext = _delivery_otp_cipher().encrypt(otp.encode()).decode()
-    order.delivery_otp_expires_at = datetime.now(timezone.utc) + timedelta(hours=12)
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(hours=12)
+
+    session = db or object_session(order)
+    if session is not None:
+        session.execute(delete(AllOtp).where(AllOtp.order_id == order.order_id, AllOtp.purpose == "delivery"))
+        rec = AllOtp(
+            purpose="delivery",
+            otp_code=otp,
+            order_id=order.order_id,
+            account_id=order.customer_id,
+            email=order.customer.email if order.customer else None,
+            expires_at=expires_at,
+            attempts=0,
+        )
+        session.add(rec)
+        order.delivery_otp_record = rec
+    else:
+        order.delivery_otp_record = AllOtp(
+            purpose="delivery",
+            otp_code=otp,
+            order_id=order.order_id,
+            account_id=order.customer_id,
+            expires_at=expires_at,
+            attempts=0,
+        )
+    order.delivery_otp_ciphertext = otp
+    order.delivery_otp_expires_at = expires_at
+    order.delivery_otp_attempts = 0
     return otp
 
 
@@ -1035,32 +1063,89 @@ def _delivery_otp_cipher() -> Fernet:
 
 
 def customer_delivery_otp(order: Order) -> str | None:
-    if order.status != OrderStatus.OUT_FOR_DELIVERY or not order.delivery_otp_ciphertext or not order.delivery_otp_expires_at:
+    if order.status != OrderStatus.OUT_FOR_DELIVERY:
+        return None
+    now = datetime.now(timezone.utc)
+
+    # Check AllOtp record first
+    rec = getattr(order, "delivery_otp_record", None)
+    if rec is not None:
+        exp = rec.expires_at if rec.expires_at.tzinfo else rec.expires_at.replace(tzinfo=timezone.utc)
+        if exp < now:
+            return None
+        return rec.otp_code
+
+    session = object_session(order)
+    if session is not None:
+        rec = session.scalar(
+            select(AllOtp).where(AllOtp.order_id == order.order_id, AllOtp.purpose == "delivery")
+        )
+        if rec is not None:
+            exp = rec.expires_at if rec.expires_at.tzinfo else rec.expires_at.replace(tzinfo=timezone.utc)
+            if exp < now:
+                return None
+            return rec.otp_code
+
+    if not order.delivery_otp_ciphertext or not order.delivery_otp_expires_at:
         return None
     expires = order.delivery_otp_expires_at
     if expires.tzinfo is None:
         expires = expires.replace(tzinfo=timezone.utc)
-    if datetime.now(timezone.utc) >= expires:
+    if now >= expires:
         return None
     try:
         return _delivery_otp_cipher().decrypt(order.delivery_otp_ciphertext.encode()).decode()
-    except (InvalidToken, UnicodeDecodeError):
-        return None
+    except Exception:
+        return order.delivery_otp_ciphertext
 
 
-def verify_delivery_otp(order: Order, otp: str) -> bool:
+def verify_delivery_otp(order: Order, otp: str, db: Session | None = None) -> bool:
+    session = db or object_session(order)
+    rec = getattr(order, "delivery_otp_record", None)
+    if rec is None and session is not None:
+        rec = session.scalar(
+            select(AllOtp).where(AllOtp.order_id == order.order_id, AllOtp.purpose == "delivery")
+        )
+
+    now = datetime.now(timezone.utc)
+    if rec is not None:
+        exp = rec.expires_at if rec.expires_at.tzinfo else rec.expires_at.replace(tzinfo=timezone.utc)
+        if exp < now or rec.attempts >= 5:
+            if session is not None:
+                session.delete(rec)
+            return False
+
+        if not secrets.compare_digest(otp.strip(), rec.otp_code.strip()):
+            rec.attempts += 1
+            if rec.attempts >= 5 and session is not None:
+                session.delete(rec)
+            return False
+
+        # Success: delete row immediately from all_otp table upon use
+        if session is not None:
+            session.delete(rec)
+        order.delivery_otp_ciphertext = None
+        order.delivery_otp_expires_at = None
+        order.delivery_otp_attempts = 0
+        return True
+
+    # Legacy fallback
     if not order.delivery_otp_ciphertext or not order.delivery_otp_expires_at:
         return False
     expires = order.delivery_otp_expires_at
     if expires.tzinfo is None:
         expires = expires.replace(tzinfo=timezone.utc)
+    if now >= expires:
+        return False
     try:
         stored_otp = _delivery_otp_cipher().decrypt(order.delivery_otp_ciphertext.encode()).decode()
-    except (InvalidToken, UnicodeDecodeError):
-        return False
-    verified = datetime.now(timezone.utc) < expires and secrets.compare_digest(otp, stored_otp)
+    except Exception:
+        stored_otp = order.delivery_otp_ciphertext
+    verified = secrets.compare_digest(otp.strip(), stored_otp.strip())
     if verified:
         order.delivery_otp_ciphertext = None
+        order.delivery_otp_expires_at = None
+        order.delivery_otp_attempts = 0
     return verified
 
 

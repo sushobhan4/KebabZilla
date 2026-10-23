@@ -34,7 +34,7 @@ def upgrade() -> None:
         # 2. Insert missing staff rows
         op.execute(
             "INSERT INTO staff_info (account_id, role, is_accepting_deliveries, must_change_password, updated_at) "
-            "SELECT id, role, 0, 0, CURRENT_TIMESTAMP "
+            "SELECT id, role, false, false, CURRENT_TIMESTAMP "
             "FROM accounts "
             "WHERE role != 'USER' AND id NOT IN (SELECT account_id FROM staff_info)"
         )
@@ -49,8 +49,8 @@ def upgrade() -> None:
         # 4. Reset is_accepting_deliveries for staff who cannot deliver
         op.execute(
             "UPDATE staff_info "
-            "SET is_accepting_deliveries = 0 "
-            "WHERE is_accepting_deliveries = 1 "
+            "SET is_accepting_deliveries = false "
+            "WHERE is_accepting_deliveries = true "
             "AND account_id IN (SELECT id FROM accounts WHERE role NOT IN ('DELIVERY', 'ADMIN'))"
         )
 

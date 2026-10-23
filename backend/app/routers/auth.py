@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 import secrets
 import threading
@@ -10,14 +10,21 @@ logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.cache import invalidate_auth_cache
+from app.cache import invalidate_auth_cache, mark_account_revoked, mark_session_revoked
 from app.config import settings
 from app.dependencies import CurrentAccount, CurrentAccountModel, DbSession, PasswordChangeAccount, PasswordChangeAccountModel, bearer_scheme
 from app.integrations import staff_account_notifier
-from app.models import Account, AccountAddress, EmailVerificationCode, PasswordResetCode, Role, TwoFactorChallenge, UserSession, utcnow
+from app.models import (
+    Account,
+    AccountAddress,
+    AllOtp,
+    Role,
+    UserSession,
+    utcnow,
+)
 from app.schemas import (
     AccountCreate,
     AccountOut,
@@ -38,10 +45,16 @@ from app.schemas import (
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 from app.security import (
+    ACCESS_COOKIE_NAME,
     CSRF_COOKIE_NAME,
+    REFRESH_COOKIE_NAME,
     SESSION_COOKIE_NAME,
     SESSION_LIFETIME_DAYS,
+    compute_composite_device_fingerprint,
     compute_device_fingerprint,
+    create_access_token,
+    decode_access_token,
+    delete_auth_cookies,
     delete_csrf_cookie,
     delete_session_cookie,
     generate_2fa_code,
@@ -54,8 +67,11 @@ from app.security import (
     hash_password,
     hash_session_token,
     parse_device_info,
+    resolve_device_name,
     resolve_ip_location,
+    set_access_cookie,
     set_csrf_cookie,
+    set_refresh_cookie,
     set_session_cookie,
     verify_2fa_code,
     verify_password,
@@ -69,8 +85,10 @@ def issue_session(account: Account, request: Request, response: Response, db: Se
     token_hash = hash_session_token(raw_token)
     user_agent = request.headers.get("user-agent", "")
     ip_address = get_client_ip(request)
-    device_fingerprint = compute_device_fingerprint(user_agent)
-    device_info = parse_device_info(user_agent)
+    client_fp = request.headers.get("x-device-fingerprint")
+    client_dev_name = request.headers.get("x-device-name")
+    device_fingerprint = compute_composite_device_fingerprint(client_fp, user_agent)
+    device_info = resolve_device_name(client_dev_name, user_agent)
     geo_info = resolve_ip_location(ip_address)
     now = utcnow()
     expires_at = now + timedelta(days=SESSION_LIFETIME_DAYS)
@@ -78,6 +96,8 @@ def issue_session(account: Account, request: Request, response: Response, db: Se
     session = UserSession(
         account_id=account.id,
         token_hash=token_hash,
+        previous_token_hash=None,
+        grace_period_until=None,
         user_agent=user_agent[:512],
         ip_address=ip_address[:64],
         device_fingerprint=device_fingerprint,
@@ -93,15 +113,29 @@ def issue_session(account: Account, request: Request, response: Response, db: Se
     db.add(session)
     db.commit()
 
+    # 1. Issue short-lived 2-minute HS256 JWT access token in kz_access cookie
+    access_token_jwt, _ = create_access_token(
+        account_id=account.id,
+        session_id=session.id,
+        role=account.role,
+        expires_seconds=settings.access_token_seconds,
+    )
+    set_access_cookie(response, access_token_jwt)
+
+    # 2. Issue 30-day rotating refresh token in kz_refresh cookie
+    set_refresh_cookie(response, raw_token)
+
+    # 3. Double-Submit CSRF protection
     csrf_token = generate_csrf_token()
-    set_session_cookie(response, raw_token)
     set_csrf_cookie(response, csrf_token)
     response.headers["x-csrf-token"] = csrf_token
 
+    # Return access_token & refresh_token for Authorization header / cross-origin clients while maintaining dual HttpOnly cookies
     return TokenOut(
-        access_token=raw_token,
+        access_token=access_token_jwt,
+        refresh_token=raw_token,
         token_type="bearer",
-        expires_in=SESSION_LIFETIME_DAYS * 86400,
+        expires_in=settings.access_token_seconds,
         account=AccountOut.model_validate(account),
         csrf_token=csrf_token,
     )
@@ -125,24 +159,24 @@ def send_verification_otp(data: SendEmailOtpInput, background_tasks: BackgroundT
             raise HTTPException(status_code=409, detail="An account with this email already exists")
 
     recent = db.scalar(
-        select(EmailVerificationCode).where(
-            EmailVerificationCode.email == email_clean,
-            EmailVerificationCode.purpose == data.purpose,
-            EmailVerificationCode.created_at >= utcnow() - timedelta(seconds=30),
+        select(AllOtp).where(
+            AllOtp.email == email_clean,
+            AllOtp.purpose == data.purpose,
+            AllOtp.created_at >= utcnow() - timedelta(seconds=30),
         )
     )
     if recent:
         raise HTTPException(status_code=429, detail="Please wait before requesting another verification code")
 
-    db.query(EmailVerificationCode).filter(
-        ((EmailVerificationCode.email == email_clean) & (EmailVerificationCode.purpose == data.purpose))
-        | (EmailVerificationCode.expires_at <= utcnow())
+    db.query(AllOtp).filter(
+        ((AllOtp.email == email_clean) & (AllOtp.purpose == data.purpose))
+        | (AllOtp.expires_at <= utcnow())
     ).delete(synchronize_session=False)
 
     otp = f"{secrets.randbelow(1_000_000):06d}"
-    code_entry = EmailVerificationCode(
+    code_entry = AllOtp(
         email=email_clean,
-        otp_hash=hash_password(otp),
+        otp_code=hash_password(otp),
         purpose=data.purpose,
         expires_at=utcnow() + timedelta(minutes=10),
         attempts=0,
@@ -163,29 +197,39 @@ def send_verification_otp(data: SendEmailOtpInput, background_tasks: BackgroundT
 def verify_email_otp(data: VerifyEmailOtpInput, db: DbSession):
     email_clean = data.email.lower().strip()
     record = db.scalar(
-        select(EmailVerificationCode)
+        select(AllOtp)
         .where(
-            EmailVerificationCode.email == email_clean,
-            EmailVerificationCode.purpose != "password_reset",
-            EmailVerificationCode.used_at.is_(None),
+            AllOtp.email == email_clean,
+            AllOtp.purpose != "forgot_password",
+            AllOtp.purpose != "password_reset",
         )
-        .order_by(EmailVerificationCode.created_at.desc())
+        .order_by(AllOtp.created_at.desc())
     )
-    if not record or record.attempts >= 5:
+    if not record:
         raise HTTPException(status_code=400, detail="Verification code has expired or is invalid")
 
     expires_at = record.expires_at
     if expires_at and expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=utcnow().tzinfo)
     if not expires_at or expires_at <= utcnow():
+        db.delete(record)
+        db.commit()
         raise HTTPException(status_code=400, detail="Verification code has expired")
 
-    record.attempts += 1
-    if not verify_password(data.otp.strip(), record.otp_hash):
+    if record.attempts >= 5:
+        db.delete(record)
+        db.commit()
+        raise HTTPException(status_code=429, detail="Too many invalid attempts. Please request a new code.")
+
+    if not verify_password(data.otp.strip(), record.otp_code):
+        record.attempts += 1
+        if record.attempts >= 5:
+            db.delete(record)
         db.commit()
         raise HTTPException(status_code=400, detail="Incorrect verification code")
 
-    record.used_at = utcnow()
+    # Delete row immediately upon successful verification
+    db.delete(record)
     db.commit()
     return {"verified": True, "email": email_clean}
 
@@ -257,11 +301,13 @@ def initiate_2fa_challenge(
     token_hash = hash_2fa_temp_token(temp_token)
     expires_at = utcnow() + timedelta(minutes=10)
 
-    db.query(TwoFactorChallenge).filter(TwoFactorChallenge.account_id == account.id).delete(synchronize_session=False)
-    challenge = TwoFactorChallenge(
+    db.query(AllOtp).filter(AllOtp.account_id == account.id, AllOtp.purpose == "2fa").delete(synchronize_session=False)
+    challenge = AllOtp(
         account_id=account.id,
+        email=account.email,
+        purpose="2fa",
         token_hash=token_hash,
-        code_hash=code_hash,
+        otp_code=code_hash,
         expires_at=expires_at,
         attempts=0,
     )
@@ -323,7 +369,7 @@ def verify_2fa(
     db: DbSession,
 ):
     token_hash = hash_2fa_temp_token(data.temp_token)
-    challenge = db.scalar(select(TwoFactorChallenge).where(TwoFactorChallenge.token_hash == token_hash))
+    challenge = db.scalar(select(AllOtp).where(AllOtp.token_hash == token_hash, AllOtp.purpose == "2fa"))
     if not challenge:
         raise HTTPException(status_code=400, detail="Invalid or expired 2-step verification session")
     expires_at = challenge.expires_at if challenge.expires_at.tzinfo else challenge.expires_at.replace(tzinfo=utcnow().tzinfo)
@@ -336,13 +382,17 @@ def verify_2fa(
         db.commit()
         raise HTTPException(status_code=429, detail="Too many invalid attempts. Please log in again.")
 
-    if not verify_2fa_code(data.code.strip(), challenge.code_hash):
+    if not verify_2fa_code(data.code.strip(), challenge.otp_code):
         challenge.attempts += 1
+        if challenge.attempts >= 5:
+            db.delete(challenge)
         db.commit()
         raise HTTPException(status_code=400, detail="Invalid verification code")
 
     account = db.get(Account, challenge.account_id)
     if not account:
+        db.delete(challenge)
+        db.commit()
         raise HTTPException(status_code=404, detail="Account not found")
 
     db.delete(challenge)
@@ -437,6 +487,138 @@ def google_login(
     return issue_session(account, request, response, db)
 
 
+@router.post("/refresh", response_model=TokenOut)
+def refresh_session(
+    request: Request,
+    response: Response,
+    db: DbSession,
+):
+    refresh_token = request.cookies.get(settings.refresh_cookie_name)
+    if not refresh_token:
+        # Fallback to header or legacy cookie name if present
+        refresh_token = request.headers.get("x-refresh-token") or request.cookies.get(settings.session_cookie_name)
+    if not refresh_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token missing")
+
+    incoming_hash = hash_session_token(refresh_token)
+    session = db.scalar(
+        select(UserSession)
+        .where(
+            or_(
+                UserSession.token_hash == incoming_hash,
+                UserSession.previous_token_hash == incoming_hash,
+            )
+        )
+    )
+
+    now = utcnow()
+    if not session or session.is_revoked:
+        delete_auth_cookies(response)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or revoked session")
+
+    exp = session.expires_at
+    if exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+
+    if exp <= now:
+        session.is_revoked = True
+        db.commit()
+        mark_session_revoked(session.id)
+        invalidate_auth_cache(token_hash=session.token_hash, account_id=session.account_id)
+        delete_auth_cookies(response)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired")
+
+    # Silicon & Hardware Device Fingerprint Check
+    client_fp = request.headers.get("x-device-fingerprint")
+    user_agent = request.headers.get("user-agent", "")
+    incoming_fp = compute_composite_device_fingerprint(client_fp, user_agent)
+    if client_fp and session.device_fingerprint and incoming_fp != session.device_fingerprint:
+        # Cross-machine token theft detected!
+        session.is_revoked = True
+        db.commit()
+        mark_session_revoked(session.id)
+        invalidate_auth_cache(token_hash=session.token_hash, account_id=session.account_id)
+        delete_auth_cookies(response)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Device mismatch detected")
+
+    account = db.get(Account, session.account_id)
+    if not account:
+        delete_auth_cookies(response)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account not found")
+
+    # Case A: incoming_hash == session.token_hash (Normal Rotation R1 -> R2)
+    if incoming_hash == session.token_hash:
+        new_refresh_token = generate_session_token()
+        new_hash = hash_session_token(new_refresh_token)
+        session.previous_token_hash = session.token_hash
+        session.token_hash = new_hash
+        session.grace_period_until = now + timedelta(seconds=10)
+        session.last_active_at = now
+        session.expires_at = now + timedelta(days=SESSION_LIFETIME_DAYS)
+        db.commit()
+
+        new_access_jwt, _ = create_access_token(
+            account_id=account.id,
+            session_id=session.id,
+            role=account.role,
+            expires_seconds=settings.access_token_seconds,
+        )
+        set_access_cookie(response, new_access_jwt)
+        set_refresh_cookie(response, new_refresh_token)
+
+        csrf_token = generate_csrf_token()
+        set_csrf_cookie(response, csrf_token)
+        response.headers["x-csrf-token"] = csrf_token
+
+        return TokenOut(
+            access_token=new_access_jwt,
+            refresh_token=new_refresh_token,
+            token_type="bearer",
+            expires_in=settings.access_token_seconds,
+            account=AccountOut.model_validate(account),
+            csrf_token=csrf_token,
+        )
+
+    # Case B: incoming_hash == session.previous_token_hash (Reuse or Parallel Request)
+    if incoming_hash == session.previous_token_hash:
+        gpu = session.grace_period_until
+        if gpu and gpu.tzinfo is None:
+            gpu = gpu.replace(tzinfo=timezone.utc)
+        # If within 10-second grace period: harmless parallel request from same browser
+        if gpu and now <= gpu:
+            new_access_jwt, _ = create_access_token(
+                account_id=account.id,
+                session_id=session.id,
+                role=account.role,
+                expires_seconds=settings.access_token_seconds,
+            )
+            set_access_cookie(response, new_access_jwt)
+            csrf_token = generate_csrf_token()
+            set_csrf_cookie(response, csrf_token)
+            response.headers["x-csrf-token"] = csrf_token
+
+            return TokenOut(
+                access_token=new_access_jwt,
+                refresh_token=refresh_token,
+                token_type="bearer",
+                expires_in=settings.access_token_seconds,
+                account=AccountOut.model_validate(account),
+                csrf_token=csrf_token,
+            )
+        else:
+            # TOKEN THEFT DETECTED outside grace period!
+            session.is_revoked = True
+            db.commit()
+            mark_session_revoked(session.id)
+            invalidate_auth_cache(token_hash=session.token_hash, account_id=session.account_id)
+            delete_auth_cookies(response)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Session compromised and terminated",
+            )
+
+
+
 _forgot_password_attempts: dict[str, list[float]] = defaultdict(list)
 
 
@@ -467,23 +649,23 @@ def request_password_reset(
     account = db.scalar(select(Account).where(Account.email == email))
     if account:
         recent = db.scalar(
-            select(EmailVerificationCode).where(
-                EmailVerificationCode.email == email,
-                EmailVerificationCode.purpose == "password_reset",
-                EmailVerificationCode.created_at >= utcnow() - timedelta(seconds=60),
+            select(AllOtp).where(
+                AllOtp.email == email,
+                AllOtp.purpose.in_(["forgot_password", "password_reset"]),
+                AllOtp.created_at >= utcnow() - timedelta(seconds=60),
             )
         )
         if not recent:
-            db.query(EmailVerificationCode).filter(
-                ((EmailVerificationCode.email == email) & (EmailVerificationCode.purpose == "password_reset"))
-                | (EmailVerificationCode.expires_at <= utcnow())
+            db.query(AllOtp).filter(
+                ((AllOtp.email == email) & (AllOtp.purpose.in_(["forgot_password", "password_reset"])))
+                | (AllOtp.expires_at <= utcnow())
             ).delete(synchronize_session=False)
             otp = f"{secrets.randbelow(1_000_000):06d}"
-            reset_code = EmailVerificationCode(
+            reset_code = AllOtp(
                 email=email,
                 account_id=account.id,
-                otp_hash=hash_password(otp),
-                purpose="password_reset",
+                otp_code=hash_password(otp),
+                purpose="forgot_password",
                 expires_at=utcnow() + timedelta(minutes=10),
                 attempts=0,
             )
@@ -505,13 +687,12 @@ def reset_password(data: PasswordResetConfirm, db: DbSession):
     if not account:
         raise HTTPException(status_code=400, detail="The code is invalid or has expired")
     reset_code = db.scalar(
-        select(EmailVerificationCode)
+        select(AllOtp)
         .where(
-            EmailVerificationCode.email == email,
-            EmailVerificationCode.purpose == "password_reset",
-            EmailVerificationCode.used_at.is_(None),
+            AllOtp.email == email,
+            AllOtp.purpose.in_(["forgot_password", "password_reset"]),
         )
-        .order_by(EmailVerificationCode.created_at.desc())
+        .order_by(AllOtp.created_at.desc())
     )
     expires_at = reset_code.expires_at if reset_code else None
     if expires_at and expires_at.tzinfo is None:
@@ -521,7 +702,7 @@ def reset_password(data: PasswordResetConfirm, db: DbSession):
             db.delete(reset_code)
             db.commit()
         raise HTTPException(status_code=400, detail="The code is invalid or has expired")
-    if not verify_password(data.otp, reset_code.otp_hash):
+    if not verify_password(data.otp, reset_code.otp_code):
         reset_code.attempts += 1
         if reset_code.attempts >= 5:
             db.delete(reset_code)
@@ -648,14 +829,14 @@ def change_password(
     account.must_change_password = False
 
     # Revoke sessions on all other devices, keeping current device active
-    bearer_token = credentials.credentials if credentials and credentials.scheme.casefold() == "bearer" else None
-    cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
-    current_token = cookie_token or bearer_token
-    current_hash = hash_session_token(current_token) if current_token else None
-    query = db.query(UserSession).filter(UserSession.account_id == account.id)
-    if current_hash:
-        query = query.filter(UserSession.token_hash != current_hash)
-    query.update({UserSession.is_revoked: True}, synchronize_session=False)
+    current_sid = getattr(account, "session_id", None)
+    other_query = db.query(UserSession).filter(UserSession.account_id == account.id, UserSession.is_revoked == False)
+    if current_sid:
+        other_query = other_query.filter(UserSession.id != current_sid)
+    other_sessions = other_query.all()
+    for s in other_sessions:
+        s.is_revoked = True
+        mark_session_revoked(s.id)
 
     db.commit()
     invalidate_auth_cache(account_id=account.id)
@@ -669,8 +850,10 @@ def logout(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)] = None,
 ):
     bearer_token = credentials.credentials if credentials and credentials.scheme.casefold() == "bearer" else None
-    cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
-    if not bearer_token and cookie_token:
+    cookie_access = request.cookies.get(settings.access_cookie_name)
+    cookie_refresh = request.cookies.get(settings.refresh_cookie_name) or request.cookies.get(settings.session_cookie_name)
+
+    if not bearer_token and (cookie_access or cookie_refresh):
         csrf_cookie = request.cookies.get(CSRF_COOKIE_NAME)
         csrf_header = request.headers.get("x-csrf-token")
         if not csrf_cookie or not csrf_header or not secrets.compare_digest(csrf_header, csrf_cookie):
@@ -678,18 +861,35 @@ def logout(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="CSRF token missing or invalid",
             )
-    token = bearer_token or cookie_token
-    if token:
-        token_hash = hash_session_token(token)
-        db.query(UserSession).filter(UserSession.token_hash == token_hash).update(
-            {UserSession.is_revoked: True},
-            synchronize_session=False,
-        )
-        db.commit()
-        invalidate_auth_cache(token_hash=token_hash)
 
-    delete_session_cookie(response)
-    delete_csrf_cookie(response)
+    # 1. Revoke session by JWT sid if access token is present
+    access_tok = cookie_access or bearer_token
+    if access_tok:
+        try:
+            payload = decode_access_token(access_tok)
+            sid = payload.get("sid")
+            if sid:
+                mark_session_revoked(sid)
+                db.query(UserSession).filter(UserSession.id == sid).update(
+                    {UserSession.is_revoked: True},
+                    synchronize_session=False,
+                )
+        except Exception:
+            pass
+
+    # 2. Revoke session by refresh token hash if present
+    if cookie_refresh:
+        ref_hash = hash_session_token(cookie_refresh)
+        matched = db.query(UserSession).filter(
+            or_(UserSession.token_hash == ref_hash, UserSession.previous_token_hash == ref_hash)
+        ).all()
+        for s in matched:
+            s.is_revoked = True
+            mark_session_revoked(s.id)
+
+    db.commit()
+    delete_auth_cookies(response)
+    invalidate_auth_cache()
 
 
 @router.get("/sessions", response_model=list[UserSessionOut])
@@ -699,10 +899,9 @@ def list_sessions(
     db: DbSession,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)] = None,
 ):
-    bearer_token = credentials.credentials if credentials and credentials.scheme.casefold() == "bearer" else None
-    cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
-    current_token = cookie_token or bearer_token
-    current_hash = hash_session_token(current_token) if current_token else None
+    current_sid = getattr(account, "session_id", None)
+    cookie_refresh = request.cookies.get(settings.refresh_cookie_name) or request.cookies.get(settings.session_cookie_name)
+    current_hash = hash_session_token(cookie_refresh) if cookie_refresh else None
 
     sessions = (
         db.query(UserSession)
@@ -733,7 +932,11 @@ def list_sessions(
         loc_parts = [p for p in [city, country] if p and p != "Unknown"]
         location = ", ".join(loc_parts) if loc_parts else (city or country or "Unknown location")
 
-        is_cur = bool(current_hash and s.token_hash == current_hash)
+        is_cur = False
+        if current_sid:
+            is_cur = bool(s.id == current_sid)
+        elif current_hash:
+            is_cur = bool(s.token_hash == current_hash or s.previous_token_hash == current_hash)
 
         out.append(
             UserSessionOut(
@@ -773,18 +976,12 @@ def revoke_session(
 
     session.is_revoked = True
     db.commit()
-    invalidate_auth_cache(session.token_hash)
+    mark_session_revoked(session.id)
+    invalidate_auth_cache(token_hash=session.token_hash, account_id=session.account_id)
 
-    bearer_token = credentials.credentials if credentials and credentials.scheme.casefold() == "bearer" else None
-    cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
-    current_token = cookie_token or bearer_token
-    current_hash = hash_session_token(current_token) if current_token else None
-
-    # If the user revoked their currently active device session, delete cookie
-    is_current = bool(current_hash and session.token_hash == current_hash)
+    is_current = bool(account.session_id and session.id == account.session_id)
     if is_current:
-        delete_session_cookie(response)
-        delete_csrf_cookie(response)
+        delete_auth_cookies(response)
 
     return {"revoked": True, "is_current": is_current}
 
@@ -796,18 +993,17 @@ def revoke_other_sessions(
     db: DbSession,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)] = None,
 ):
-    bearer_token = credentials.credentials if credentials and credentials.scheme.casefold() == "bearer" else None
-    cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
-    current_token = cookie_token or bearer_token
-    current_hash = hash_session_token(current_token) if current_token else None
-
+    current_sid = getattr(account, "session_id", None)
     query = db.query(UserSession).filter(UserSession.account_id == account.id, UserSession.is_revoked == False)
-    if current_hash:
-        query = query.filter(UserSession.token_hash != current_hash)
-    count = query.update({UserSession.is_revoked: True}, synchronize_session=False)
+    if current_sid:
+        query = query.filter(UserSession.id != current_sid)
+    other_sessions = query.all()
+    for s in other_sessions:
+        s.is_revoked = True
+        mark_session_revoked(s.id)
     db.commit()
     invalidate_auth_cache(account_id=account.id)
 
-    return {"revoked_count": count}
+    return {"revoked_count": len(other_sessions)}
 
 

@@ -161,7 +161,7 @@ def list_categories(db: DbSession, response: Response):
         return cached
 
     items = db.scalars(select(MenuCategory).order_by(MenuCategory.name)).all()
-    cache.set(KEY_MENU_CATEGORIES, items, ttl_seconds=60.0)
+    cache.set(KEY_MENU_CATEGORIES, items, permanent=True)
     response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=300"
     return items
 
@@ -232,7 +232,7 @@ def list_menu(db: DbSession, response: Response):
         result["popularity_count"] = int(counts.get(item.id, 0) or 0)
         results.append(result)
 
-    cache.set(cache_key, results, ttl_seconds=20.0)
+    cache.set(cache_key, results, permanent=True)
     response.headers["Cache-Control"] = "public, max-age=15, stale-while-revalidate=30"
     return results
 
@@ -245,7 +245,7 @@ def list_all_menu(db: DbSession):
         return cached
 
     items = db.scalars(select(MenuItem).where(MenuItem.is_customizable.is_(False)).order_by(MenuItem.name)).all()
-    cache.set(cache_key, items, ttl_seconds=30.0)
+    cache.set(cache_key, items, permanent=True)
     return items
 
 

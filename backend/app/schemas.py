@@ -330,6 +330,7 @@ class TokenOut(BaseModel):
     email: str | None = None
     role: Role | None = None
     csrf_token: str | None = None
+    refresh_token: str | None = None
 
 
 class UserSessionOut(BaseModel):

@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { api, setAccessToken, setCsrfToken, type Account, type Role } from './api'
+import { api, setAccessToken, setRefreshToken, setCsrfToken, type Account, type Role } from './api'
 import { getCookieConsent, saveCookieConsent } from './cookies'
 
 export type AuthResponse = {
@@ -35,7 +35,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Validate active 30-day session with backend (HttpOnly cookie is attached automatically)
+    // Validate active session with backend (Bearer header + HttpOnly cookie fallback)
     api<Account>('/auth/me')
       .then((next) => {
         setAccount(next)
@@ -43,12 +43,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
       .catch(() => {
         setAccessToken(null)
+        setRefreshToken(null)
         setCsrfToken(null)
-        localStorage.removeItem('kz_account')
-        localStorage.removeItem('kz_access_token')
-        localStorage.removeItem('kz_csrf_token')
-        sessionStorage.removeItem('kz_account')
-        sessionStorage.removeItem('kz_access_token')
+        try {
+          localStorage.removeItem('kz_account')
+          localStorage.removeItem('kz_access_token')
+          localStorage.removeItem('kz_refresh_token')
+          localStorage.removeItem('kz_csrf_token')
+          sessionStorage.removeItem('kz_account')
+          sessionStorage.removeItem('kz_access_token')
+          sessionStorage.removeItem('kz_refresh_token')
+        } catch {}
         setAccount(null)
       })
       .finally(() => setLoading(false))
@@ -57,13 +62,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const custom = event as CustomEvent<{ message?: string; path?: string }>
       setAccount(null)
       setAccessToken(null)
+      setRefreshToken(null)
       setCsrfToken(null)
       try {
         localStorage.removeItem('kz_account')
         localStorage.removeItem('kz_access_token')
+        localStorage.removeItem('kz_refresh_token')
         localStorage.removeItem('kz_csrf_token')
         sessionStorage.removeItem('kz_account')
         sessionStorage.removeItem('kz_access_token')
+        sessionStorage.removeItem('kz_refresh_token')
       } catch {
         // ignore
       }
@@ -79,7 +87,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         pathname.startsWith('/change-password')
 
       if (isProtected) {
-        const msg = custom.detail?.message || 'Your session has expired or device was unrecognized. Please sign in again.'
+        const msg = custom.detail?.message || 'Your session has expired. Please sign in again.'
         const params = new URLSearchParams()
         params.set('reason', msg)
         window.location.assign(`/login?${params.toString()}`)
@@ -89,8 +97,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('kz_unauthorized', handleUnauthorized)
   }, [])
 
-  const accept = useCallback((result: { access_token?: string; csrf_token?: string; account: Account }) => {
+  const accept = useCallback((result: { access_token?: string; refresh_token?: string; csrf_token?: string; account: Account }) => {
     if (result.access_token) setAccessToken(result.access_token)
+    if (result.refresh_token) setRefreshToken(result.refresh_token)
     if (result.csrf_token) setCsrfToken(result.csrf_token)
     setAccount(result.account)
     localStorage.setItem('kz_account', JSON.stringify(result.account))
@@ -107,14 +116,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const signIn = useCallback(async (email: string, password: string): Promise<AuthResponse> => {
-    const result = await api<{ access_token?: string; csrf_token?: string; account?: Account; requires_2fa?: boolean; temp_token?: string; email?: string; role?: Role }>('/auth/login', {
+    const result = await api<{ access_token?: string; refresh_token?: string; csrf_token?: string; account?: Account; requires_2fa?: boolean; temp_token?: string; email?: string; role?: Role }>('/auth/login', {
       method: 'POST', body: JSON.stringify({ email, password }),
     })
     if (result.requires_2fa) {
       return result
     }
     if (result.account) {
-      accept({ access_token: result.access_token, csrf_token: result.csrf_token, account: result.account })
+      accept({ access_token: result.access_token, refresh_token: result.refresh_token, csrf_token: result.csrf_token, account: result.account })
       return { account: result.account }
     }
     return result
@@ -122,7 +131,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const register = useCallback(async (name: string, email: string, phone: string, password: string) => {
     const consent = getCookieConsent()
-    const result = await api<{ access_token?: string; csrf_token?: string; account: Account }>('/auth/register', {
+    const result = await api<{ access_token?: string; refresh_token?: string; csrf_token?: string; account: Account }>('/auth/register', {
       method: 'POST', body: JSON.stringify({
         name,
         email,
@@ -135,21 +144,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [accept])
 
   const googleSignIn = useCallback(async (credential: string): Promise<AuthResponse> => {
-    const result = await api<{ access_token?: string; csrf_token?: string; account?: Account; requires_2fa?: boolean; temp_token?: string; email?: string; role?: Role }>('/auth/google', {
+    const result = await api<{ access_token?: string; refresh_token?: string; csrf_token?: string; account?: Account; requires_2fa?: boolean; temp_token?: string; email?: string; role?: Role }>('/auth/google', {
       method: 'POST', body: JSON.stringify({ credential }),
     })
     if (result.requires_2fa) {
       return result
     }
     if (result.account) {
-      accept({ access_token: result.access_token, csrf_token: result.csrf_token, account: result.account })
+      accept({ access_token: result.access_token, refresh_token: result.refresh_token, csrf_token: result.csrf_token, account: result.account })
       return { account: result.account }
     }
     return result
   }, [accept])
 
   const verify2fa = useCallback(async (temp_token: string, code: string): Promise<Account> => {
-    const result = await api<{ access_token?: string; csrf_token?: string; account: Account }>('/auth/verify-2fa', {
+    const result = await api<{ access_token?: string; refresh_token?: string; csrf_token?: string; account: Account }>('/auth/verify-2fa', {
       method: 'POST', body: JSON.stringify({ temp_token, code }),
     })
     return accept(result)
@@ -158,12 +167,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(() => {
     api('/auth/logout', { method: 'POST' }).catch(() => {})
     setAccessToken(null)
+    setRefreshToken(null)
     setCsrfToken(null)
-    localStorage.removeItem('kz_account')
-    localStorage.removeItem('kz_access_token')
-    localStorage.removeItem('kz_csrf_token')
-    sessionStorage.removeItem('kz_account')
-    sessionStorage.removeItem('kz_access_token')
+    try {
+      localStorage.removeItem('kz_account')
+      localStorage.removeItem('kz_access_token')
+      localStorage.removeItem('kz_refresh_token')
+      localStorage.removeItem('kz_csrf_token')
+      sessionStorage.removeItem('kz_account')
+      sessionStorage.removeItem('kz_access_token')
+      sessionStorage.removeItem('kz_refresh_token')
+    } catch {}
     setAccount(null)
   }, [])
 

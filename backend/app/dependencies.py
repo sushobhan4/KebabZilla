@@ -11,12 +11,14 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session, joinedload
 
-from app.cache import auth_cache, auth_metrics
+from app.cache import auth_cache, auth_metrics, is_account_revoked, is_session_revoked
 from app.config import settings
 from app.db import get_db
 from app.models import Account, Role, StaffInfo, UserSession, utcnow
 from app.security import (
+    ACCESS_COOKIE_NAME,
     CSRF_COOKIE_NAME,
+    REFRESH_COOKIE_NAME,
     SESSION_COOKIE_NAME,
     SESSION_LIFETIME_DAYS,
     compute_device_fingerprint,
@@ -131,10 +133,10 @@ def current_auth_base(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    # 1. Check Authorization Bearer header first, then fall back to HttpOnly cookie
+    # 1. Primary: HttpOnly access cookie (kz_access). Fallback: Bearer header, legacy session cookie
     bearer_token = credentials.credentials if (credentials and credentials.scheme.casefold() == "bearer") else None
-    cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
-    token = bearer_token or cookie_token
+    cookie_token = request.cookies.get(settings.access_cookie_name) or request.cookies.get(settings.session_cookie_name)
+    token = cookie_token or bearer_token
 
     if not token:
         raise unauthorized
@@ -150,6 +152,86 @@ def current_auth_base(
             )
 
     now = utcnow()
+
+    # 2. Fast Path: Stateless JWT Access Token verification
+    try:
+        payload = decode_access_token(token)
+        account_id = int(payload["sub"])
+        session_id = payload.get("sid")
+
+        # Instant 0.1ms Revocation Blacklist check in cache
+        if (session_id and is_session_revoked(session_id)) or is_account_revoked(account_id):
+            auth_metrics.record_miss()
+            raise unauthorized
+
+        # Read hydrated account profile from auth_cache or DB
+        cached_prof = auth_cache.get(f"account_profile:{account_id}")
+        exp_dt = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+        if cached_prof and isinstance(cached_prof, dict):
+            auth_metrics.record_hit()
+            role_val = cached_prof.get("role", Role.USER)
+            try:
+                role = Role(role_val)
+            except ValueError:
+                role = Role.USER
+            auth = AuthContext(
+                id=account_id,
+                name=str(cached_prof.get("name", "")),
+                email=str(cached_prof.get("email", "")),
+                phone=cached_prof.get("phone"),
+                role=role,
+                must_change_password=bool(cached_prof.get("must_change_password", False)),
+                is_accepting_deliveries=bool(cached_prof.get("is_accepting_deliveries", False)),
+                promotional_consent=bool(cached_prof.get("promotional_consent", True)),
+                session_id=session_id,
+                token_hash=None,
+                device_fingerprint=None,
+                expires_at=exp_dt,
+            )
+            auth_metrics.record_auth_latency((time.perf_counter() - start_time) * 1000)
+            return auth
+
+        # Fallback to database load for account profile if not yet in cache
+        auth_metrics.record_db_fallback()
+        account = db.get(Account, account_id, options=[joinedload(Account.staff_info)])
+        if account is None:
+            raise unauthorized
+
+        is_staff = account.role != Role.USER
+        mcp = bool(account.must_change_password) if is_staff else False
+        iad = bool(account.is_accepting_deliveries) if (account.role in (Role.ADMIN, Role.DELIVERY)) else False
+
+        prof_dict = {
+            "name": account.name,
+            "email": account.email,
+            "phone": account.phone,
+            "role": account.role.value if isinstance(account.role, Role) else str(account.role),
+            "must_change_password": mcp,
+            "is_accepting_deliveries": iad,
+            "promotional_consent": bool(account.promotional_consent),
+        }
+        auth_cache.set(f"account_profile:{account_id}", prof_dict, ttl_seconds=120.0, account_id=account_id)
+
+        auth = AuthContext(
+            id=account.id,
+            name=account.name,
+            email=account.email,
+            phone=account.phone,
+            role=account.role,
+            must_change_password=mcp,
+            is_accepting_deliveries=iad,
+            promotional_consent=bool(account.promotional_consent),
+            session_id=session_id,
+            token_hash=None,
+            device_fingerprint=None,
+            expires_at=exp_dt,
+        )
+        auth_metrics.record_auth_latency((time.perf_counter() - start_time) * 1000)
+        return auth
+    except (jwt.InvalidTokenError, ValueError, KeyError):
+        # Token is not a short-lived access JWT; continue below to check if it's an opaque session token
+        pass
+
     token_hash = hash_session_token(token)
     user_agent = request.headers.get("user-agent", "")
     current_fp = compute_device_fingerprint(user_agent)
@@ -194,12 +276,6 @@ def current_auth_base(
         if auth.expires_at <= now:
             auth_cache.delete(token_hash)
             raise unauthorized
-        if auth.device_fingerprint and auth.device_fingerprint != current_fp:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Session device unrecognized",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
         maybe_extend_session(auth, last_active, cached)
         auth_metrics.record_auth_latency((time.perf_counter() - start_time) * 1000)
         return auth
@@ -215,12 +291,6 @@ def current_auth_base(
             if auth.expires_at <= now:
                 auth_cache.delete(token_hash)
                 raise unauthorized
-            if auth.device_fingerprint and auth.device_fingerprint != current_fp:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Session device unrecognized",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
             maybe_extend_session(auth, last_active, cached)
             auth_metrics.record_auth_latency((time.perf_counter() - start_time) * 1000)
             return auth
@@ -289,20 +359,14 @@ def current_auth_base(
             cache_data = auth_context_to_cache(auth, last_act)
             auth_cache.set(token_hash, cache_data, ttl_seconds=60.0, account_id=auth.id)
 
-            if row.device_fingerprint and row.device_fingerprint != current_fp:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Session device unrecognized",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-
             maybe_extend_session(auth, last_act, cache_data)
             auth_metrics.record_auth_latency((time.perf_counter() - start_time) * 1000)
             return auth
 
     # 3. Fallback: Support legacy JWT tokens for backward compatibility
     try:
-        account_id = decode_access_token(token)
+        decoded_payload = decode_access_token(token)
+        account_id = int(decoded_payload["sub"])
     except (jwt.InvalidTokenError, ValueError, KeyError):
         raise unauthorized
     account = db.get(Account, account_id, options=[joinedload(Account.staff_info)])

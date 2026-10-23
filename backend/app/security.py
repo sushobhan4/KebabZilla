@@ -76,6 +76,15 @@ def compute_device_fingerprint(user_agent: str | None) -> str:
     return hashlib.sha256(normalized_ua.encode("utf-8")).hexdigest()
 
 
+def compute_composite_device_fingerprint(client_fp: str | None, user_agent: str | None) -> str:
+    """Compute silicon hardware-backed composite device fingerprint combining client hardware
+    signals (WebGL, CPU arch, concurrency, memory) with normalized User-Agent.
+    """
+    normalized_ua = normalize_user_agent_for_fingerprint(user_agent)
+    raw = f"{client_fp.strip() if client_fp else 'empty'}###{normalized_ua}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 def parse_device_info(user_agent: str | None) -> dict[str, str]:
     ua = (user_agent or "").strip()
     device_type = "desktop"
@@ -107,12 +116,35 @@ def parse_device_info(user_agent: str | None) -> dict[str, str]:
         device_name = "Windows"
     elif "Macintosh" in ua or "Mac OS" in ua:
         device_type = "desktop"
-        device_name = "Mac"
+        device_name = "macOS"
     elif "Linux" in ua:
         device_type = "desktop"
         device_name = "Linux"
 
     return {"device_name": device_name, "device_type": device_type}
+
+
+def resolve_device_name(client_device_name: str | None, user_agent: str | None) -> dict[str, str]:
+    """Resolve human-readable device name prioritizing exact client hardware hint."""
+    parsed = parse_device_info(user_agent)
+    if client_device_name and client_device_name.strip():
+        raw_name = client_device_name.strip()[:128]
+        lower = raw_name.lower()
+        if lower in ("windows", "win"):
+            raw_name = "Windows"
+            parsed["device_type"] = "desktop"
+        elif lower in ("macos", "mac", "macintosh"):
+            raw_name = "macOS"
+            parsed["device_type"] = "desktop"
+        elif lower in ("linux",):
+            raw_name = "Linux"
+            parsed["device_type"] = "desktop"
+        elif "iphone" in lower:
+            parsed["device_type"] = "mobile"
+        elif "ipad" in lower:
+            parsed["device_type"] = "tablet"
+        parsed["device_name"] = raw_name
+    return parsed
 
 
 @functools.lru_cache(maxsize=2048)
@@ -152,18 +184,62 @@ def get_cookie_security_params() -> dict:
     secure = settings.session_cookie_secure if settings.session_cookie_secure is not None else is_production
     samesite = settings.session_cookie_samesite.lower()
 
-    if samesite not in ("lax", "strict"):
+    if samesite not in ("lax", "strict", "none"):
         samesite = "lax"
 
-    return {
+    params = {
         "httponly": True,
         "secure": secure,
         "samesite": samesite,
         "path": "/",
     }
+    if settings.session_cookie_domain:
+        params["domain"] = settings.session_cookie_domain
+    return params
+
+
+ACCESS_COOKIE_NAME = settings.access_cookie_name
+REFRESH_COOKIE_NAME = settings.refresh_cookie_name
+
+
+def get_refresh_cookie_path() -> str:
+    prefix = (settings.api_prefix or "").rstrip("/")
+    return f"{prefix}/auth" if prefix else "/auth"
+
+
+def set_access_cookie(response: Response, token: str) -> None:
+    params = get_cookie_security_params()
+    response.set_cookie(
+        key=settings.access_cookie_name,
+        value=token,
+        max_age=settings.access_token_seconds,
+        expires=settings.access_token_seconds,
+        path="/",
+        domain=params.get("domain"),
+        httponly=params.get("httponly", True),
+        secure=params.get("secure", False),
+        samesite=params.get("samesite", "lax"),
+    )
+
+
+def set_refresh_cookie(response: Response, raw_token: str) -> None:
+    params = get_cookie_security_params()
+    max_age = settings.session_lifetime_days * 86400
+    response.set_cookie(
+        key=settings.refresh_cookie_name,
+        value=raw_token,
+        max_age=max_age,
+        expires=max_age,
+        path=get_refresh_cookie_path(),
+        domain=params.get("domain"),
+        httponly=params.get("httponly", True),
+        secure=params.get("secure", False),
+        samesite=params.get("samesite", "lax"),
+    )
 
 
 def set_session_cookie(response: Response, raw_token: str) -> None:
+    """Legacy session cookie helper."""
     params = get_cookie_security_params()
     max_age = settings.session_lifetime_days * 86400
     response.set_cookie(
@@ -171,19 +247,67 @@ def set_session_cookie(response: Response, raw_token: str) -> None:
         value=raw_token,
         max_age=max_age,
         expires=max_age,
+        domain=params.get("domain"),
         **params,
     )
 
 
 def delete_session_cookie(response: Response) -> None:
+    """Legacy session cookie deletion helper."""
     params = get_cookie_security_params()
     response.delete_cookie(
         key=settings.session_cookie_name,
         path=params.get("path", "/"),
+        domain=params.get("domain"),
         httponly=params.get("httponly", True),
         secure=params.get("secure", False),
         samesite=params.get("samesite", "lax"),
     )
+
+
+def delete_auth_cookies(response: Response) -> None:
+    """Delete all authentication cookies (access, refresh, legacy, csrf)."""
+    params = get_cookie_security_params()
+    refresh_path = get_refresh_cookie_path()
+
+    # 1. Access cookie
+    response.delete_cookie(
+        key=settings.access_cookie_name,
+        path="/",
+        domain=params.get("domain"),
+        httponly=params.get("httponly", True),
+        secure=params.get("secure", False),
+        samesite=params.get("samesite", "lax"),
+    )
+    # 2. Refresh cookie (on configured API prefix and fallback /auth)
+    response.delete_cookie(
+        key=settings.refresh_cookie_name,
+        path=refresh_path,
+        domain=params.get("domain"),
+        httponly=params.get("httponly", True),
+        secure=params.get("secure", False),
+        samesite=params.get("samesite", "lax"),
+    )
+    if refresh_path != "/auth":
+        response.delete_cookie(
+            key=settings.refresh_cookie_name,
+            path="/auth",
+            domain=params.get("domain"),
+            httponly=params.get("httponly", True),
+            secure=params.get("secure", False),
+            samesite=params.get("samesite", "lax"),
+        )
+    # 3. Legacy session cookie
+    response.delete_cookie(
+        key=settings.session_cookie_name,
+        path="/",
+        domain=params.get("domain"),
+        httponly=params.get("httponly", True),
+        secure=params.get("secure", False),
+        samesite=params.get("samesite", "lax"),
+    )
+    # 4. CSRF cookie
+    delete_csrf_cookie(response)
 
 
 CSRF_COOKIE_NAME = "kz_csrf_token"
@@ -202,6 +326,7 @@ def set_csrf_cookie(response: Response, token: str) -> None:
         max_age=max_age,
         expires=max_age,
         path=params.get("path", "/"),
+        domain=params.get("domain"),
         httponly=False,
         secure=params.get("secure", False),
         samesite=params.get("samesite", "lax"),
@@ -213,30 +338,41 @@ def delete_csrf_cookie(response: Response) -> None:
     response.delete_cookie(
         key=CSRF_COOKIE_NAME,
         path=params.get("path", "/"),
+        domain=params.get("domain"),
         httponly=False,
         secure=params.get("secure", False),
         samesite=params.get("samesite", "lax"),
     )
 
 
-def create_access_token(account_id: int) -> tuple[str, int]:
-    expires_in = settings.access_token_minutes * 60
+def create_access_token(
+    account_id: int,
+    session_id: int | None = None,
+    role: str | None = None,
+    expires_seconds: int = 120,
+) -> tuple[str, int]:
+    """Create short-lived HS256 JWT access token with unique jti, sid, role, and sub."""
     now = datetime.now(timezone.utc)
+    jti = secrets.token_hex(8)  # 16 hex characters
     payload = {
         "sub": str(account_id),
+        "sid": session_id,
+        "jti": jti,
+        "role": str(role) if role else None,
         "iss": settings.jwt_issuer,
         "iat": now,
-        "exp": now + timedelta(seconds=expires_in),
+        "exp": now + timedelta(seconds=expires_seconds),
         "type": "access",
     }
-    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256"), expires_in
+    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256"), expires_seconds
 
 
-def decode_access_token(token: str) -> int:
+def decode_access_token(token: str) -> dict:
+    """Decode and validate short-lived HS256 JWT access token claims."""
     payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"], issuer=settings.jwt_issuer)
     if payload.get("type") != "access":
         raise jwt.InvalidTokenError("Wrong token type")
-    return int(payload["sub"])
+    return payload
 
 
 import phonenumbers

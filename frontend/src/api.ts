@@ -1,10 +1,7 @@
+import { getExactDeviceName, getStableDeviceFingerprint } from './device'
+
 const rawBase = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '')
 export const API_BASE = rawBase.endsWith('/api/v1') ? rawBase : `${rawBase}/api/v1`
-
-let accessToken: string | null = null
-try {
-  accessToken = localStorage.getItem('kz_access_token')
-} catch {}
 
 let memoryCsrfToken: string | null = null
 try {
@@ -57,12 +54,46 @@ export function clearApiCache(prefix?: string) {
   }
 }
 
+let memoryAccessToken: string | null = null
+try {
+  memoryAccessToken = localStorage.getItem('kz_access_token')
+} catch {}
+
+export function getAccessToken(): string | null {
+  return memoryAccessToken
+}
+
 export function setAccessToken(token: string | null) {
-  accessToken = token
+  memoryAccessToken = token
   clearApiCache()
   try {
-    if (token) localStorage.setItem('kz_access_token', token)
-    else localStorage.removeItem('kz_access_token')
+    if (token) {
+      localStorage.setItem('kz_access_token', token)
+    } else {
+      localStorage.removeItem('kz_access_token')
+      sessionStorage.removeItem('kz_access_token')
+    }
+  } catch {}
+}
+
+let memoryRefreshToken: string | null = null
+try {
+  memoryRefreshToken = localStorage.getItem('kz_refresh_token')
+} catch {}
+
+export function getRefreshToken(): string | null {
+  return memoryRefreshToken
+}
+
+export function setRefreshToken(token: string | null) {
+  memoryRefreshToken = token
+  try {
+    if (token) {
+      localStorage.setItem('kz_refresh_token', token)
+    } else {
+      localStorage.removeItem('kz_refresh_token')
+      sessionStorage.removeItem('kz_refresh_token')
+    }
   } catch {}
 }
 
@@ -84,6 +115,90 @@ function getCsrfToken(): string | null {
 
 export type ApiInit = RequestInit & {
   skipCache?: boolean
+  _isRetry?: boolean
+}
+
+let refreshPromise: Promise<boolean> | null = null
+
+/**
+ * Mutex queue: Ensures only 1 refresh request is fired at a time even if multiple requests return 401 concurrently.
+ */
+async function silentRefresh(): Promise<boolean> {
+  if (refreshPromise) {
+    return refreshPromise
+  }
+  refreshPromise = (async () => {
+    try {
+      const [fingerprint, deviceName] = await Promise.all([
+        getStableDeviceFingerprint().catch(() => ''),
+        getExactDeviceName().catch(() => ''),
+      ])
+      const headers = new Headers({
+        'Content-Type': 'application/json',
+      })
+      if (fingerprint) headers.set('X-Device-Fingerprint', fingerprint)
+      if (deviceName) headers.set('X-Device-Name', deviceName)
+
+      const rToken = getRefreshToken()
+      if (rToken) headers.set('X-Refresh-Token', rToken)
+
+      const csrf = getCsrfToken()
+      if (csrf) headers.set('X-CSRF-Token', csrf)
+
+      const res = await fetch(`${API_BASE}/auth/refresh`, {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+      })
+
+      const csrfHeader = res.headers.get('x-csrf-token')
+      if (csrfHeader) {
+        setCsrfToken(csrfHeader)
+      }
+
+      if (res.ok) {
+        const data = await res.json().catch(() => null) as {
+          access_token?: string
+          refresh_token?: string
+          account?: unknown
+          csrf_token?: string
+        } | null
+
+        if (data?.access_token) {
+          setAccessToken(data.access_token)
+        }
+        if (data?.refresh_token) {
+          setRefreshToken(data.refresh_token)
+        }
+        if (data?.csrf_token) {
+          setCsrfToken(data.csrf_token)
+        }
+        if (data?.account) {
+          try {
+            localStorage.setItem('kz_account', JSON.stringify(data.account))
+          } catch {}
+        }
+        return true
+      } else {
+        if (res.status === 401 || res.status === 403) {
+          setAccessToken(null)
+          setRefreshToken(null)
+          setCsrfToken(null)
+          try {
+            localStorage.removeItem('kz_account')
+            sessionStorage.removeItem('kz_account')
+          } catch {}
+        }
+        return false
+      }
+    } catch {
+      return false
+    } finally {
+      refreshPromise = null
+    }
+  })()
+
+  return refreshPromise
 }
 
 export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
@@ -111,11 +226,28 @@ export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
   const executeRequest = async (): Promise<T> => {
     const headers = new Headers(init.headers)
     if (init.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
-    if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
+    
+    // Attach Bearer token if present (immune to cross-subdomain/cross-port cookie blocking)
+    const token = getAccessToken()
+    if (token && !headers.has('Authorization')) {
+      headers.set('Authorization', `Bearer ${token}`)
+    }
+
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
       const csrf = getCsrfToken()
-      if (csrf) headers.set('X-CSRF-Token', csrf)
+      if (csrf && !headers.has('X-CSRF-Token')) headers.set('X-CSRF-Token', csrf)
     }
+
+    // Attach silicon hardware fingerprint and exact device name on auth endpoints
+    if (['/auth/login', '/auth/verify-2fa', '/auth/google', '/auth/refresh'].some((p) => path.startsWith(p))) {
+      const [fingerprint, deviceName] = await Promise.all([
+        getStableDeviceFingerprint().catch(() => ''),
+        getExactDeviceName().catch(() => ''),
+      ])
+      if (fingerprint && !headers.has('X-Device-Fingerprint')) headers.set('X-Device-Fingerprint', fingerprint)
+      if (deviceName && !headers.has('X-Device-Name')) headers.set('X-Device-Name', deviceName)
+    }
+
     let response: Response
     try {
       response = await fetch(`${API_BASE}${path}`, {
@@ -130,7 +262,22 @@ export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
     if (responseCsrf) {
       setCsrfToken(responseCsrf)
     }
+
     if (!response.ok) {
+      const isAuthPath =
+        path.startsWith('/auth/login') ||
+        path.startsWith('/auth/refresh') ||
+        path.startsWith('/auth/register') ||
+        path.startsWith('/auth/verify-2fa')
+
+      // Transparent 401 Silent Refresh Queue: Retry once after rotating tokens
+      if (response.status === 401 && !isAuthPath && !init._isRetry) {
+        const refreshed = await silentRefresh()
+        if (refreshed) {
+          return api<T>(path, { ...init, _isRetry: true })
+        }
+      }
+
       const problem = await response.json().catch(() => null) as { detail?: unknown; message?: unknown } | null
       const detail = problem?.detail
       const validationMessages = Array.isArray(detail)
@@ -150,12 +297,15 @@ export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
         !path.startsWith('/auth/verify-2fa')
       ) {
         setAccessToken(null)
+        setRefreshToken(null)
         setCsrfToken(null)
         try {
           localStorage.removeItem('kz_access_token')
+          localStorage.removeItem('kz_refresh_token')
           localStorage.removeItem('kz_csrf_token')
           localStorage.removeItem('kz_account')
           sessionStorage.removeItem('kz_access_token')
+          sessionStorage.removeItem('kz_refresh_token')
           sessionStorage.removeItem('kz_account')
         } catch {
           // Ignore storage restrictions in private tabs
@@ -165,7 +315,7 @@ export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
           window.dispatchEvent(
             new CustomEvent('kz_unauthorized', {
               detail: {
-                message: message || 'Session expired or device unrecognized. Please sign in again.',
+                message: message || 'Session expired. Please sign in again.',
                 status: 401,
                 path,
               },

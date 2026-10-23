@@ -483,7 +483,7 @@ async def claim_recommended_batch(data: BatchClaimInput, account: CurrentAccount
                 db.rollback()
                 raise HTTPException(status_code=409, detail="This batch was just claimed by another rider. Refresh to see the remaining deliveries.")
             transition_order(order, OrderStatus.OUT_FOR_DELIVERY)
-            otp = create_delivery_otp(order)
+            otp = create_delivery_otp(order, db)
             customer_email = order.customer.email if order.customer else None
             notifications_to_send.append({
                 "phone": order.customer_phone or (order.customer.phone if order.customer else None),
@@ -533,7 +533,7 @@ async def claim_order(order_id: str, account: CurrentAccount, db: DbSession):
             raise HTTPException(status_code=404, detail="Delivery not found")
         transition_order(order, OrderStatus.OUT_FOR_DELIVERY)
         db.add(AdminEvent(event_type="delivery_claimed", message=f"{account.name} picked order {order.order_id}", actor_id=account.id, details={"order_id": order.order_id, "delivery_id": account.id, "delivery_name": account.name}))
-        otp = create_delivery_otp(order)
+        otp = create_delivery_otp(order, db)
 
         # Create a single-order batch entry so the driver map and batches stay in sync
         batch = DeliveryBatch(delivery_id=account.id, route_label=f"Single delivery route · 1 stop")
@@ -606,7 +606,7 @@ def deliver(order_id: str, data: VerifyOtpInput, account: CurrentAccount, db: Db
         raise HTTPException(status_code=404, detail="Active delivery not found")
     if order.delivery_otp_attempts >= 5:
         raise HTTPException(status_code=429, detail="Too many incorrect delivery code attempts. Please contact the customer or dispatch.")
-    if not verify_delivery_otp(order, data.otp):
+    if not verify_delivery_otp(order, data.otp, db=db):
         order.delivery_otp_attempts += 1
         db.commit()
         raise HTTPException(status_code=400, detail="The delivery code is incorrect or expired")

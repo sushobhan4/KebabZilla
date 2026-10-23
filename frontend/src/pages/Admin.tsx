@@ -717,6 +717,13 @@ function AdminOrders() {
               </b>
             </button>
             <button
+              className={filter === "CANCELLED" ? "active" : ""}
+              onClick={() => selectFilter("CANCELLED")}
+            >
+              Cancelled{" "}
+              <b>{pageData?.status_counts?.CANCELLED || 0}</b>
+            </button>
+            <button
               className={filter === "REJECTED" ? "active" : ""}
               onClick={() => selectFilter("REJECTED")}
             >
@@ -843,33 +850,24 @@ function AdminOrders() {
                     const nextStatus = getNextStatus(effectiveStatus);
                     const isDelivered = effectiveStatus === "DELIVERED";
                     const isRejected = order.status === "REJECTED" || effectiveStatus === "REJECTED";
+                    const isCancelled = order.status === "CANCELLED" || effectiveStatus === "CANCELLED";
 
                     return (
-                      <div className="admin-order-tools" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.5rem" }}>
-                        {order.payment_status === "PAID" && order.payment_method === "RAZORPAY" && (
-                          <Button
-                            variant="danger"
-                            size="button-sm"
-                            disabled={busyId === order.order_id}
-                            onClick={() => setRefundOrder(order)}
-                          >
-                            Refund payment <ArrowRight size={13} />
-                          </Button>
-                        )}
-                        {order.payment_status === "REFUND_PENDING" && (
-                          <Badge tone="amber">Refund processing</Badge>
-                        )}
-
+                      <div className="admin-order-tools" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "flex-end", gap: "0.5rem" }}>
                         {isDelivered ? (
-                          <span style={{ marginLeft: "auto", fontSize: "0.82rem", fontWeight: 600, color: "var(--muted)" }}>
+                          <span style={{ fontSize: "0.82rem", fontWeight: 600, color: "var(--muted)" }}>
                             Delivered · Status completed
                           </span>
                         ) : isRejected ? (
-                          <span style={{ marginLeft: "auto", fontSize: "0.82rem", fontWeight: 600, color: "#dc2626" }}>
+                          <span style={{ fontSize: "0.82rem", fontWeight: 600, color: "#dc2626" }}>
                             Rejected · Status finalized
                           </span>
+                        ) : isCancelled ? (
+                          <span style={{ fontSize: "0.82rem", fontWeight: 600, color: "#dc2626" }}>
+                            Cancelled · Status finalized
+                          </span>
                         ) : (
-                          <div className="admin-status-stepper-wrap" style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "6px" }}>
+                          <div className="admin-status-stepper-wrap" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                             <small style={{ color: "var(--muted)", fontSize: "0.78rem", fontWeight: 600 }}>STATUS:</small>
                             <button
                               type="button"
@@ -930,6 +928,20 @@ function AdminOrders() {
                               <ChevronRight size={16} />
                             </button>
                           </div>
+                        )}
+
+                        {order.payment_status === "PAID" && order.payment_method === "RAZORPAY" && (
+                          <Button
+                            variant="danger"
+                            size="button-sm"
+                            disabled={busyId === order.order_id}
+                            onClick={() => setRefundOrder(order)}
+                          >
+                            Refund payment <ArrowRight size={13} />
+                          </Button>
+                        )}
+                        {order.payment_status === "REFUND_PENDING" && (
+                          <Badge tone="amber">Refund processing</Badge>
                         )}
                       </div>
                     );

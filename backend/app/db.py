@@ -95,6 +95,10 @@ if settings.database_url.startswith("sqlite"):
                     cursor.execute("ALTER TABLE user_sessions ADD COLUMN region VARCHAR(64) DEFAULT ''")
                 if "city" not in session_cols:
                     cursor.execute("ALTER TABLE user_sessions ADD COLUMN city VARCHAR(64) DEFAULT ''")
+                if "previous_token_hash" not in session_cols:
+                    cursor.execute("ALTER TABLE user_sessions ADD COLUMN previous_token_hash VARCHAR(64)")
+                if "grace_period_until" not in session_cols:
+                    cursor.execute("ALTER TABLE user_sessions ADD COLUMN grace_period_until DATETIME")
 
             cursor.execute("PRAGMA table_info(account_addresses)")
             addr_cols = {row[1] for row in cursor.fetchall()}
@@ -125,30 +129,61 @@ if settings.database_url.startswith("sqlite"):
                     AND account_id IN (SELECT id FROM accounts WHERE role NOT IN ('DELIVERY', 'ADMIN'))
                 """)
 
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS email_verification_codes (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    email VARCHAR(255),
-                    account_id INTEGER,
-                    otp_hash VARCHAR(255),
-                    purpose VARCHAR(32) DEFAULT 'register',
-                    expires_at DATETIME,
-                    attempts INTEGER DEFAULT 0,
-                    used_at DATETIME,
-                    created_at DATETIME
-                )
-            """)
-            cursor.execute("PRAGMA table_info(email_verification_codes)")
-            ev_cols = {row[1] for row in cursor.fetchall()}
-            if ev_cols and "account_id" not in ev_cols:
-                cursor.execute("ALTER TABLE email_verification_codes ADD COLUMN account_id INTEGER")
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='all_otp'")
+            if not cursor.fetchall():
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='two_factor_challenges'")
+                if cursor.fetchall():
+                    cursor.execute("ALTER TABLE two_factor_challenges RENAME TO all_otp")
+                else:
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS all_otp (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            purpose VARCHAR(32) DEFAULT '2fa',
+                            otp_code VARCHAR(255),
+                            token_hash VARCHAR(64) UNIQUE,
+                            account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
+                            email VARCHAR(255),
+                            order_id VARCHAR(20) REFERENCES orders(order_id) ON DELETE CASCADE,
+                            attempts INTEGER DEFAULT 0,
+                            expires_at DATETIME,
+                            created_at DATETIME
+                        )
+                    """)
 
-            cursor.execute("PRAGMA table_info(password_reset_codes)")
+            cursor.execute("PRAGMA table_info(all_otp)")
+            all_otp_cols = {row[1] for row in cursor.fetchall()}
+            if all_otp_cols:
+                if "purpose" not in all_otp_cols:
+                    cursor.execute("ALTER TABLE all_otp ADD COLUMN purpose VARCHAR(32) DEFAULT '2fa'")
+                if "otp_code" not in all_otp_cols:
+                    cursor.execute("ALTER TABLE all_otp ADD COLUMN otp_code VARCHAR(255)")
+                if "email" not in all_otp_cols:
+                    cursor.execute("ALTER TABLE all_otp ADD COLUMN email VARCHAR(255)")
+                if "order_id" not in all_otp_cols:
+                    cursor.execute("ALTER TABLE all_otp ADD COLUMN order_id VARCHAR(20)")
+                if "code_hash" in all_otp_cols:
+                    cursor.execute("UPDATE all_otp SET otp_code = code_hash WHERE otp_code IS NULL AND code_hash IS NOT NULL")
+                cursor.execute("UPDATE all_otp SET purpose = '2fa' WHERE purpose IS NULL")
+
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='email_verification_codes'")
             if cursor.fetchall():
                 try:
                     cursor.execute("""
-                        INSERT INTO email_verification_codes (email, account_id, otp_hash, purpose, expires_at, attempts, created_at)
-                        SELECT accounts.email, prc.account_id, prc.otp_hash, 'password_reset', prc.expires_at, prc.attempts, prc.created_at
+                        INSERT INTO all_otp (email, account_id, otp_code, purpose, expires_at, attempts, created_at)
+                        SELECT email, account_id, otp_hash, COALESCE(purpose, 'register'), expires_at, attempts, created_at
+                        FROM email_verification_codes
+                        WHERE expires_at > CURRENT_TIMESTAMP
+                    """)
+                except Exception:
+                    pass
+                cursor.execute("DROP TABLE IF EXISTS email_verification_codes")
+
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='password_reset_codes'")
+            if cursor.fetchall():
+                try:
+                    cursor.execute("""
+                        INSERT INTO all_otp (email, account_id, otp_code, purpose, expires_at, attempts, created_at)
+                        SELECT accounts.email, prc.account_id, prc.otp_hash, 'forgot_password', prc.expires_at, prc.attempts, prc.created_at
                         FROM password_reset_codes prc
                         JOIN accounts ON accounts.id = prc.account_id
                         WHERE prc.expires_at > CURRENT_TIMESTAMP
@@ -156,6 +191,8 @@ if settings.database_url.startswith("sqlite"):
                 except Exception:
                     pass
                 cursor.execute("DROP TABLE IF EXISTS password_reset_codes")
+
+            cursor.execute("DELETE FROM all_otp WHERE expires_at <= CURRENT_TIMESTAMP")
         except Exception:
             pass
         cursor.close()
@@ -185,6 +222,9 @@ else:
                         ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS country VARCHAR(64) DEFAULT '';
                         ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS region VARCHAR(64) DEFAULT '';
                         ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS city VARCHAR(64) DEFAULT '';
+                        ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS previous_token_hash VARCHAR(64);
+                        ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS grace_period_until TIMESTAMPTZ;
+                        CREATE INDEX IF NOT EXISTS ix_user_sessions_previous_token_hash ON user_sessions(previous_token_hash);
                         ALTER TABLE account_addresses ADD COLUMN IF NOT EXISTS distance_meters INTEGER;
                         ALTER TABLE staff_info ADD COLUMN IF NOT EXISTS role VARCHAR(16);
                         DELETE FROM staff_info WHERE account_id IN (SELECT id FROM accounts WHERE role = 'USER');
@@ -199,29 +239,69 @@ else:
                         SET is_accepting_deliveries = false
                         WHERE is_accepting_deliveries = true
                         AND account_id IN (SELECT id FROM accounts WHERE role NOT IN ('DELIVERY', 'ADMIN'));
-                        CREATE TABLE IF NOT EXISTS email_verification_codes (
-                            id SERIAL PRIMARY KEY,
-                            email VARCHAR(255),
-                            account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
-                            otp_hash VARCHAR(255),
-                            purpose VARCHAR(32) DEFAULT 'register',
-                            expires_at TIMESTAMPTZ,
-                            attempts INTEGER DEFAULT 0,
-                            used_at TIMESTAMPTZ,
-                            created_at TIMESTAMPTZ DEFAULT NOW()
-                        );
-                        ALTER TABLE email_verification_codes ADD COLUMN IF NOT EXISTS account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE;
                         DO $$
                         BEGIN
+                            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'two_factor_challenges')
+                               AND NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'all_otp') THEN
+                                ALTER TABLE two_factor_challenges RENAME TO all_otp;
+                                IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'two_factor_challenges_id_seq') THEN
+                                    ALTER SEQUENCE two_factor_challenges_id_seq RENAME TO all_otp_id_seq;
+                                END IF;
+                            END IF;
+                        END $$;
+                        CREATE TABLE IF NOT EXISTS all_otp (
+                            id SERIAL PRIMARY KEY,
+                            purpose VARCHAR(32) DEFAULT '2fa',
+                            otp_code VARCHAR(255),
+                            token_hash VARCHAR(64) UNIQUE,
+                            account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
+                            email VARCHAR(255),
+                            order_id VARCHAR(20) REFERENCES orders(order_id) ON DELETE CASCADE,
+                            attempts INTEGER DEFAULT 0,
+                            expires_at TIMESTAMPTZ,
+                            created_at TIMESTAMPTZ DEFAULT NOW()
+                        );
+                        ALTER TABLE all_otp ADD COLUMN IF NOT EXISTS purpose VARCHAR(32) DEFAULT '2fa';
+                        ALTER TABLE all_otp ADD COLUMN IF NOT EXISTS otp_code VARCHAR(255);
+                        ALTER TABLE all_otp ADD COLUMN IF NOT EXISTS email VARCHAR(255);
+                        ALTER TABLE all_otp ADD COLUMN IF NOT EXISTS order_id VARCHAR(20) REFERENCES orders(order_id) ON DELETE CASCADE;
+                        ALTER TABLE all_otp ALTER COLUMN account_id DROP NOT NULL;
+                        ALTER TABLE all_otp ALTER COLUMN token_hash DROP NOT NULL;
+                        DO $$
+                        BEGIN
+                            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'all_otp' AND column_name = 'code_hash') THEN
+                                UPDATE all_otp SET otp_code = code_hash WHERE otp_code IS NULL AND code_hash IS NOT NULL;
+                                ALTER TABLE all_otp DROP COLUMN code_hash;
+                            END IF;
+                            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'all_otp' AND column_name = 'is_verified') THEN
+                                ALTER TABLE all_otp DROP COLUMN is_verified;
+                            END IF;
+                        END $$;
+                        UPDATE all_otp SET purpose = '2fa' WHERE purpose IS NULL;
+                        DO $$
+                        BEGIN
+                            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'email_verification_codes') THEN
+                                INSERT INTO all_otp (email, account_id, otp_code, purpose, expires_at, attempts, created_at)
+                                SELECT email, account_id, otp_hash, COALESCE(purpose, 'register'), expires_at, attempts, created_at
+                                FROM email_verification_codes
+                                WHERE expires_at > NOW();
+                                DROP TABLE email_verification_codes CASCADE;
+                            END IF;
                             IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'password_reset_codes') THEN
-                                INSERT INTO email_verification_codes (email, account_id, otp_hash, purpose, expires_at, attempts, created_at)
-                                SELECT accounts.email, prc.account_id, prc.otp_hash, 'password_reset', prc.expires_at, prc.attempts, prc.created_at
+                                INSERT INTO all_otp (email, account_id, otp_code, purpose, expires_at, attempts, created_at)
+                                SELECT accounts.email, prc.account_id, prc.otp_hash, 'forgot_password', prc.expires_at, prc.attempts, prc.created_at
                                 FROM password_reset_codes prc
                                 JOIN accounts ON accounts.id = prc.account_id
                                 WHERE prc.expires_at > NOW();
                                 DROP TABLE password_reset_codes CASCADE;
                             END IF;
                         END $$;
+                        CREATE INDEX IF NOT EXISTS ix_all_otp_purpose ON all_otp(purpose);
+                        CREATE INDEX IF NOT EXISTS ix_all_otp_email ON all_otp(email);
+                        CREATE INDEX IF NOT EXISTS ix_all_otp_order_id ON all_otp(order_id);
+                        CREATE INDEX IF NOT EXISTS ix_all_otp_token_hash ON all_otp(token_hash);
+                        CREATE INDEX IF NOT EXISTS ix_all_otp_expires_at ON all_otp(expires_at);
+                        DELETE FROM all_otp WHERE expires_at <= NOW();
                         ALTER TABLE restaurant_settings DROP COLUMN IF EXISTS admin_override_open;
                         ALTER TABLE restaurant_settings DROP COLUMN IF EXISTS distance_calculation_mode;
                         DO $$
