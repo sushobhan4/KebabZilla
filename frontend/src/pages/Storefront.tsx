@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, ArrowRight, Check, ChevronLeft, ChevronRight, Clock3, Edit3, Flame, Leaf, ListFilter, MapPin, Phone, Plus, RotateCcw, ShieldCheck, ShoppingBag, Sparkles, Truck, Utensils, WifiOff, X, Search, Mail } from 'lucide-react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api, formatINR, formatSavedAddress, getCustomItemLowestPrice, getMenuItemLowestPrice, getItemDiscountedLowestPrice, resolveImageUrl, type CustomMenuItem, type CustomMenuSectionOption, type MenuItem, type MenuItemVariation, type Order, type Restaurant, type SavedCartItem } from '../api'
 import { useAuth } from '../state'
 import { Button, CenterDialog, EmptyState, Notice, QuantityPicker, RoundedSelect, RoundedTimePicker } from '../components'
@@ -24,6 +24,12 @@ const art = ['🥙', '🍗', '🫓', '🍢', '🥘', '🍟']
 export default function Storefront() {
   const { account } = useAuth()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [shouldOpenCart, setShouldOpenCart] = useState(() => {
+    if (typeof window === 'undefined') return false
+    const params = new URLSearchParams(window.location.search)
+    return params.get('cart') === 'open' || params.get('cart') === '1' || params.get('cart') === 'true'
+  })
   const [checkoutWarning, setCheckoutWarning] = useState<{
     tone?: 'warning' | 'danger' | 'info' | 'success'
     eyebrow?: string
@@ -317,8 +323,24 @@ export default function Storefront() {
   }, [permissibleTimeSlots])
 
   useEffect(() => {
-    if (!totalItems) setCartOpen(false)
-  }, [totalItems])
+    if (searchParams.get('cart') === 'open' || searchParams.get('cart') === '1' || searchParams.get('cart') === 'true') {
+      setShouldOpenCart(true)
+      const nextParams = new URLSearchParams(searchParams)
+      nextParams.delete('cart')
+      setSearchParams(nextParams, { replace: true })
+    }
+  }, [searchParams, setSearchParams])
+
+  useEffect(() => {
+    if (shouldOpenCart && totalItems > 0) {
+      setCartOpen(true)
+      setShouldOpenCart(false)
+    }
+  }, [shouldOpenCart, totalItems])
+
+  useEffect(() => {
+    if (!totalItems && !shouldOpenCart) setCartOpen(false)
+  }, [totalItems, shouldOpenCart])
 
   useEffect(() => () => { if (cartRetractTimer.current) clearTimeout(cartRetractTimer.current) }, [])
 
@@ -563,7 +585,13 @@ export default function Storefront() {
             }
           } catch {}
         }
-      }).catch((err) => setError(err instanceof Error ? err.message : 'Could not restore your saved cart.'))
+      }).catch((err) => {
+        const msg = err instanceof Error ? err.message : ''
+        if (msg.toLowerCase().includes('not authenticated') || msg.toLowerCase().includes('unauthorized')) {
+          return
+        }
+        setError(msg || 'Could not restore your saved cart.')
+      })
     }
   }, [account?.id, menu, cartLinesFromSaved, persistCart])
 
@@ -640,7 +668,10 @@ export default function Storefront() {
 
     if (selectedLocation.distance_meters != null && restaurant) {
       const distKm = selectedLocation.distance_meters / 1000
-      const withinRadius = distKm <= restaurant.delivery_radius_km
+      const maxRadius = (restaurant.delivery_radius_km && restaurant.delivery_radius_km > 0) ? restaurant.delivery_radius_km : 6.0
+      const freeRadius = (restaurant.free_delivery_radius_km && restaurant.free_delivery_radius_km > 0) ? restaurant.free_delivery_radius_km : 0.8
+      const feePerKm = (restaurant.delivery_fee_per_km_paise && restaurant.delivery_fee_per_km_paise > 0) ? restaurant.delivery_fee_per_km_paise : 1000
+      const withinRadius = distKm <= maxRadius
       let feePaise = 0
       let rawFeePaise = 0
       let roundOffPaise = 0
@@ -652,11 +683,11 @@ export default function Storefront() {
         feePaise = 0
         rawFeePaise = 0
         roundOffPaise = 0
-      } else if (distKm > restaurant.free_delivery_radius_km) {
+      } else if (distKm > freeRadius) {
         const billableKm = restaurant.charge_from_zero_beyond_free_radius
           ? distKm
-          : distKm - restaurant.free_delivery_radius_km
-        const rawFeeInr = Math.round(billableKm * (restaurant.delivery_fee_per_km_paise / 100) * 100) / 100
+          : distKm - freeRadius
+        const rawFeeInr = Math.round(billableKm * (feePerKm / 100) * 100) / 100
         const roundedFeeInr = Math.ceil(rawFeeInr)
         roundOffPaise = Math.round((roundedFeeInr - rawFeeInr) * 100)
         rawFeePaise = Math.round(rawFeeInr * 100)
@@ -670,9 +701,9 @@ export default function Storefront() {
         raw_delivery_fee_paise: rawFeePaise,
         round_off_paise: roundOffPaise,
         within_radius: withinRadius,
-        max_radius_km: restaurant.delivery_radius_km,
-        free_radius_km: restaurant.free_delivery_radius_km,
-        fee_per_km_paise: restaurant.delivery_fee_per_km_paise,
+        max_radius_km: maxRadius,
+        free_radius_km: freeRadius,
+        fee_per_km_paise: feePerKm,
       })
       setEstimateLoading(false)
       return
@@ -718,7 +749,10 @@ export default function Storefront() {
           const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
           const factor = restaurant.haversine_routing_factor || 1.3
           const distKm = earthRadiusKm * c * factor
-          const withinRadius = distKm <= restaurant.delivery_radius_km
+          const maxRadius = (restaurant.delivery_radius_km && restaurant.delivery_radius_km > 0) ? restaurant.delivery_radius_km : 6.0
+      const freeRadius = (restaurant.free_delivery_radius_km && restaurant.free_delivery_radius_km > 0) ? restaurant.free_delivery_radius_km : 0.8
+      const feePerKm = (restaurant.delivery_fee_per_km_paise && restaurant.delivery_fee_per_km_paise > 0) ? restaurant.delivery_fee_per_km_paise : 1000
+      const withinRadius = distKm <= maxRadius
           let feePaise = 0
           let rawFeePaise = 0
           let roundOffPaise = 0
@@ -730,11 +764,11 @@ export default function Storefront() {
             feePaise = 0
             rawFeePaise = 0
             roundOffPaise = 0
-          } else if (distKm > restaurant.free_delivery_radius_km) {
+          } else if (distKm > freeRadius) {
             const billableKm = restaurant.charge_from_zero_beyond_free_radius
               ? distKm
-              : distKm - restaurant.free_delivery_radius_km
-            const rawFeeInr = Math.round(billableKm * (restaurant.delivery_fee_per_km_paise / 100) * 100) / 100
+              : distKm - freeRadius
+            const rawFeeInr = Math.round(billableKm * (feePerKm / 100) * 100) / 100
             const roundedFeeInr = Math.ceil(rawFeeInr)
             roundOffPaise = Math.round((roundedFeeInr - rawFeeInr) * 100)
             rawFeePaise = Math.round(rawFeeInr * 100)
@@ -748,9 +782,9 @@ export default function Storefront() {
             raw_delivery_fee_paise: rawFeePaise,
             round_off_paise: roundOffPaise,
             within_radius: withinRadius,
-            max_radius_km: restaurant.delivery_radius_km,
-            free_radius_km: restaurant.free_delivery_radius_km,
-            fee_per_km_paise: restaurant.delivery_fee_per_km_paise,
+            max_radius_km: maxRadius,
+            free_radius_km: freeRadius,
+            fee_per_km_paise: feePerKm,
           })
         }
       })
@@ -1436,7 +1470,7 @@ export default function Storefront() {
           label: 'Add delivery address',
           onClick: () => {
             setCheckoutWarning(null)
-            navigate('/profile')
+            navigate('/profile?from=cart')
           },
         },
         secondaryAction: {
@@ -1457,7 +1491,7 @@ export default function Storefront() {
           label: 'Set map pin in profile',
           onClick: () => {
             setCheckoutWarning(null)
-            navigate('/profile')
+            navigate('/profile?from=cart')
           },
         },
         secondaryAction: {
@@ -1496,12 +1530,12 @@ export default function Storefront() {
         tone: 'danger',
         eyebrow: 'OUTSIDE DELIVERY AREA',
         title: 'Delivery location too far',
-        description: `Your delivery location is ${deliveryEstimate.distance_km} km away, which exceeds our maximum delivery radius of ${deliveryEstimate.max_radius_km} km.`,
+        description: `Your delivery location is ${deliveryEstimate.distance_km} km away, which exceeds our maximum delivery radius of ${deliveryEstimate.max_radius_km || 6} km.`,
         primaryAction: {
           label: 'Manage address in profile',
           onClick: () => {
             setCheckoutWarning(null)
-            navigate('/profile')
+            navigate('/profile?from=cart')
           },
         },
         secondaryAction: {
@@ -1864,7 +1898,7 @@ export default function Storefront() {
       </div>
       {deliveryEstimate && !deliveryEstimate.within_radius && (
         <div className="notice" style={{ margin: '8px 0', fontSize: '12px' }}>
-          Your address is {deliveryEstimate.distance_km} km away, which exceeds our maximum delivery radius of {deliveryEstimate.max_radius_km} km.
+          Your address is {deliveryEstimate.distance_km} km away, which exceeds our maximum delivery radius of {deliveryEstimate.max_radius_km || 6} km.
         </div>
       )}
       {account ? <div className="checkout-fields">
@@ -1884,12 +1918,12 @@ export default function Storefront() {
                 label: `${saved.label}${saved.is_default ? " · Default" : ""} — ${formatSavedAddress(saved)}`
               }))}
             />
-            <Link to="/profile" className="text-button">Edit saved addresses</Link>
+            <Link to="/profile?from=cart" className="text-button">Edit saved addresses</Link>
           </label>
         ) : (
           <div className="notice notice-info cart-address-prompt">
             <span>Add a delivery address before ordering.</span>
-            <Link to="/profile" className="button button-secondary">Add delivery address <ArrowRight size={14} /></Link>
+            <Link to="/profile?from=cart" className="button button-secondary">Add delivery address <ArrowRight size={14} /></Link>
           </div>
         )}
         <div className={`checkout-timing-row ${scheduledFor ? 'two-col' : 'single-col'}`}>

@@ -229,7 +229,13 @@ def queue(account: CurrentAccount, db: DbSession):
         )
         .order_by(Order.created_at)
     ).all()
-    return [order_payload(order, include_customer_email=False) for order in orders]
+    payloads = []
+    for order in orders:
+        data = order_payload(order, include_customer_email=False)
+        data["address"] = None
+        data["customer_phone"] = None
+        payloads.append(data)
+    return payloads
 
 
 @router.get("/available")

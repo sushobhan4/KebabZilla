@@ -552,7 +552,7 @@ def refresh_session(
         new_hash = hash_session_token(new_refresh_token)
         session.previous_token_hash = session.token_hash
         session.token_hash = new_hash
-        session.grace_period_until = now + timedelta(seconds=10)
+        session.grace_period_until = now + timedelta(seconds=15)
         session.last_active_at = now
         session.expires_at = now + timedelta(days=SESSION_LIFETIME_DAYS)
         db.commit()
@@ -579,12 +579,12 @@ def refresh_session(
             csrf_token=csrf_token,
         )
 
-    # Case B: incoming_hash == session.previous_token_hash (Reuse or Parallel Request)
+    # Case B: incoming_hash == session.previous_token_hash (Reuse or Multi-Tab Parallel Request)
     if incoming_hash == session.previous_token_hash:
         gpu = session.grace_period_until
         if gpu and gpu.tzinfo is None:
             gpu = gpu.replace(tzinfo=timezone.utc)
-        # If within 10-second grace period: harmless parallel request from same browser
+        # If within 15-second grace period: harmless parallel request / secondary tab from same browser
         if gpu and now <= gpu:
             new_access_jwt, _ = create_access_token(
                 account_id=account.id,

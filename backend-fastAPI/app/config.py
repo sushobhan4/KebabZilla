@@ -23,7 +23,13 @@ class Settings(BaseSettings):
     session_cookie_samesite: str = "lax"
     session_cookie_secure: bool | None = None
     session_lifetime_days: int = 30
-    cors_origins: list[str] | str = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    cors_origins: list[str] | str = [
+        "https://kebabzilla.in",
+        "https://www.kebabzilla.in",
+        "https://sushobhan4.github.io",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]
     business_timezone: str = "Asia/Kolkata"
     razorpay_key_id: str | None = None
     razorpay_key_secret: str | None = None

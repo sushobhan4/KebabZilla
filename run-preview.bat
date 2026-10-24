@@ -2,7 +2,7 @@
 setlocal
 
 set "PROJECT_DIR=%~dp0"
-set "BACKEND_DIR=%PROJECT_DIR%backend"
+set "BACKEND_DIR=%PROJECT_DIR%backend-fastAPI"
 set "FRONTEND_DIR=%PROJECT_DIR%frontend"
 
 if not exist "%BACKEND_DIR%\.venv\Scripts\python.exe" (

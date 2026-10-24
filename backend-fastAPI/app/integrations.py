@@ -119,7 +119,7 @@ class CustomerNotifier:
         if email and email_sender.is_configured():
             try:
                 message = EmailMessage()
-                message["Subject"] = f"Your KebabZilla Delivery Code for Order #{order_number}"
+                message["Subject"] = f"{otp} is your KebabZilla delivery code for Order #{order_number}"
                 message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
                 message["To"] = email
                 plain_text = (
@@ -267,7 +267,7 @@ class StaffAccountNotifier:
             print(f"[SECURITY PASSWORD RESET OTP] Code for {email}: {otp}")
             return False
         message = EmailMessage()
-        message["Subject"] = "Your KebabZilla password reset code"
+        message["Subject"] = f"{otp} is your KebabZilla password reset code"
         message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
         message["To"] = email
 
@@ -295,7 +295,7 @@ class StaffAccountNotifier:
             print(f"[SECURITY 2FA CODE] Staff 2-Step verification code for {email}: {code}")
             return False
         message = EmailMessage()
-        message["Subject"] = "Your KebabZilla 2-Step Verification Code"
+        message["Subject"] = f"{code} is your KebabZilla security verification code"
         message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
         message["To"] = email
 
@@ -322,7 +322,7 @@ class StaffAccountNotifier:
             print(f"[EMAIL VERIFICATION OTP] Verification code for {email} ({purpose}): {otp}")
             return False
         message = EmailMessage()
-        message["Subject"] = "Your KebabZilla Email Verification Code"
+        message["Subject"] = f"{otp} is your KebabZilla verification code"
         message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
         message["To"] = email
 

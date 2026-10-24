@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { ArrowRight, BadgeIndianRupee, Check, CircleCheck, ClipboardList, CookingPot, Flame, Plus, ReceiptText, Save, Trash2, Truck, UserRound, Search, Sparkles, X } from 'lucide-react'
 import { Link, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { api, formatINR, friendlyDate, getCustomItemLowestPrice, resolveImageUrl, type CustomMenuItem, type CustomMenuSectionOption, type MenuItem, type MenuItemVariation, type Order } from '../api'
 import { Badge, Button, CenterDialog, EmptyState, Loading, MenuImageCarousel, Notice, PageTitle, PhoneInput, QuantityPicker, StatusBadge, RoundedSelect, Pagination, formatPhoneWithPrefix, isValidIndianMobile } from '../components'
 import { usePreference } from '../cookies'
+import { playOrderNotificationSound } from '../utils/sound'
 
 function Queue() {
   const [orders, setOrders] = useState<Order[]>([])
@@ -11,8 +12,18 @@ function Queue() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const [filter, setFilter] = usePreference<string>('ops_queue_filter', 'ACTIVE')
+  const knownOrderIds = useRef<Set<string> | null>(null)
 
   const refresh = useCallback((skipCache = false) => api<Order[]>('/staff/orders', { skipCache }).then((ordersList) => {
+    if (ordersList) {
+      if (knownOrderIds.current !== null) {
+        const hasNewOrder = ordersList.some((o) => !knownOrderIds.current!.has(o.order_id))
+        if (hasNewOrder) {
+          playOrderNotificationSound()
+        }
+      }
+      knownOrderIds.current = new Set(ordersList.map((o) => o.order_id))
+    }
     setOrders(ordersList)
   }).catch((err) => setError(err instanceof Error ? err.message : 'Could not load the order queue.')).finally(() => setLoading(false)), [])
   useEffect(() => {

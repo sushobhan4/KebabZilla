@@ -78,6 +78,7 @@ import {
   type Role,
 } from "../api";
 import { useAuth, useRestaurant } from "../state";
+import { playOrderNotificationSound } from "../utils/sound";
 import {
   Badge,
   Button,
@@ -545,6 +546,8 @@ function AdminOrders() {
   const [period, setPeriod] = usePreference<string>("admin_orders_period", "day");
   const [q, setQ] = useState("");
   const activePeriod = period === "all" ? "day" : period;
+  const knownOrderIds = useRef<Set<string> | null>(null);
+
   const refresh = useCallback((skipCache = false) => {
     const statusQuery = filter === "ALL" ? "" : `&status_filter=${filter}`;
     return api<PageData<Order>>(
@@ -552,6 +555,15 @@ function AdminOrders() {
       { skipCache }
     )
       .then((result) => {
+        if (result && result.items) {
+          if (knownOrderIds.current !== null) {
+            const hasNewOrder = result.items.some((o) => !knownOrderIds.current!.has(o.order_id));
+            if (hasNewOrder) {
+              playOrderNotificationSound();
+            }
+          }
+          knownOrderIds.current = new Set(result.items.map((o) => o.order_id));
+        }
         setPageData(result);
         setOrders(result.items);
       })
@@ -562,7 +574,11 @@ function AdminOrders() {
   }, [filter, page, activePeriod, q]);
   useEffect(() => {
     const timer = window.setTimeout(() => void refresh(), q ? 250 : 0);
-    return () => window.clearTimeout(timer);
+    const interval = window.setInterval(() => void refresh(), 15000);
+    return () => {
+      window.clearTimeout(timer);
+      window.clearInterval(interval);
+    };
   }, [refresh, q]);
   const filtered = orders;
   function selectFilter(value: string) {
@@ -778,7 +794,11 @@ function AdminOrders() {
                     </span>
                     <span>
                       <strong>{order.customer_name}</strong>
-                      <small>{order.customer_phone || "Phone not provided"}</small>
+                      <small>
+                        {order.status === "DELIVERED"
+                          ? "Completed"
+                          : order.customer_phone || "Phone not provided"}
+                      </small>
                     </span>
                   </div>
                   <div className="admin-order-products">
@@ -810,7 +830,15 @@ function AdminOrders() {
                 <div className="admin-order-detail">
                   <span>
                     <Truck size={14} />{" "}
-                    {order.order_type === "DELIVERY" ? "Delivery order" : "Restaurant counter pickup"}
+                    {order.order_type === "DELIVERY" ? (
+                      order.status !== "DELIVERED" && order.address ? (
+                        <>Delivery order · <span style={{ color: "var(--foreground)" }}>{order.address}</span></>
+                      ) : (
+                        "Delivery order"
+                      )
+                    ) : (
+                      "Restaurant counter pickup"
+                    )}
                   </span>
                   {order.notes && <span>“{order.notes}”</span>}
                   <div className="admin-order-line-list">
@@ -4904,9 +4932,19 @@ function formatOverrideTime(isoString?: string | null): string {
   }
 }
 
+function getISTDate(): Date {
+  const now = new Date();
+  try {
+    const istString = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+    return new Date(istString);
+  } catch {
+    return now;
+  }
+}
+
 function isCurrentlyOpenBySchedule(schedules: CustomSchedule[]): boolean {
   if (!schedules || schedules.length === 0) return false;
-  const now = new Date();
+  const now = getISTDate();
   const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
   const currentDay = dayNames[now.getDay()];
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
@@ -5083,7 +5121,7 @@ function SettingsPage() {
   function handleToggleAcceptingOrders() {
     if (!form || busy) return;
     const nextVal = !form.accepting_orders;
-    const scheduledOpen = form.is_currently_scheduled_open ?? isCurrentlyOpenBySchedule(schedules);
+    const scheduledOpen = isCurrentlyOpenBySchedule(schedules);
     if (nextVal !== scheduledOpen) {
       setPendingToggleValue(nextVal);
       setOverrideWarningOpen(true);
@@ -5709,12 +5747,8 @@ function SettingsPage() {
                       Opening days and hours
                     </h3>
                     {(() => {
-                      const scheduledOpen = form.is_currently_scheduled_open ?? isCurrentlyOpenBySchedule(schedules);
-                      const isOverrideActive = Boolean(
-                        form.admin_override_state !== null &&
-                        form.admin_override_state !== undefined &&
-                        form.accepting_orders !== scheduledOpen
-                      );
+                      const scheduledOpen = isCurrentlyOpenBySchedule(schedules);
+                      const isOverrideActive = Boolean(form.accepting_orders !== scheduledOpen);
                       if (!isOverrideActive) return null;
                       return (
                         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
@@ -6843,6 +6877,7 @@ function SettingsPage() {
                     accepting_orders: val,
                     is_restaurant_open: val,
                     is_delivery_open: val ? true : false,
+                    admin_override_state: val,
                   };
                 });
               }
@@ -7395,7 +7430,7 @@ function Offers() {
 
   const visibleLogs = logs
     .filter((log) => {
-      const textMatches = `${log.subject} ${log.message} ${log.status} ${log.audience} ${log.channels.join(" ")}`.toLowerCase().includes(logQuery.trim().toLowerCase());
+      const textMatches = `${log.subject} ${log.message} ${log.status} ${log.audience} ${(log.channels || []).join(" ")}`.toLowerCase().includes(logQuery.trim().toLowerCase());
       if (!textMatches) return false;
       const logTime = new Date(log.created_at).getTime();
       const now = Date.now();
@@ -8284,7 +8319,7 @@ function Offers() {
                   }`}>
                     {log.status === "SENDING" ? "⚡ Sending…" : log.status}
                   </span>
-                  {log.channels.map((channel) => (
+                  {(log.channels || []).map((channel) => (
                     <span key={channel}>
                       {channel} · {log.delivery_counts?.[channel]?.sent_count || 0}/
                       {log.delivery_counts?.[channel]?.recipient_count || 0}
@@ -8348,9 +8383,9 @@ function Offers() {
             </div>
             <p className="campaign-detail-message">{currentSelectedLog.message}</p>
             <div
-              className={`campaign-channel-details campaign-channel-details-${currentSelectedLog.channels.length}`}
+              className={`campaign-channel-details campaign-channel-details-${(currentSelectedLog.channels || []).length}`}
             >
-              {currentSelectedLog.channels.map((channel) => {
+              {(currentSelectedLog.channels || []).map((channel) => {
                 const detail = currentSelectedLog.delivery_counts?.[channel] || {
                   recipient_count: 0,
                   sent_count: 0,
@@ -8606,7 +8641,7 @@ function Discounts() {
               const now = Date.now();
               const state = now < start.getTime() ? "Upcoming" : now < end.getTime() ? "Active" : "Ended";
               const totalItemsCount = (discount.menu_item_ids?.length || 0) + (discount.custom_menu_item_ids?.length || 0);
-              const names = discount.menu_item_names.join(", ");
+              const names = (discount.menu_item_names || []).join(", ");
               return (
                 <article className="discount-row" key={discount.id}>
                   <div className="discount-percent">
@@ -8855,7 +8890,7 @@ function Discounts() {
           tone="danger"
           eyebrow="DELETE DISCOUNT"
           title={`Remove ${discountToDelete.discount_percent}% discount?`}
-          description={`Are you sure you want to remove the discount campaign for ${discountToDelete.campaign_name || discountToDelete.menu_item_names.join(", ") || "these items"}? This discount will immediately stop being applied.`}
+          description={`Are you sure you want to remove the discount campaign for ${discountToDelete.campaign_name || (discountToDelete.menu_item_names || []).join(", ") || "these items"}? This discount will immediately stop being applied.`}
           primaryAction={{
             label: "Remove discount",
             variant: "danger",

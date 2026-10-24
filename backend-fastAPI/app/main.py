@@ -49,7 +49,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 response.headers["Content-Security-Policy"] = (
                     "default-src 'self'; "
                     "script-src 'self' 'unsafe-inline'; "
-                    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+                    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com; "
                     "font-src 'self' https://fonts.gstatic.com data:; "
                     "img-src 'self' data: blob: https:; "
                     "connect-src 'self' https:; "
@@ -61,9 +61,24 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(SecurityHeadersMiddleware)
 is_dev = settings.environment.casefold() != "production"
+
+trusted_production_origins = [
+    "https://kebabzilla.in",
+    "https://www.kebabzilla.in",
+    "https://sushobhan4.github.io",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+configured_origins = (
+    settings.cors_origins
+    if isinstance(settings.cors_origins, list)
+    else [settings.cors_origins]
+)
+cors_allowed_origins = list(dict.fromkeys(configured_origins + trusted_production_origins))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=cors_allowed_origins,
     allow_origin_regex=r"^https://.*\.trycloudflare\.com$" if is_dev else None,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],

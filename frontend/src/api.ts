@@ -56,10 +56,62 @@ export function clearApiCache(prefix?: string) {
 
 let memoryAccessToken: string | null = null
 try {
-  memoryAccessToken = localStorage.getItem('kz_access_token')
+  memoryAccessToken = localStorage.getItem('kz_access_token') || sessionStorage.getItem('kz_access_token')
 } catch {}
 
+let memoryRefreshToken: string | null = null
+try {
+  memoryRefreshToken = localStorage.getItem('kz_refresh_token') || sessionStorage.getItem('kz_refresh_token')
+} catch {}
+
+// Cross-Tab BroadcastChannel for synchronized authentication and coordinated token refresh
+const authChannel = typeof window !== 'undefined' && 'BroadcastChannel' in window 
+  ? new BroadcastChannel('kz_auth_sync') 
+  : null
+
+if (authChannel) {
+  authChannel.onmessage = (event) => {
+    const data = event.data
+    if (!data || typeof data !== 'object') return
+    if (data.type === 'AUTH_UPDATED') {
+      if (data.accessToken) memoryAccessToken = data.accessToken
+      if (data.refreshToken) memoryRefreshToken = data.refreshToken
+      if (data.csrfToken) memoryCsrfToken = data.csrfToken
+      clearApiCache()
+    } else if (data.type === 'AUTH_LOGOUT') {
+      memoryAccessToken = null
+      memoryRefreshToken = null
+      memoryCsrfToken = null
+      clearApiCache()
+      try {
+        localStorage.removeItem('kz_access_token')
+        localStorage.removeItem('kz_refresh_token')
+        localStorage.removeItem('kz_csrf_token')
+        localStorage.removeItem('kz_account')
+        sessionStorage.clear()
+      } catch {}
+    }
+  }
+}
+
+// Cross-Tab storage event listener fallback for browsers without full BroadcastChannel support
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (event) => {
+    if (event.key === 'kz_access_token') {
+      memoryAccessToken = event.newValue
+    } else if (event.key === 'kz_refresh_token') {
+      memoryRefreshToken = event.newValue
+    } else if (event.key === 'kz_csrf_token') {
+      memoryCsrfToken = event.newValue
+    }
+  })
+}
+
 export function getAccessToken(): string | null {
+  try {
+    const stored = localStorage.getItem('kz_access_token') || sessionStorage.getItem('kz_access_token')
+    if (stored) memoryAccessToken = stored
+  } catch {}
   return memoryAccessToken
 }
 
@@ -76,12 +128,11 @@ export function setAccessToken(token: string | null) {
   } catch {}
 }
 
-let memoryRefreshToken: string | null = null
-try {
-  memoryRefreshToken = localStorage.getItem('kz_refresh_token')
-} catch {}
-
 export function getRefreshToken(): string | null {
+  try {
+    const stored = localStorage.getItem('kz_refresh_token') || sessionStorage.getItem('kz_refresh_token')
+    if (stored) memoryRefreshToken = stored
+  } catch {}
   return memoryRefreshToken
 }
 
@@ -110,6 +161,11 @@ function getCsrfToken(): string | null {
     const match = document.cookie.match(/(?:^|;\s*)kz_csrf_token=([^;]+)/)
     if (match) return decodeURIComponent(match[1])
   } catch {}
+  if (!memoryCsrfToken) {
+    try {
+      memoryCsrfToken = localStorage.getItem('kz_csrf_token')
+    } catch {}
+  }
   return memoryCsrfToken
 }
 
@@ -121,78 +177,136 @@ export type ApiInit = RequestInit & {
 let refreshPromise: Promise<boolean> | null = null
 
 /**
- * Mutex queue: Ensures only 1 refresh request is fired at a time even if multiple requests return 401 concurrently.
+ * Coordinated Cross-Tab Mutex Queue:
+ * 1. Coordinates via navigator.locks (Web Locks API) so only 1 tab across the entire browser hits /auth/refresh.
+ * 2. If another tab is already refreshing, other tabs await that tab's completion instead of clashing.
+ * 3. Broadcasts the refreshed tokens to all other tabs via BroadcastChannel.
  */
+async function performActualRefresh(): Promise<boolean> {
+  try {
+    const [fingerprint, deviceName] = await Promise.all([
+      getStableDeviceFingerprint().catch(() => ''),
+      getExactDeviceName().catch(() => ''),
+    ])
+    const headers = new Headers({
+      'Content-Type': 'application/json',
+    })
+    if (fingerprint) headers.set('X-Device-Fingerprint', fingerprint)
+    if (deviceName) headers.set('X-Device-Name', deviceName)
+
+    // Always fetch latest refresh token from disk/storage
+    const rToken = getRefreshToken()
+    if (rToken) headers.set('X-Refresh-Token', rToken)
+
+    const csrf = getCsrfToken()
+    if (csrf) headers.set('X-CSRF-Token', csrf)
+
+    const res = await fetch(`${API_BASE}/auth/refresh`, {
+      method: 'POST',
+      headers,
+      credentials: 'include',
+    })
+
+    const csrfHeader = res.headers.get('x-csrf-token')
+    if (csrfHeader) {
+      setCsrfToken(csrfHeader)
+    }
+
+    if (res.ok) {
+      const data = await res.json().catch(() => null) as {
+        access_token?: string
+        refresh_token?: string
+        account?: unknown
+        csrf_token?: string
+      } | null
+
+      if (data?.access_token) {
+        setAccessToken(data.access_token)
+      }
+      if (data?.refresh_token) {
+        setRefreshToken(data.refresh_token)
+      }
+      if (data?.csrf_token) {
+        setCsrfToken(data.csrf_token)
+      }
+      if (data?.account) {
+        try {
+          localStorage.setItem('kz_account', JSON.stringify(data.account))
+        } catch {}
+      }
+
+      // Broadcast fresh credentials to all sibling tabs immediately
+      if (authChannel) {
+        try {
+          authChannel.postMessage({
+            type: 'AUTH_UPDATED',
+            accessToken: data?.access_token,
+            refreshToken: data?.refresh_token,
+            csrfToken: data?.csrf_token,
+          })
+        } catch {}
+      }
+
+      return true
+    } else {
+      if (res.status === 401 || res.status === 403) {
+        setAccessToken(null)
+        setRefreshToken(null)
+        setCsrfToken(null)
+        try {
+          localStorage.removeItem('kz_account')
+          sessionStorage.removeItem('kz_account')
+        } catch {}
+        if (authChannel) {
+          try {
+            authChannel.postMessage({ type: 'AUTH_LOGOUT' })
+          } catch {}
+        }
+      }
+      return false
+    }
+  } catch {
+    return false
+  }
+}
+
 async function silentRefresh(): Promise<boolean> {
   if (refreshPromise) {
     return refreshPromise
   }
+
   refreshPromise = (async () => {
+    const tokenBefore = getAccessToken()
+    const rTokenBefore = getRefreshToken()
+
+    // If Web Locks API is available, coordinate cleanly across all browser tabs:
+    // Only 1 tab executes /auth/refresh while all other tabs queue and wait.
+    if (typeof navigator !== 'undefined' && 'locks' in navigator && navigator.locks.request) {
+      try {
+        return await navigator.locks.request('kz_auth_refresh_lock', async () => {
+          // Double-check: While this tab was waiting for the lock, did the leader tab already finish refreshing?
+          const tokenAfterLock = getAccessToken()
+          const rTokenAfterLock = getRefreshToken()
+          if (
+            (tokenAfterLock && tokenAfterLock !== tokenBefore) ||
+            (rTokenAfterLock && rTokenAfterLock !== rTokenBefore)
+          ) {
+            // Sibling tab already rotated credentials and shared them via BroadcastChannel/storage!
+            return true
+          }
+          return await performActualRefresh()
+        })
+      } catch {
+        // Fallback to direct refresh if lock request fails
+        return await performActualRefresh()
+      } finally {
+        refreshPromise = null
+      }
+    }
+
+    // Direct tab execution fallback
     try {
-      const [fingerprint, deviceName] = await Promise.all([
-        getStableDeviceFingerprint().catch(() => ''),
-        getExactDeviceName().catch(() => ''),
-      ])
-      const headers = new Headers({
-        'Content-Type': 'application/json',
-      })
-      if (fingerprint) headers.set('X-Device-Fingerprint', fingerprint)
-      if (deviceName) headers.set('X-Device-Name', deviceName)
-
-      const rToken = getRefreshToken()
-      if (rToken) headers.set('X-Refresh-Token', rToken)
-
-      const csrf = getCsrfToken()
-      if (csrf) headers.set('X-CSRF-Token', csrf)
-
-      const res = await fetch(`${API_BASE}/auth/refresh`, {
-        method: 'POST',
-        headers,
-        credentials: 'include',
-      })
-
-      const csrfHeader = res.headers.get('x-csrf-token')
-      if (csrfHeader) {
-        setCsrfToken(csrfHeader)
-      }
-
-      if (res.ok) {
-        const data = await res.json().catch(() => null) as {
-          access_token?: string
-          refresh_token?: string
-          account?: unknown
-          csrf_token?: string
-        } | null
-
-        if (data?.access_token) {
-          setAccessToken(data.access_token)
-        }
-        if (data?.refresh_token) {
-          setRefreshToken(data.refresh_token)
-        }
-        if (data?.csrf_token) {
-          setCsrfToken(data.csrf_token)
-        }
-        if (data?.account) {
-          try {
-            localStorage.setItem('kz_account', JSON.stringify(data.account))
-          } catch {}
-        }
-        return true
-      } else {
-        if (res.status === 401 || res.status === 403) {
-          setAccessToken(null)
-          setRefreshToken(null)
-          setCsrfToken(null)
-          try {
-            localStorage.removeItem('kz_account')
-            sessionStorage.removeItem('kz_account')
-          } catch {}
-        }
-        return false
-      }
-    } catch {
-      return false
+      return await performActualRefresh()
     } finally {
       refreshPromise = null
     }

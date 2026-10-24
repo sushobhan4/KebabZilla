@@ -2429,6 +2429,20 @@ select:focus-visible {
   color: #a8482e;
   font-size: 10px;
   font-weight: 700;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+  text-decoration: none;
+  transition: opacity 0.15s ease;
+}
+.reorder-link:hover {
+  text-decoration: underline;
+}
+.reorder-link:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 .customer-help {
   display: flex;
@@ -14827,3 +14841,79 @@ input[type="radio"]:focus-visible {
   }
 }
 
+
+/* Customer Orders tracking: Collapsed card, Chevron, Reorder and Green Calling button */
+.customer-order-card.is-collapsed {
+  padding-bottom: 21px;
+}
+.customer-order-top-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.order-chevron-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid #eae7df;
+  background: #faf9f6;
+  color: #535c55;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+.order-chevron-btn:hover {
+  background: #f0eee8;
+  color: #1f2521;
+  border-color: #dcd8cc;
+}
+.reorder-link-compact {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #a8482e;
+  font-size: 11px;
+  font-weight: 700;
+  background: #fdf6f3;
+  border: 1px solid #f8dfd7;
+  padding: 5px 11px;
+  border-radius: 999px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: all 0.15s ease;
+}
+.reorder-link-compact:hover {
+  background: #f9ebe5;
+  border-color: #f1cfc2;
+  text-decoration: none;
+}
+.customer-order-collapsed-meta {
+  font-size: 10px;
+  font-weight: 700;
+  color: #535c55;
+}
+.rider-call-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background-color: #22c55e;
+  color: #ffffff !important;
+  flex-shrink: 0;
+  margin-left: auto;
+  box-shadow: 0 2px 6px rgba(34, 197, 94, 0.4);
+  transition: transform 0.15s ease, background-color 0.15s ease;
+  text-decoration: none;
+}
+.rider-call-btn:hover {
+  background-color: #16a34a;
+  transform: scale(1.08);
+}
+.rider-call-btn:active {
+  transform: scale(0.95);
+}

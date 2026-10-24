@@ -323,7 +323,7 @@ function PastDeliveries() {
   if (loading) return <Loading label="Loading your past deliveries…" />;
 
   const filtered = orders.filter((o) =>
-    `${o.order_id} ${o.customer_name} ${o.address || ""}`
+    `${o.order_id} ${o.customer_name}`
       .toLowerCase()
       .includes(search.trim().toLowerCase()),
   );
@@ -361,7 +361,7 @@ function PastDeliveries() {
           aria-label="Search past deliveries"
           value={search}
           onChange={(event) => setSearch(event.target.value)}
-          placeholder="Search delivered order number, customer, or address"
+          placeholder="Search delivered order number or customer"
         />
       </label>
 
@@ -404,26 +404,7 @@ function PastDeliveries() {
                       <strong>{order.customer_name}</strong>
                     </span>
                   </div>
-                  <div className="customer-detail customer-address">
-                    <span className="customer-detail-icon">
-                      <MapPin size={16} />
-                    </span>
-                    <span>
-                      <small>Address</small>
-                      <strong>{order.address || "Address on record"}</strong>
-                    </span>
-                  </div>
-                  {order.customer_phone && (
-                    <div className="customer-detail">
-                      <span className="customer-detail-icon">
-                        <Phone size={16} />
-                      </span>
-                      <span>
-                        <small>Phone</small>
-                        <strong>{order.customer_phone}</strong>
-                      </span>
-                    </div>
-                  )}
+
                 </div>
                 <div className="delivery-order-items">
                   <div className="delivery-menu-lines">

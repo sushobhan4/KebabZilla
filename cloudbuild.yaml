@@ -1,8 +1,8 @@
-# Google Cloud Build definition for KebabZilla Backend
-# Automatically builds, deploys to Cloud Run, and cleans up older revisions and Artifact Registry images.
+# Google Cloud Build definition for KebabZilla Go Backend
+# Automatically builds, deploys to Cloud Run (kebabzilla-backend-go), and cleans up older revisions and Artifact Registry images.
 
 steps:
-  # 1. Build the Docker container image
+  # 1. Build the Go Docker container image
   - name: 'gcr.io/cloud-builders/docker'
     id: 'Build'
     args:
@@ -10,9 +10,9 @@ steps:
       - '--no-cache'
       - '-t'
       - '$_AR_HOSTNAME/$_AR_PROJECT_ID/$_AR_REPOSITORY/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA'
-      - '.'
+      - './go-backend'
       - '-f'
-      - 'Dockerfile'
+      - './go-backend/Dockerfile'
 
   # 2. Push Docker image to Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
@@ -83,10 +83,10 @@ substitutions:
   _AR_REPOSITORY: cloud-run-source-deploy
   _DEPLOY_REGION: asia-south1
   _PLATFORM: managed
-  _SERVICE_NAME: kebabzilla-backend
+  _SERVICE_NAME: kebabzilla-backend-go
   _TRIGGER_ID: 1150a81a-2bd0-4eaa-b494-4844e721e103
 
 tags:
   - gcp-cloud-build-deploy-cloud-run
   - gcp-cloud-build-deploy-cloud-run-managed
-  - kebabzilla-backend
+  - kebabzilla-backend-go

@@ -276,8 +276,15 @@ def admin_orders(
             status_counts[key] = int(count)
 
     paid_revenue = sum(order_total_paise(order) for order in rows if order.payment and order.payment.status == PaymentStatus.PAID)
+    items = []
+    for order in rows:
+        payload = order_payload(order)
+        if order.status == OrderStatus.DELIVERED:
+            payload["address"] = None
+            payload["customer_phone"] = None
+        items.append(payload)
     res = {
-        "items": [order_payload(order) for order in rows],
+        "items": items,
         "total": total,
         "limit": effective_limit,
         "offset": offset,

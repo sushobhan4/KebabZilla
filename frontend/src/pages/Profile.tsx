@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { ArrowLeft, Check, CircleAlert, LocateFixed, MapPin, Plus, Save, Shield, Star, Trash2, X } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { importLibrary, setOptions } from '@googlemaps/js-api-loader'
 import { api, formatSavedAddress, type Account, type SavedAddress } from '../api'
 import { useAuth, useRestaurant } from '../state'
@@ -156,6 +156,9 @@ function AddressMap({ address, onSave, onClose }: { address: SavedAddress; onSav
 
 export default function Profile() {
   const { account, loading, updateAccount } = useAuth()
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const fromCart = searchParams.get('from') === 'cart' || searchParams.get('return_to') === 'cart'
   const [form, setForm] = useState({ name: account?.name || '', email: account?.email || '', phone: formatPhoneWithPrefix(account?.phone) })
   const [emailVerified, setEmailVerified] = useState(true)
   const [addresses, setAddresses] = useState<SavedAddress[]>(account?.addresses?.length ? account.addresses : defaults())
@@ -171,6 +174,15 @@ export default function Profile() {
   const profileFormRef = useRef<HTMLFormElement>(null)
   const passwordFormRef = useRef<HTMLFormElement>(null)
   const isUpdatingPassword = Boolean(password.current_password || password.new_password || password.confirm)
+
+  useEffect(() => {
+    if (fromCart && !loading && account) {
+      const addressHeading = document.querySelector('.profile-address-heading')
+      if (addressHeading) {
+        setTimeout(() => addressHeading.scrollIntoView({ behavior: 'smooth' }), 100)
+      }
+    }
+  }, [fromCart, loading, account])
 
   useEffect(() => {
     if (loading || !account) return
@@ -214,6 +226,11 @@ export default function Profile() {
       if (updated.addresses.some((item) => item.id === savedAddressId)) setActiveAddress(savedAddressId)
       setEditingAddress(null)
       setNotice('Profile and saved addresses updated.')
+      if (fromCart) {
+        setTimeout(() => {
+          navigate('/?cart=open')
+        }, 300)
+      }
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not save your profile.') }
     finally { setBusy(false) }
   }
@@ -256,7 +273,7 @@ export default function Profile() {
 
   if (loading) return <main className="customer-page profile-page"><Loading label="Loading your profile…" /></main>
   return <main className="customer-page profile-page">
-    <PageTitle eyebrow={`${account?.role || 'YOUR'} KEBABZILLA ACCOUNT`} title="Edit profile" description="Update your personal details and password." action={<Link className="button button-secondary" to={account && account.role !== 'USER' ? homeForProfile(account.role) : '/'}><ArrowLeft size={15} /> Back</Link>} />
+    <PageTitle eyebrow={`${account?.role || 'YOUR'} KEBABZILLA ACCOUNT`} title="Edit profile" description="Update your personal details and password." action={fromCart ? <Link className="button button-secondary" to="/?cart=open"><ArrowLeft size={15} /> Return to cart</Link> : <Link className="button button-secondary" to={account && account.role !== 'USER' ? homeForProfile(account.role) : '/'}><ArrowLeft size={15} /> Back</Link>} />
     <form ref={profileFormRef} className="profile-card" onSubmit={(event) => void saveProfile(event)}>
       <div className="profile-card-heading"><h2>Personal details</h2></div>
       <div className="profile-form-grid" style={{ alignItems: 'start' }}>
